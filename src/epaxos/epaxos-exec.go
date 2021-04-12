@@ -80,12 +80,12 @@ func (e *Exec) strongconnect(v *Instance, index *int) bool {
 	for q := int32(0); q < int32(e.r.N); q++ {
 		inst := v.Deps[q]
 		for i := e.r.ExecedUpTo[q] + 1; i <= inst; i++ {
-			if e.r.InstanceSpace[q][i] == nil || e.r.InstanceSpace[q][i].Cmds == nil{
+			if e.r.InstanceSpace[q][i] == nil || e.r.InstanceSpace[q][i].Cmds == nil {
 				dlog.Printf("Null instance %d.%d\n", q, i)
 				return false
 			}
 
-			if (e.r.transconf) {
+			if e.r.transconf {
 				for _, alpha := range v.Cmds {
 					for _, beta := range e.r.InstanceSpace[q][i].Cmds {
 						if !state.Conflict(&alpha, &beta) {
@@ -129,17 +129,20 @@ func (e *Exec) strongconnect(v *Instance, index *int) bool {
 		sort.Sort(nodeArray(list))
 		for _, w := range list {
 			for idx := 0; idx < len(w.Cmds); idx++ {
-				shouldRespond:=e.r.Dreply && w.lb != nil && w.lb.clientProposals != nil
+				shouldRespond := e.r.Dreply && w.lb != nil && w.lb.clientProposals != nil
 				dlog.Printf("Executing "+w.Cmds[idx].String()+" at %d.%d with (seq=%d, deps=%d, scc_size=%d, shouldRespond=%t)\n", w.id.replica, w.id.instance, w.Seq, w.Deps, len(list), shouldRespond)
 				if w.Cmds[idx].Op == state.NONE {
 					// nothing to do
 				} else if shouldRespond {
-					val := w.Cmds[idx].Execute(e.r.State)
+					dlog.Println("Executed value being sent to clients")
+
+					w.Cmds[idx].Execute(e.r.State)
+
 					e.r.ReplyProposeTS(
 						&genericsmrproto.ProposeReplyTS{
 							TRUE,
 							w.lb.clientProposals[idx].CommandId,
-							val,
+							w.lb.clientProposals[idx].Command.V,
 							w.lb.clientProposals[idx].Timestamp},
 						w.lb.clientProposals[idx].Reply,
 						w.lb.clientProposals[idx].Mutex)

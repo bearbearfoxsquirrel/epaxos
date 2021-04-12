@@ -28,22 +28,23 @@ var doGpaxos *bool = flag.Bool("g", false, "Use Generalized Paxos as the replica
 var doEpaxos *bool = flag.Bool("e", false, "Use EPaxos as the replication protocol. Defaults to false.")
 var procs *int = flag.Int("p", 2, "GOMAXPROCS. Defaults to 2")
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
-var thrifty = flag.Bool("thrifty",false, "Use only as many messages as strictly required for inter-replica communication.")
+var thrifty = flag.Bool("thrifty", false, "Use only as many messages as strictly required for inter-replica communication.")
 var exec = flag.Bool("exec", true, "Execute commands.")
 var lread = flag.Bool("lread", false, "Execute locally read command.")
 var dreply = flag.Bool("dreply", true, "Reply to client only after command has been executed.")
 var beacon = flag.Bool("beacon", false, "Send beacons to other replicas to compare their relative speeds.")
 var maxfailures = flag.Int("maxfailures", -1, "maximum number of maxfailures; default is a minority, ignored by other protocols than Paxos.")
 var durable = flag.Bool("durable", false, "Log to a stable store (i.e., a file in the current dir).")
-var batchWait *int = flag.Int("batchwait", 0, "Milliseconds to wait before sending a batch. If set to 0, batching is disabled. Defaults to 0.")
-var transitiveConflicts *bool= flag.Bool("transitiveconf", true, "Conflict relation is transitive.")
+var batchWait = flag.Int("batchwait", 0, "Milliseconds to wait before sending a batch. If set to 0, batching is disabled. Defaults to 0.")
+var transitiveConflicts = flag.Bool("transitiveconf", true, "Conflict relation is transitive.")
+var storageParentDir = flag.String("storageparentdir", "./", "The parent directory of the stable storage file. Defaults to ./")
 
 func main() {
 	flag.Parse()
 
 	runtime.GOMAXPROCS(*procs)
 
-	if *doMencius && *thrifty{
+	if *doMencius && *thrifty {
 		log.Fatal("incompatble options -m -thrifty")
 	}
 
@@ -64,14 +65,15 @@ func main() {
 	replicaId, nodeList, isLeader := registerWithMaster(fmt.Sprintf("%s:%d", *masterAddr, *masterPort))
 
 	if *doEpaxos || *doMencius || *doGpaxos || *maxfailures == -1 {
-		*maxfailures = (len(nodeList)-1) / 2
+		*maxfailures = (len(nodeList) - 1) / 2
 	}
 
 	log.Printf("Tolerating %d max. failures\n", *maxfailures)
 
+	//TODO give parent dir to all replica types
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
-		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures)
+		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir)
 		rpc.Register(rep)
 	} else if *doMencius {
 		log.Println("Starting Mencius replica...")
@@ -103,7 +105,7 @@ func registerWithMaster(masterAddr string) (int, []string, bool) {
 	var reply masterproto.RegisterReply
 
 	for done := false; !done; {
-		log.Printf("connecting to: %v",masterAddr)
+		log.Printf("connecting to: %v", masterAddr)
 		mcli, err := rpc.DialHTTP("tcp", masterAddr)
 		if err == nil {
 			err = mcli.Call("Master.Register", args, &reply)
@@ -111,9 +113,9 @@ func registerWithMaster(masterAddr string) (int, []string, bool) {
 				done = true
 				break
 			}
-		} 
+		}
 		if err != nil {
-		   log.Printf("%v",err)
+			log.Printf("%v", err)
 		}
 		time.Sleep(1e9)
 	}

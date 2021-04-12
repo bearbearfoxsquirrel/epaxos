@@ -10,7 +10,7 @@ import (
 	"genericsmrproto"
 	"io"
 	"log"
-	"math"
+	"math/rand"
 	"net"
 	"os"
 	"state"
@@ -22,7 +22,7 @@ const CHAN_BUFFER_SIZE = 200000
 const TRUE = uint8(1)
 const FALSE = uint8(0)
 
-var storage string
+var storage string = "./"
 
 type RPCPair struct {
 	Obj  fastrpc.Serializable
@@ -41,14 +41,17 @@ type Beacon struct {
 }
 
 type Replica struct {
-	N            int        // total number of replicas
-	Id           int32      // the ID of the current replica
-	PeerAddrList []string   // array with the IP:port address of every replica
-	Peers        []net.Conn // cache of connections to all other replicas
-	PeerReaders  []*bufio.Reader
-	PeerWriters  []*bufio.Writer
-	Alive        []bool // connection status
-	Listener     net.Listener
+	N              int        // total number of replicas
+	Id             int32      // the ID of the current replica
+	PeerAddrList   []string   // array with the IP:port address of every replica
+	Peers          []net.Conn // cache of connections to all other replicas
+	PeerReaders    []*bufio.Reader
+	PeerWriters    []*bufio.Writer
+	Alive          []bool // connection status
+	Listener       net.Listener
+	Clients        []net.Conn
+	ClientsReaders []*bufio.Reader
+	ClientsWriters []*bufio.Writer
 
 	State *state.State
 
@@ -73,15 +76,15 @@ type Replica struct {
 	rpcTable map[uint8]*RPCPair
 	rpcCode  uint8
 
-	Ewma      []float64
-	Latencies []int64
+	Ewma []float64
+	//Latencies []int64
 
 	Mutex sync.Mutex
 
 	Stats *genericsmrproto.Stats
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string) *Replica {
 	r := &Replica{
 		len(peerAddrList),
 		int32(id),
@@ -90,6 +93,9 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		make([]*bufio.Reader, len(peerAddrList)),
 		make([]*bufio.Writer, len(peerAddrList)),
 		make([]bool, len(peerAddrList)),
+		nil,
+		nil,
+		nil,
 		nil,
 		state.InitState(),
 		make(chan *Propose, CHAN_BUFFER_SIZE),
@@ -107,9 +113,11 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		make(map[uint8]*RPCPair),
 		genericsmrproto.GENERIC_SMR_BEACON_REPLY + 1,
 		make([]float64, len(peerAddrList)),
-		make([]int64, len(peerAddrList)),
+
 		sync.Mutex{},
 		&genericsmrproto.Stats{make(map[string]int)}}
+
+	storage = storageParentDir
 
 	var err error
 	r.StableStore, err =
@@ -119,11 +127,11 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		log.Fatal(err)
 	}
 
-	for i := 0; i < r.N; i++ {
-		r.PreferredPeerOrder[i] = int32((int(r.Id) + 1 + i) % r.N)
-		r.Ewma[i] = 0.0
-		r.Latencies[i] = 0
-	}
+	//	for i := 0; i < r.N; i++ {
+	//	r.PreferredPeerOrder[i] = int32((int(r.Id) + 1 + i) % r.N)
+	//	r.Ewma[i] = 0.0
+	//	r.Latencies[i] = 0
+	//}
 
 	return r
 }
@@ -141,11 +149,11 @@ func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *gene
 /* Utils */
 
 func (r *Replica) FastQuorumSize() int {
-	return r.F + (r.F + 1)/2
+	return r.F + (r.F+1)/2
 }
 
 func (r *Replica) SlowQuorumSize() int {
-	return (r.N + 1)/ 2
+	return (r.N + 1) / 2
 }
 
 // Flexible Paxos
@@ -268,7 +276,10 @@ func (r *Replica) WaitForClientConnections() {
 			log.Println("Accept error:", err)
 			continue
 		}
-		go r.clientListener(conn)
+		//r.Clients = append(r.Clients, conn)
+		//r.ClientsReaders = append(r.ClientsReaders, bufio.NewReader(conn))
+		//r.ClientsWriters = append(r.ClientsWriters, bufio.NewWriter(conn))
+		go r.ClientListener(conn)
 
 	}
 }
@@ -301,9 +312,9 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 			}
 			dlog.Println("receive beacon ", gbeaconReply.Timestamp, " reply from ", rid)
 			//TODO: UPDATE STUFF
-			r.Mutex.Lock()
-			r.Latencies[rid] += time.Now().UnixNano() - gbeaconReply.Timestamp
-			r.Mutex.Unlock()
+			//	r.Mutex.Lock()
+			//	r.Latencies[rid] += time.Now().UnixNano() - gbeaconReply.Timestamp
+			//	r.Mutex.Unlock()
 			r.Ewma[rid] = 0.99*r.Ewma[rid] + 0.01*float64(time.Now().UnixNano()-gbeaconReply.Timestamp)
 			break
 
@@ -325,7 +336,25 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 	r.Mutex.Unlock()
 }
 
-func (r *Replica) clientListener(conn net.Conn) {
+func (r *Replica) removeConn(i int) {
+	r.Clients[i] = r.Clients[len(r.Clients)-1]
+	// We do not need to put s[i] at the end, as it will be discarded anyway
+	r.Clients = r.Clients[:len(r.Clients)-1]
+}
+
+func (r *Replica) removeWriter(i int) {
+	r.ClientsWriters[i] = r.ClientsWriters[len(r.ClientsWriters)-1]
+	// We do not need to put s[i] at the end, as it will be discarded anyway
+	r.ClientsWriters = r.ClientsWriters[:len(r.ClientsWriters)-1]
+}
+
+func (r *Replica) removeReader(i int) {
+	r.ClientsReaders[i] = r.ClientsReaders[len(r.ClientsReaders)-1]
+	// We do not need to put s[i] at the end, as it will be discarded anyway
+	r.ClientsReaders = r.ClientsReaders[:len(r.ClientsReaders)-1]
+}
+
+func (r *Replica) ClientListener(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 	var msgType byte //:= make([]byte, 1)
@@ -340,14 +369,14 @@ func (r *Replica) clientListener(conn net.Conn) {
 	for !r.Shutdown && err == nil {
 
 		if msgType, err = reader.ReadByte(); err != nil {
-			break
+			return
 		}
-
 		switch uint8(msgType) {
 
 		case genericsmrproto.PROPOSE:
 			propose := new(genericsmrproto.Propose)
-			if err = propose.Unmarshal(reader); err != nil {
+			err = propose.Unmarshal(reader)
+			if err != nil {
 				break
 			}
 			if r.LRead && (propose.Command.Op == state.GET || propose.Command.Op == state.SCAN) {
@@ -359,6 +388,7 @@ func (r *Replica) clientListener(conn net.Conn) {
 					propose.Timestamp}
 				r.ReplyProposeTS(propreply, writer, mutex)
 			} else {
+				//	log.Println("Received client command", propose.CommandId, propose.Command.Op, propose.Command.K, propose.Command.V)
 				r.ProposeChan <- &Propose{propose, writer, mutex}
 			}
 			break
@@ -386,12 +416,12 @@ func (r *Replica) clientListener(conn net.Conn) {
 			writer.Write(b)
 			writer.Flush()
 		}
+
 	}
 
 	conn.Close()
 
 	log.Println("Client down ", conn.RemoteAddr())
-
 }
 
 func (r *Replica) RegisterRPC(msgObj fastrpc.Serializable, notify chan fastrpc.Serializable) uint8 {
@@ -430,7 +460,13 @@ func (r *Replica) ReplyProposeTS(reply *genericsmrproto.ProposeReplyTS, w *bufio
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
 	reply.Marshal(w)
-	w.Flush()
+
+	err := w.Flush()
+	if err != nil {
+		panic("Cannot send response to client")
+	}
+	dlog.Println("Sent response to client")
+	dlog.Println(reply.CommandId, reply.Value.String())
 }
 
 func (r *Replica) SendBeacon(peerId int32) {
@@ -465,38 +501,56 @@ func (r *Replica) ReplyBeacon(beacon *Beacon) {
 
 // updates the preferred order in which to communicate with peers according to a preferred quorum
 func (r *Replica) UpdatePreferredPeerOrder(quorum []int32) {
-	aux := make([]int32, r.N)
-	i := 0
-	for _, p := range quorum {
-		if p == r.Id {
-			continue
-		}
-		aux[i] = p
-		i++
-	}
-
-	for _, p := range r.PreferredPeerOrder {
-		found := false
-		for j := 0; j < i; j++ {
-			if aux[j] == p {
-				found = true
-				break
+	/*	aux := make([]int32, r.N)
+		i := 0
+		for _, p := range quorum {
+			if p == r.Id {
+				continue
 			}
-		}
-		if !found {
 			aux[i] = p
 			i++
 		}
-	}
 
-	r.Mutex.Lock()
-	r.PreferredPeerOrder = aux
-	r.Mutex.Unlock()
+		for _, p := range r.PreferredPeerOrder {
+			found := false
+			for j := 0; j < i; j++ {
+				if aux[j] == p {
+					found = true
+					break
+				}
+			}
+			if !found {
+				aux[i] = p
+				i++
+			}
+		}
+
+		r.Mutex.Lock()
+		r.PreferredPeerOrder = aux
+		r.Mutex.Unlock()*/
 }
 
-func (r *Replica) ComputeClosestPeers() {
+func (r *Replica) RandomisePeerOrder() {
+	rand.Seed(time.Now().UnixNano() * int64(os.Getpid()))
+	r.Mutex.Lock()
+	for i := 0; i < len(r.PreferredPeerOrder); i++ {
+		r.PreferredPeerOrder[i] = int32(i)
+	}
+	rand.Shuffle(r.N, func(i, j int) {
+		r.PreferredPeerOrder[i], r.PreferredPeerOrder[j] = r.PreferredPeerOrder[j], r.PreferredPeerOrder[i]
+	})
 
-	npings := 20
+	// move self to end (we don't ever send to selves)
+	for i := 0; i < len(r.PreferredPeerOrder); i++ {
+		if r.PreferredPeerOrder[i] == r.Id {
+			tmp := r.PreferredPeerOrder[len(r.PreferredPeerOrder)-1]
+			r.PreferredPeerOrder[len(r.PreferredPeerOrder)-1] = r.PreferredPeerOrder[i]
+			r.PreferredPeerOrder[i] = tmp
+
+		}
+	}
+	r.Mutex.Unlock()
+	/*npings := 20
 
 	for j := 0; j < npings; j++ {
 		for i := int32(0); i < int32(r.N); i++ {
@@ -508,7 +562,7 @@ func (r *Replica) ComputeClosestPeers() {
 				r.Mutex.Unlock()
 				r.SendBeacon(i)
 			} else {
-				r.Latencies[i] = math.MaxInt64
+			//	r.Latencies[i] = math.MaxInt64
 				r.Mutex.Unlock()
 			}
 		}
@@ -521,9 +575,9 @@ func (r *Replica) ComputeClosestPeers() {
 	for i := int32(0); i < int32(r.N); i++ {
 		pos := 0
 		for j := int32(0); j < int32(r.N); j++ {
-			if (r.Latencies[j] < r.Latencies[i]) || ((r.Latencies[j] == r.Latencies[i]) && (j < i)) {
-				pos++
-			}
+		//	if (r.Latencies[j] < r.Latencies[i]) || ((r.Latencies[j] == r.Latencies[i]) && (j < i)) {
+		//		pos++
+		//	}
 		}
 		quorum[pos] = int32(i)
 	}
@@ -535,6 +589,6 @@ func (r *Replica) ComputeClosestPeers() {
 		node := r.PreferredPeerOrder[i]
 		lat := float64(r.Latencies[node]) / float64(npings*1000000)
 		log.Println(node, " -> ", lat, "ms")
-	}
+	}*/
 
 }

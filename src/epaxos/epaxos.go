@@ -76,7 +76,7 @@ type Replica struct {
 	IsLeader              bool // does this replica think it is the leader
 	maxRecvBallot         int32
 	batchWait             int
-	transconf bool
+	transconf             bool
 }
 
 type Instance struct {
@@ -120,9 +120,9 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string) *Replica {
 	r := &Replica{
-		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures),
+		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -149,7 +149,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		false,
 		-1,
 		batchWait,
-	transconf}
+		transconf}
 
 	r.Beacon = beacon
 	r.Durable = durable
@@ -277,39 +277,30 @@ func (r *Replica) BatchingEnabled() bool {
 /***********************************
    Main event processing loop      *
 ************************************/
+func (r Replica) replicaLoop() {
+	//timerDone := make(chan bool)
+	newPeerOrderTimer := time.NewTimer(1 * time.Second)
 
-func (r *Replica) run() {
-	r.ConnectToPeers()
-
-	r.ComputeClosestPeers()
-
-	if r.Exec {
-		go r.executeCommands()
-	}
-
-	slowClockChan = make(chan bool, 1)
-	fastClockChan = make(chan bool, 1)
-	go r.slowClock()
-
-	//Enabled fast clock when batching
-	if r.BatchingEnabled() {
-		go r.fastClock()
-	}
-
-	if r.Beacon {
-		go r.stopAdapting()
-	}
-
-	onOffProposeChan := r.ProposeChan
-
-	go r.WaitForClientConnections()
-
+	//go func() {
+	//	<-newPeerOrderTimer.C
+	//	timerDone <- true
+	//}()
 	for !r.Shutdown {
+		onOffProposeChan := r.ProposeChan
 
 		select {
+		case <-newPeerOrderTimer.C:
+			r.RandomisePeerOrder()
+			dlog.Println("Recomputing closest peers")
+			newPeerOrderTimer = time.NewTimer(1 * time.Second)
+			//go func() {
+			//	<-newPeerOrderTimer.C
+			//	timerDone <- true
+			//}()
 
 		case propose := <-onOffProposeChan:
 			//got a Propose from a client
+			dlog.Println("Handle propose from client now")
 			r.handlePropose(propose)
 			//deactivate new proposals channel to prioritize the handling of other protocol messages,
 			//and to allow commands to accumulate for batching
@@ -326,61 +317,61 @@ func (r *Replica) run() {
 		case prepareS := <-r.prepareChan:
 			prepare := prepareS.(*epaxosproto.Prepare)
 			//got a Prepare message
-			dlog.Printf("Received Prepare %d.%d w. ballot %d\n", prepare.Replica, prepare.Instance, prepare.Ballot)
+			dlog.Println("Received Prepare %d.%d w. ballot %d\n", prepare.Replica, prepare.Instance, prepare.Ballot)
 			r.handlePrepare(prepare)
 			break
 
 		case preAcceptS := <-r.preAcceptChan:
 			preAccept := preAcceptS.(*epaxosproto.PreAccept)
 			//got a PreAccept message
-			dlog.Printf("Received PreAccept %d.%d w. ballot %d\n", preAccept.Replica, preAccept.Instance, preAccept.Ballot)
+			dlog.Println("Received PreAccept %d.%d w. ballot %d\n", preAccept.Replica, preAccept.Instance, preAccept.Ballot)
 			r.handlePreAccept(preAccept)
 			break
 
 		case acceptS := <-r.acceptChan:
 			accept := acceptS.(*epaxosproto.Accept)
 			//got an Accept message
-			dlog.Printf("Received Accept %d.%d w. ballot %d\n", accept.Replica, accept.Instance, accept.Ballot)
+			dlog.Println("Received Accept %d.%d w. ballot %d\n", accept.Replica, accept.Instance, accept.Ballot)
 			r.handleAccept(accept)
 			break
 
 		case commitS := <-r.commitChan:
 			commit := commitS.(*epaxosproto.Commit)
 			//got a Commit message
-			dlog.Printf("Received Commit %d.%d\n", commit.Replica, commit.Instance)
+			dlog.Println("Received Commit %d.%d\n", commit.Replica, commit.Instance)
 			r.handleCommit(commit)
 			break
 
 		case prepareReplyS := <-r.prepareReplyChan:
 			prepareReply := prepareReplyS.(*epaxosproto.PrepareReply)
 			//got a Prepare reply
-			dlog.Printf("Received PrepareReply %d.%d w. ballot %d from %d\n", prepareReply.Replica, prepareReply.Instance, prepareReply.Ballot, prepareReply.AcceptorId)
+			dlog.Println("Received PrepareReply %d.%d w. ballot %d from %d\n", prepareReply.Replica, prepareReply.Instance, prepareReply.Ballot, prepareReply.AcceptorId)
 			r.handlePrepareReply(prepareReply)
 			break
 
 		case preAcceptReplyS := <-r.preAcceptReplyChan:
 			preAcceptReply := preAcceptReplyS.(*epaxosproto.PreAcceptReply)
 			//got a PreAccept reply
-			dlog.Printf("Received PreAcceptReply %d.%d w. ballot %d\n", preAcceptReply.Replica, preAcceptReply.Instance, preAcceptReply.Ballot)
+			dlog.Println("Received PreAcceptReply %d.%d w. ballot %d\n", preAcceptReply.Replica, preAcceptReply.Instance, preAcceptReply.Ballot)
 			r.handlePreAcceptReply(preAcceptReply)
 			break
 
 		case acceptReplyS := <-r.acceptReplyChan:
 			acceptReply := acceptReplyS.(*epaxosproto.AcceptReply)
 			//got an Accept reply
-			dlog.Printf("Received AcceptReply %d.%d w. ballot %d\n", acceptReply.Replica, acceptReply.Instance, acceptReply.Ballot)
+			dlog.Println("Received AcceptReply %d.%d w. ballot %d\n", acceptReply.Replica, acceptReply.Instance, acceptReply.Ballot)
 			r.handleAcceptReply(acceptReply)
 			break
 
 		case tryPreAcceptS := <-r.tryPreAcceptChan:
 			tryPreAccept := tryPreAcceptS.(*epaxosproto.TryPreAccept)
-			dlog.Printf("Received TryPreAccept %d.%d w. ballot %d, deps %d\n", tryPreAccept.Replica, tryPreAccept.Instance, tryPreAccept.Ballot, tryPreAccept.Deps)
+			dlog.Println("Received TryPreAccept %d.%d w. ballot %d, deps %d\n", tryPreAccept.Replica, tryPreAccept.Instance, tryPreAccept.Ballot, tryPreAccept.Deps)
 			r.handleTryPreAccept(tryPreAccept)
 			break
 
 		case tryPreAcceptReplyS := <-r.tryPreAcceptReplyChan:
 			tryPreAcceptReply := tryPreAcceptReplyS.(*epaxosproto.TryPreAcceptReply)
-			dlog.Printf("Received TryPreAcceptReply %d.%d\n", tryPreAcceptReply.Replica, tryPreAcceptReply.Instance)
+			dlog.Println("Received TryPreAcceptReply %d.%d\n", tryPreAcceptReply.Replica, tryPreAcceptReply.Instance)
 			r.handleTryPreAcceptReply(tryPreAcceptReply)
 			break
 
@@ -405,6 +396,33 @@ func (r *Replica) run() {
 			r.startRecoveryForInstance(iid.replica, iid.instance)
 		}
 	}
+}
+
+func (r *Replica) run() {
+	r.ConnectToPeers()
+
+	r.RandomisePeerOrder()
+
+	if r.Exec {
+		go r.executeCommands()
+	}
+
+	slowClockChan = make(chan bool, 1)
+	fastClockChan = make(chan bool, 1)
+	go r.slowClock()
+
+	//Enabled fast clock when batching
+	if r.BatchingEnabled() {
+		go r.fastClock()
+	}
+
+	if r.Beacon {
+		go r.stopAdapting()
+	}
+
+	go r.WaitForClientConnections()
+
+	go r.replicaLoop()
 }
 
 /***********************************
@@ -560,7 +578,7 @@ func (r *Replica) bcastPreAccept(replica int32, instance int32) {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
 			continue
 		}
-		dlog.Printf("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+		log.Println("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
 		r.SendMsg(r.PreferredPeerOrder[q], r.preAcceptRPC, pa)
 		sent++
 		if sent >= n {
@@ -592,7 +610,7 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 		if !r.Alive[q] {
 			continue
 		}
-		dlog.Printf("Sending TryPreAccept %d.%d w. ballot %d and deps %d to %d\n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+		log.Println("Sending TryPreAccept %d.%d w. ballot %d and deps %d to %d\n", replica, instance, lb.lastTriedBallot, lb.deps, q)
 		r.SendMsg(q, r.tryPreAcceptRPC, tpa)
 	}
 }
@@ -994,6 +1012,7 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 		r.updateCommitted(pareply.Replica)
 		if inst.lb.clientProposals != nil && !r.Dreply {
 			// give clients the all clear
+			log.Println("Commited value being sent to clients")
 			for i := 0; i < len(inst.lb.clientProposals); i++ {
 				r.ReplyProposeTS(
 					&genericsmrproto.ProposeReplyTS{
@@ -1125,7 +1144,9 @@ func (r *Replica) handleAcceptReply(areply *epaxosproto.AcceptReply) {
 
 		if inst.lb.clientProposals != nil && !r.Dreply {
 			// give clients the all clear
+			log.Println("Sending slowly commited value to clients")
 			for i := 0; i < len(inst.lb.clientProposals); i++ {
+
 				r.ReplyProposeTS(
 					&genericsmrproto.ProposeReplyTS{
 						TRUE,

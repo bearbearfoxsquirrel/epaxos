@@ -85,7 +85,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
 	}
-	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures),
+	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, ""),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE*4),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -176,7 +176,7 @@ var lastSeenInstance int32
 func (r *Replica) run() {
 	r.ConnectToPeers()
 
-	r.ComputeClosestPeers()
+	r.RandomisePeerOrder()
 
 	if r.Exec {
 		go r.executeCommands()
@@ -864,7 +864,7 @@ func (r *Replica) executeCommands() {
 				r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal.CommandId, val, inst.lb.clientProposal.Timestamp},
 					inst.lb.clientProposal.Reply,
 					inst.lb.clientProposal.Mutex)
-			} else if inst.command.Op == state.PUT{
+			} else if inst.command.Op == state.PUT {
 				inst.command.Execute(r.State)
 			}
 			inst.status = EXECUTED

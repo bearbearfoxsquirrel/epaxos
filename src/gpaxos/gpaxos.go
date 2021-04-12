@@ -75,7 +75,7 @@ type LeaderBookkeeping struct {
 }
 
 func NewReplica(id int, peerAddrList []string, IsLeader bool, thrifty bool, exec bool, lread bool, dreply bool, failures int) *Replica {
-	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply,failures),
+	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, ""),
 		make(chan *gpaxosproto.Prepare, CHAN_BUFFER_SIZE),
 		make(chan *gpaxosproto.M_1a, CHAN_BUFFER_SIZE),
 		make(chan *gpaxosproto.M_1b, CHAN_BUFFER_SIZE),
@@ -286,7 +286,7 @@ func (r *Replica) run() {
 		go r.handleReplicaConnection(rid, peerReader)
 	}
 
-	r.ComputeClosestPeers()
+	r.RandomisePeerOrder()
 
 	if r.isLeader {
 		log.Println("I am the leader")

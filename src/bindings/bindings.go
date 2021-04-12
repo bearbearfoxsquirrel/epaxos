@@ -18,6 +18,7 @@ import (
 	"state"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,17 +40,19 @@ type Parameters struct {
 	servers        []net.Conn
 	readers        []*bufio.Reader
 	writers        []*bufio.Writer
+	receiveMutex   sync.Mutex
+	writeMutex     sync.Mutex
 	id             int32
 	retries        int32
 }
 
-func NewParameters(masterAddr string, masterPort int, verbose bool, leaderless bool, fast bool, localReads bool) *Parameters {
+func NewParameters(masterAddr string, masterPort int, verbose bool, leaderless bool, fast bool, localReads bool, connectReplica int) *Parameters {
 	return &Parameters{
 		masterAddr,
 		masterPort,
 		verbose,
 		localReads,
-		0,
+		connectReplica,
 		0,
 		leaderless,
 		fast,
@@ -58,6 +61,8 @@ func NewParameters(masterAddr string, masterPort int, verbose bool, leaderless b
 		nil,
 		nil,
 		nil,
+		sync.Mutex{},
+		sync.Mutex{},
 		0,
 		10}
 }
@@ -87,10 +92,13 @@ func (b *Parameters) Connect() error {
 	}
 
 	// get closest replica
-	err = b.FindClosestReplica(replyRL)
-	if err != nil {
-		return err
-	}
+	//err = b.FindClosestReplica(replyRL)
+	b.replicaLists = replyRL.ReplicaList
+
+	//	if err != nil {
+	//		return err
+	//}
+	//b.closestReplica =
 	log.Printf("node list %v, closest (alive) = %v", b.replicaLists, b.closestReplica)
 
 	// init some parameters
@@ -164,7 +172,7 @@ func Dial(addr string, connect bool) net.Conn {
 			// if not done yet, try again
 			log.Println("Connection error with ", addr, ": ", err)
 			if conn != nil {
-			   conn.Close()
+				conn.Close()
 			}
 		}
 	}
@@ -245,10 +253,10 @@ func (b *Parameters) Disconnect() {
 }
 
 // not idempotent in case of a failure
-func (b *Parameters) Write(key int64, value []byte) {
-	b.id++
-	args := genericsmrproto.Propose{b.id, state.Command{state.PUT, 0, state.NIL()}, 0}
-	args.CommandId = b.id
+func (b *Parameters) Write(id int32, key int64, value []byte) {
+	//b.id++
+	args := genericsmrproto.Propose{id, state.Command{state.PUT, 0, state.NIL()}, 0}
+	args.CommandId = id //b.id
 	args.Command.K = state.Key(key)
 	args.Command.V = value
 	args.Command.Op = state.PUT
@@ -260,10 +268,10 @@ func (b *Parameters) Write(key int64, value []byte) {
 	b.execute(args)
 }
 
-func (b *Parameters) Read(key int64) []byte {
-	b.id++
-	args := genericsmrproto.Propose{b.id, state.Command{state.PUT, 0, state.NIL()}, 0}
-	args.CommandId = b.id
+func (b *Parameters) Read(id int32, key int64) {
+	//b.id++
+	args := genericsmrproto.Propose{id, state.Command{state.PUT, 0, state.NIL()}, 0}
+	args.CommandId = id //b.id
 	args.Command.K = state.Key(key)
 	args.Command.Op = state.GET
 
@@ -271,13 +279,13 @@ func (b *Parameters) Read(key int64) []byte {
 		log.Println(args.Command.String())
 	}
 
-	return b.execute(args)
+	b.execute(args)
 }
 
-func (b *Parameters) Scan(key int64, count int64) []byte {
-	b.id++
-	args := genericsmrproto.Propose{b.id, state.Command{state.PUT, 0, state.NIL()}, 0}
-	args.CommandId = b.id
+func (b *Parameters) Scan(key int64, count int64, id int32) {
+	//b.id++
+	args := genericsmrproto.Propose{id, state.Command{state.PUT, 0, state.NIL()}, 0}
+	args.CommandId = id //b.id
 	args.Command.K = state.Key(key)
 	args.Command.V = make([]byte, 8)
 	binary.LittleEndian.PutUint64(args.Command.V, uint64(count))
@@ -287,7 +295,7 @@ func (b *Parameters) Scan(key int64, count int64) []byte {
 		log.Println(args.Command.String())
 	}
 
-	return b.execute(args)
+	b.execute(args)
 }
 
 func (b *Parameters) Stats() string {
@@ -300,80 +308,154 @@ func (b *Parameters) Stats() string {
 
 // internals
 
-func (b *Parameters) execute(args genericsmrproto.Propose) []byte {
-
+func (b *Parameters) Submit(args genericsmrproto.Propose) {
 	if b.isFast {
 		log.Fatal("NYI")
 	}
 
 	err := errors.New("")
-	value := state.NIL()
+	//value := state.NIL()
 
 	for err != nil {
 
 		submitter := b.Leader
-		if b.leaderless  {
+		if b.leaderless {
 			submitter = b.closestReplica
 		}
 
 		if !b.isFast {
+			//b.writeMutex.Lock()
 			b.writers[submitter].WriteByte(genericsmrproto.PROPOSE)
 			args.Marshal(b.writers[submitter])
 			b.writers[submitter].Flush()
+			//b.writeMutex.Unlock()
 		} else {
 			//send to everyone
 			for rep := 0; rep < b.n; rep++ {
+				b.writeMutex.Lock()
 				b.writers[rep].WriteByte(genericsmrproto.PROPOSE)
 				args.Marshal(b.writers[rep])
 				b.writers[rep].Flush()
+				b.writeMutex.Unlock()
 			}
 		}
 
 		if b.verbose {
 			log.Println("Sent to ", submitter)
 		}
+	}
+}
 
-		value, err = b.waitReplies(submitter)
+/*
+func (b *Parameters) ListenForResponses() state.Value {
+	for i := 0; i < b.n; i++ {
+		if b.servers[i] != nil {
+			value, err := b.waitReplies(i)
+			if err != nil {
 
-		if err != nil {
+				log.Println("Error: ", err)
 
-			log.Println("Error: ", err)
+				for err != nil && b.retries > 0 {
+					b.retries--
+					b.Disconnect()
+					log.Println("Reconnecting ...")
+					time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
+					err = b.Connect()
+				}
 
-			for err != nil && b.retries > 0 {
-				b.retries--
-				b.Disconnect()
-				log.Println("Reconnecting ...")
-				time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
-				err = b.Connect()
+				if err != nil && b.retries == 0 {
+					log.Fatal("Cannot recover.")
+				}
+
 			}
-
-			if err != nil && b.retries == 0 {
-				log.Fatal("Cannot recover.")
-			}
-
+			return value
 		}
+	}
+}
+*/
+func (b *Parameters) execute(args genericsmrproto.Propose) {
+	if b.isFast {
+		log.Fatal("NYI")
+	}
 
+	//err := errors.New("")
+	//value := state.NIL()
+
+	//	for err != nil {
+
+	submitter := b.Leader
+	if b.leaderless {
+		submitter = b.closestReplica
+	}
+
+	if !b.isFast {
+		//b.writeMutex.Lock()
+		b.writers[submitter].WriteByte(genericsmrproto.PROPOSE)
+		args.Marshal(b.writers[submitter])
+		b.writers[submitter].Flush()
+		//b.writeMutex.Unlock()
+	} else {
+		//send to everyone
+		for rep := 0; rep < b.n; rep++ {
+			b.writeMutex.Lock()
+			b.writers[rep].WriteByte(genericsmrproto.PROPOSE)
+			args.Marshal(b.writers[rep])
+			b.writers[rep].Flush()
+			b.writeMutex.Unlock()
+		}
 	}
 
 	if b.verbose {
-		log.Println("Returning: ", value.String())
+		log.Println("Sent to ", submitter)
 	}
+	//	}
+	/*	value, err = b.waitReplies(submitter)
+			if err != nil {
 
-	return value
+				log.Println("Error: ", err)
+
+					for err != nil && b.retries > 0 {
+						b.retries--
+						b.Disconnect()
+						log.Println("Reconnecting ...")
+						time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
+						err = b.Connect()
+					}
+
+					if err != nil && b.retries == 0 {
+						log.Fatal("Cannot recover.")
+					}
+
+				}
+
+		}
+
+		if b.verbose {
+			log.Println("Returning: ", value.String())
+		}
+
+		return value*/
 }
 
 func (b *Parameters) waitReplies(submitter int) (state.Value, error) {
 	var err error
 	ret := state.NIL()
-
 	rep := new(genericsmrproto.ProposeReplyTS)
+	//b.receiveMutex.Lock()
 	if err = rep.Unmarshal(b.readers[submitter]); err == nil {
 		if rep.OK == TRUE {
+			//	log.Println("Got response OK")
+			//	log.Print(rep.CommandId, rep.Value)
 			ret = rep.Value
 		} else {
 			err = errors.New("Failed to receive a response.")
 		}
-	}
 
+	}
+	//	b.receiveMutex.Unlock()
 	return ret, err
+}
+
+func (b *Parameters) GetListener() *bufio.Reader {
+	return b.readers[b.closestReplica]
 }

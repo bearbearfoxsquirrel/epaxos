@@ -77,7 +77,7 @@ type LeaderBookkeeping struct {
 }
 
 func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int) *Replica {
-	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f),
+	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, ""),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -194,7 +194,7 @@ func (r *Replica) run() {
 
 	r.ConnectToPeers()
 
-	r.ComputeClosestPeers()
+	r.RandomisePeerOrder()
 
 	if r.Exec {
 		go r.executeCommands()
