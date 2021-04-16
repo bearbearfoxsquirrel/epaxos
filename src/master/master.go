@@ -51,7 +51,7 @@ func main() {
 
 	rpc.Register(master)
 	rpc.HandleHTTP()
-	l, err := net.Listen("tcp4", fmt.Sprintf("%s:%d", *addr, *portnum))
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", *addr, *portnum))
 	if err != nil {
 		log.Fatal("Master listen error:", err)
 	}
