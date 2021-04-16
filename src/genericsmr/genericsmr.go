@@ -463,7 +463,8 @@ func (r *Replica) ReplyProposeTS(reply *genericsmrproto.ProposeReplyTS, w *bufio
 
 	err := w.Flush()
 	if err != nil {
-		panic("Cannot send response to client")
+		dlog.Println("Cannot send response to client")
+		//panic("Cannot send response to client")
 	}
 	dlog.Println("Sent response to client")
 	dlog.Println(reply.CommandId, reply.Value.String())

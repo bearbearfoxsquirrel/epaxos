@@ -188,7 +188,7 @@ func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize in
 	rand.Read(wValue)
 	val := ClientValue{
 		uid:   int64(rand.Int31()),
-		key:   clientId,
+		key:   int64(rand.Int31()), //int64(rand.Int31() % 100),
 		value: wValue,
 	}
 	for !registered {

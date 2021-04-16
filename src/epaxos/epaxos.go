@@ -1282,6 +1282,9 @@ func (r *Replica) startRecoveryForInstance(replica int32, instance int32) {
 	lb.prepareReplies = append(lb.prepareReplies, preply)
 	lb.leaderResponded = r.Id == replica
 
+	r.recordInstanceMetadata(r.InstanceSpace[preply.Replica][preply.Instance])
+	r.sync()
+
 	r.bcastPrepare(replica, instance)
 }
 
@@ -1315,6 +1318,10 @@ func (r *Replica) handlePrepare(prepare *epaxosproto.Prepare) {
 		inst.Cmds,
 		inst.Seq,
 		inst.Deps}
+
+	r.recordInstanceMetadata(r.InstanceSpace[prepare.Replica][prepare.Instance])
+	r.sync()
+
 	r.replyPrepare(prepare.LeaderId, preply)
 }
 
