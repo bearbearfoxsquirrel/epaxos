@@ -26,7 +26,7 @@ var noLeader *bool = flag.Bool("e", false, "Egalitarian (no leader). ")
 var fast *bool = flag.Bool("f", false, "Fast Paxos: send message directly to all replicas. ")
 var localReads *bool = flag.Bool("l", false, "Execute reads at the closest (local) replica. ")
 var procs *int = flag.Int("p", 2, "GOMAXPROCS. ")
-var conflicts *int = flag.Int("c", 0, "Percentage of conflicts. Defaults to 0%")
+var conflicts *int = flag.Int("c", 1, "Num keys to conflict on. Defaults to 1")
 var verbose *bool = flag.Bool("v", false, "verbose mode. ")
 var scan *bool = flag.Bool("s", false, "replace read with short scan (100 elements)")
 var connectReplica *int = flag.Int("connectreplica", -1, "Must state which replica to send requests to")
@@ -188,7 +188,7 @@ func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize in
 	rand.Read(wValue)
 	val := ClientValue{
 		uid:   int64(rand.Int31()),
-		key:   int64(rand.Int31()), //int64(rand.Int31() % 100),
+		key:   int64(rand.Int31() % int32(*conflicts+1)),
 		value: wValue,
 	}
 	for !registered {
@@ -240,7 +240,7 @@ func main() {
 				if rep.OK == uint8(1) {
 					valueDone <- ClientValue{
 						uid:   int64(rep.CommandId),
-						key:   -1,
+						key:   int64(rand.Int31() % int32(*conflicts+1)),
 						value: rep.Value,
 					}
 				} else {
