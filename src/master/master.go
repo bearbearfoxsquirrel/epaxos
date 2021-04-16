@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"genericsmrproto"
+	"io/ioutil"
 	"log"
 	"masterproto"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 var portnum *int = flag.Int("port", 7087, "Port # to listen on. Defaults to 7087")
 var numNodes *int = flag.Int("N", 3, "Number of replicas. Defaults to 3.")
+var quiet *bool = flag.Bool("quiet", true, "Log nothing?")
 
 type Master struct {
 	N        int
@@ -29,6 +31,10 @@ type Master struct {
 
 func main() {
 	flag.Parse()
+
+	if *quiet {
+		log.SetOutput(ioutil.Discard)
+	}
 
 	log.Printf("Master starting on port %d\n", *portnum)
 	log.Printf("...waiting for %d replicas\n", *numNodes)

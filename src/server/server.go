@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"gpaxos"
+	"io/ioutil"
 	"log"
 	"masterproto"
 	"mencius"
@@ -38,11 +39,16 @@ var durable = flag.Bool("durable", false, "Log to a stable store (i.e., a file i
 var batchWait = flag.Int("batchwait", 0, "Milliseconds to wait before sending a batch. If set to 0, batching is disabled. Defaults to 0.")
 var transitiveConflicts = flag.Bool("transitiveconf", true, "Conflict relation is transitive.")
 var storageParentDir = flag.String("storageparentdir", "./", "The parent directory of the stable storage file. Defaults to ./")
+var quiet *bool = flag.Bool("quiet", true, "Log nothing?")
 
 func main() {
 	flag.Parse()
 
 	runtime.GOMAXPROCS(*procs)
+
+	if *quiet {
+		log.SetOutput(ioutil.Discard)
+	}
 
 	if *doMencius && *thrifty {
 		log.Fatal("incompatble options -m -thrifty")
