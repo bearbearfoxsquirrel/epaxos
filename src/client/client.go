@@ -209,9 +209,9 @@ func main() {
 
 	rand.Seed(time.Now().UnixNano())
 
-	if *conflicts > 100 {
-		log.Fatalf("Conflicts percentage must be between 0 and 100.\n")
-	}
+	//if *conflicts > 100 {
+	//	log.Fatalf("Conflicts percentage must be between 0 and 100.\n")
+	//}
 
 	var proxy *bindings.Parameters
 	for {
