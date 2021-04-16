@@ -56,6 +56,8 @@ func main() {
 		log.Fatal("Master listen error:", err)
 	}
 
+	log.Printf("Listening on %s:%d\n", l.Addr().String(), *portnum)
+
 	go master.run()
 
 	http.Serve(l, nil)
