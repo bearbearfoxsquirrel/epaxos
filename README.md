@@ -1,5 +1,12 @@
 EPaxos
 ======
+Fork from otrack EPaxos fork from Efficient
+
+# Changes
+- Client bindings are no longer synchronous, blocking until each command is finished (only done for writes)
+- Quorums are selected randomly
+- Timeseries benchmark for clients now
+- Record each command's latency to file for a client (after a settling time)
 
 Based on [efficient/epaxos](https://github.com/efficient/epaxos) -> morethan5
 
