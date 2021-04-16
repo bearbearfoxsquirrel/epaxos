@@ -17,6 +17,7 @@ import (
 var portnum *int = flag.Int("port", 7087, "Port # to listen on. Defaults to 7087")
 var numNodes *int = flag.Int("N", 3, "Number of replicas. Defaults to 3.")
 var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
+var addr *string = flag.String("addr", "", "Master address")
 
 type Master struct {
 	N        int
@@ -50,7 +51,7 @@ func main() {
 
 	rpc.Register(master)
 	rpc.HandleHTTP()
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", *portnum))
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", *addr, *portnum))
 	if err != nil {
 		log.Fatal("Master listen error:", err)
 	}
