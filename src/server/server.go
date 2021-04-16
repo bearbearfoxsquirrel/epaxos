@@ -46,7 +46,7 @@ func main() {
 
 	runtime.GOMAXPROCS(*procs)
 
-	if *quiet {
+	if *quiet == true {
 		log.SetOutput(ioutil.Discard)
 	}
 
