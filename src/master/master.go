@@ -16,7 +16,7 @@ import (
 
 var portnum *int = flag.Int("port", 7087, "Port # to listen on. Defaults to 7087")
 var numNodes *int = flag.Int("N", 3, "Number of replicas. Defaults to 3.")
-var quiet *bool = flag.Bool("quiet", true, "Log nothing?")
+var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
 
 type Master struct {
 	N        int
@@ -32,7 +32,7 @@ type Master struct {
 func main() {
 	flag.Parse()
 
-	if *quiet {
+	if *quiet == true {
 		log.SetOutput(ioutil.Discard)
 	}
 
