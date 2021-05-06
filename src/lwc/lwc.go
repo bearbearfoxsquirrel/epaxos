@@ -173,10 +173,11 @@ type CurrentBackoff struct {
 type BackoffManager struct {
 	currentBackoffs map[int32]CurrentBackoff
 	BackoffInfo
-	sig *chan RetryInfo
+	sig    *chan RetryInfo
+	factor float64
 }
 
-func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo) BackoffManager {
+func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64) BackoffManager {
 	rand.Seed(time.Now().UTC().UnixNano())
 	//	if minBO > maxInitBO || minBO > maxBO {
 	//		panic("Incorrect set up times for backoffs")
@@ -223,9 +224,8 @@ func (bm *BackoffManager) BeginBackoff(inst int32, attemptedConfBal lwcproto.Con
 		prevBackoff = 0 //  (rand.Int31() % bm.maxInitBackoff) + bm.minBackoff
 	}
 
-	factor := 10.
 	t := float64(curAttempt) + rand.Float64()
-	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(factor*t))
+	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(bm.factor*t))
 	tmp *= 1000 + float64(bm.minBackoff)
 	next := int32(tmp) - prevBackoff
 
@@ -276,8 +276,8 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 //type
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool) *Replica {
-	retryInstances := make(chan RetryInfo, maxOpenInstances*100000)
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64) *Replica {
+	retryInstances := make(chan RetryInfo, maxOpenInstances*10000000)
 	r := &Replica{
 		Replica:          genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
 		configChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -311,7 +311,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		noopInstance:        make(chan ProposalInfo, maxOpenInstances*1000),
 		noopWaitUs:          noopwait,
 		retryInstance:       retryInstances,
-		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances),
+		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor),
 	}
 
 	r.Durable = durable
@@ -1072,10 +1072,12 @@ func (r *Replica) shouldProposeNoop(inst int32) bool {
 	if r.alwaysNoop {
 		return true
 	}
-	for i := inst; i <= r.crtInstance; i++ {
+	for i := inst + 1; i <= r.crtInstance; i++ {
 		if r.instanceSpace[i] != nil {
-			if r.instanceSpace[i].abk.status >= ACCEPTED {
-				return true
+			if r.instanceSpace[i].abk != nil {
+				if r.instanceSpace[i].abk.status >= ACCEPTED {
+					return true
+				}
 			}
 		}
 	}

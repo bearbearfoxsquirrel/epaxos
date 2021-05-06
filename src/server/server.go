@@ -36,7 +36,7 @@ var maxInitBackoff = flag.Int("maxibackoff", 9000, "Maximum initial backoff for 
 var maxBackoff = flag.Int("maxbackoff", 1000000, "Maximum backoff for a proposing replica that been preempted")
 var noopWait = flag.Int("noopwait", 10000, "Wait time in microseconds before proposing no-op")
 var alwaysNoop *bool = flag.Bool("alwaysnoop", false, "Always submit noops if there is no command awaiting execution?")
-
+var factor *float64 = flag.Float64("factorbackoff", 1, "Factor for backoff")
 var procs *int = flag.Int("p", 2, "GOMAXPROCS. Defaults to 2")
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 var thrifty = flag.Bool("thrifty", false, "Use only as many messages as strictly required for inter-replica communication.")
@@ -102,7 +102,7 @@ func main() {
 
 	} else if *doLWC {
 		log.Println("Starting LWC replica...")
-		rep := lwc.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop)
+		rep := lwc.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor)
 		rpc.Register(rep)
 	} else {
 		log.Println("Starting classic Paxos replica...")
