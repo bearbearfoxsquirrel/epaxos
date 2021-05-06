@@ -79,6 +79,7 @@ type Replica struct {
 	noopWaitUs          int32
 	retryInstance       chan RetryInfo
 	BackoffManager      BackoffManager
+	alwaysNoop          bool
 }
 
 type ProposerStatus int
@@ -228,6 +229,10 @@ func (bm *BackoffManager) BeginBackoff(inst int32, attemptedConfBal lwcproto.Con
 	tmp *= 1000 + float64(bm.minBackoff)
 	next := int32(tmp) - prevBackoff
 
+	if next > bm.maxBackoff {
+		next = bm.maxBackoff //- prevBackoff
+	}
+
 	log.Printf("Began backoff of %dus for instance %d on conf-bal %d.%d.%d", next, inst, attemptedConfBal.Config, attemptedConfBal.Number, attemptedConfBal.PropID)
 
 	//if (next < bm.minBackoff) {panic("Too low backoff")}
@@ -271,7 +276,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 //type
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*100000)
 	r := &Replica{
 		Replica:          genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -1004,9 +1009,39 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 				pbk.clientProposals = cmds.proposal
 				break
 			default:
-				go func() {
-					noopTimer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
+				if r.shouldProposeNoop(preply.Instance) { //not mem safe but it doesn't really matter
 
+					go func() {
+						noopTimer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
+
+						instNoop := preply.Instance
+						instPropConfBal := inst.pbk.propCurConfBal
+						if len(r.proposableInstances) > 1000 {
+							for i := 0; i < 800; i++ {
+								<-r.proposableInstances
+							}
+
+						}
+
+						r.proposableInstances <- ProposalInfo{
+							inst:             instNoop,
+							proposingConfBal: instPropConfBal,
+						}
+
+						if len(r.noopInstance) > 1000 {
+							for i := 0; i < 800; i++ {
+								<-r.noopInstance
+							}
+
+						}
+
+						<-noopTimer.C // this no op timer will go off if no client value is received during the timeout
+						r.noopInstance <- ProposalInfo{
+							inst:             instNoop,
+							proposingConfBal: instPropConfBal,
+						}
+					}()
+				} else {
 					instNoop := preply.Instance
 					instPropConfBal := inst.pbk.propCurConfBal
 					if len(r.proposableInstances) > 1000 {
@@ -1016,24 +1051,11 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 
 					}
 
-					if len(r.noopInstance) > 1000 {
-						for i := 0; i < 800; i++ {
-							<-r.noopInstance
-						}
-
-					}
-
 					r.proposableInstances <- ProposalInfo{
 						inst:             instNoop,
 						proposingConfBal: instPropConfBal,
 					}
-
-					<-noopTimer.C // this no op timer will go off if no client value is received during the timeout
-					r.noopInstance <- ProposalInfo{
-						inst:             instNoop,
-						proposingConfBal: instPropConfBal,
-					}
-				}()
+				}
 				return
 			}
 		}
@@ -1044,6 +1066,18 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 	r.proposerCheckAndHandleNewAcceptedValue(preply.Instance, r.Id, preply.ConfigBal, inst.pbk.cmds)
 
 	r.bcastAccept(preply.Instance)
+}
+
+func (r *Replica) shouldProposeNoop(inst int32) bool {
+	if r.alwaysNoop {
+		return true
+	}
+	for i := inst; i <= r.crtInstance; i++ {
+		if r.instanceSpace[i].abk.status >= ACCEPTED {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {
