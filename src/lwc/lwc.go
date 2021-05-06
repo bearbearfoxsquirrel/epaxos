@@ -29,6 +29,7 @@ type RetryInfo struct {
 	attemptedConfBal lwcproto.ConfigBal
 	backoffus        int32
 }
+
 type BackoffInfo struct {
 	minBackoff     int32
 	maxInitBackoff int32
@@ -54,15 +55,14 @@ type Replica struct {
 	prepareReplyChan    chan fastrpc.Serializable
 	acceptReplyChan     chan fastrpc.Serializable
 	//instancesToRecover  chan int32
-	prepareRPC      uint8
-	acceptRPC       uint8
-	commitRPC       uint8
-	commitShortRPC  uint8
-	prepareReplyRPC uint8
-	acceptReplyRPC  uint8
-	instanceSpace   []*Instance // the space of all instances (used and not yet used)
-	//	outstandingValues 	map[state.Command]genericsmrproto.Propose
-	crtInstance         int32 // highest active instance number that this replica knows about
+	prepareRPC          uint8
+	acceptRPC           uint8
+	commitRPC           uint8
+	commitShortRPC      uint8
+	prepareReplyRPC     uint8
+	acceptReplyRPC      uint8
+	instanceSpace       []*Instance // the space of all instances (used and not yet used)
+	crtInstance         int32       // highest active instance number that this replica knows about
 	crtConfig           int32
 	Shutdown            bool
 	counter             int
@@ -74,12 +74,11 @@ type Replica struct {
 	beginNew            chan struct{}
 	crtOpenedInstances  []int32
 	proposableInstances chan ProposalInfo
-	//	instanceToSkip      map[int32]bool
-	valuesToPropose chan ProposalTuples
-	noopInstance    chan ProposalInfo
-	noopWaitUs      int32
-	retryInstance   chan RetryInfo
-	BackoffManager  BackoffManager
+	valuesToPropose     chan ProposalTuples
+	noopInstance        chan ProposalInfo
+	noopWaitUs          int32
+	retryInstance       chan RetryInfo
+	BackoffManager      BackoffManager
 }
 
 type ProposerStatus int
@@ -178,9 +177,9 @@ type BackoffManager struct {
 
 func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo) BackoffManager {
 	rand.Seed(time.Now().UTC().UnixNano())
-	if minBO > maxInitBO || minBO > maxBO {
-		panic("Incorrect set up times for backoffs")
-	}
+	//	if minBO > maxInitBO || minBO > maxBO {
+	//		panic("Incorrect set up times for backoffs")
+	//}
 	return BackoffManager{
 		currentBackoffs: make(map[int32]CurrentBackoff),
 		BackoffInfo: BackoffInfo{
@@ -220,22 +219,24 @@ func (bm *BackoffManager) BeginBackoff(inst int32, attemptedConfBal lwcproto.Con
 	} else {
 		curAttempt = 0
 		//prevBackoff = bm.minBackoff //
-		prevBackoff = (rand.Int31() % bm.maxInitBackoff) + bm.minBackoff
+		prevBackoff = 0 //  (rand.Int31() % bm.maxInitBackoff) + bm.minBackoff
 	}
 
-	factor := 1.
+	factor := 10.
 	t := float64(curAttempt) + rand.Float64()
-	next := int32(math.Pow(2, t) * math.Tanh(math.Sqrt(factor*t)))
-	next = next - prevBackoff
+	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(factor*t))
+	tmp *= 1000 + float64(bm.minBackoff)
+	next := int32(tmp) - prevBackoff
 
-	next = 100000
+	log.Printf("Began backoff of %dus for instance %d on conf-bal %d.%d.%d", next, inst, attemptedConfBal.Config, attemptedConfBal.Number, attemptedConfBal.PropID)
+
+	//if (next < bm.minBackoff) {panic("Too low backoff")}
 
 	bm.currentBackoffs[inst] = CurrentBackoff{
 		backoffTimeUs:    next,
 		preemptedConfBal: attemptedConfBal,
 		attemptNo:        curAttempt,
 	}
-	dlog.Printf("Began backoff for instance %d on conf-bal", inst, attemptedConfBal.Config, attemptedConfBal.Number, attemptedConfBal.PropID)
 
 	go func() {
 		timer := time.NewTimer(time.Duration(next) * time.Microsecond)
@@ -271,7 +272,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 //type
 
 func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32) *Replica {
-	retryInstances := make(chan RetryInfo, maxOpenInstances*1000)
+	retryInstances := make(chan RetryInfo, maxOpenInstances*100000)
 	r := &Replica{
 		Replica:          genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
 		configChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),

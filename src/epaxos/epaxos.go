@@ -938,6 +938,8 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 		if lb.nacks+1 > r.N>>1 {
 			if r.IsLeader {
 				r.makeBallot(pareply.Replica, pareply.Instance)
+				r.recordInstanceMetadata(inst)
+				r.sync()
 				dlog.Printf("Retrying with ballot %d \n", lb.lastTriedBallot)
 				r.bcastPrepare(pareply.Replica, pareply.Instance)
 			}
@@ -1045,6 +1047,7 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 		inst.Deps = lb.deps
 		inst.Seq = lb.seq
 		r.recordInstanceMetadata(inst)
+		r.recordCommands(inst.Cmds)
 		r.sync()
 
 		r.bcastAccept(pareply.Replica, pareply.Instance)
@@ -1094,6 +1097,7 @@ func (r *Replica) handleAccept(accept *epaxosproto.Accept) {
 		inst.bal = accept.Ballot
 		inst.vbal = accept.Ballot
 		r.recordInstanceMetadata(r.InstanceSpace[accept.Replica][accept.Instance])
+		r.recordCommands(inst.Cmds)
 		r.sync()
 	}
 
@@ -1127,6 +1131,8 @@ func (r *Replica) handleAcceptReply(areply *epaxosproto.AcceptReply) {
 		if lb.nacks+1 > r.N>>1 {
 			if r.IsLeader {
 				r.makeBallot(areply.Replica, areply.Instance)
+				r.recordInstanceMetadata(inst)
+				r.sync()
 				dlog.Printf("Retrying with ballot %d \n", lb.lastTriedBallot)
 				r.bcastPrepare(areply.Replica, areply.Instance)
 			}
@@ -1141,6 +1147,7 @@ func (r *Replica) handleAcceptReply(areply *epaxosproto.AcceptReply) {
 		inst.Status = epaxosproto.COMMITTED
 		r.updateCommitted(areply.Replica)
 		r.recordInstanceMetadata(inst)
+		r.recordCommands(inst.Cmds)
 		r.sync() //is this necessary here?
 
 		if inst.lb.clientProposals != nil && !r.Dreply {

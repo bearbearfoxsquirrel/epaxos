@@ -31,9 +31,9 @@ var doEpaxos *bool = flag.Bool("e", false, "Use EPaxos as the replication protoc
 var doLWC *bool = flag.Bool("l", false, "Use Less Writey Consensus as the replication protocol. Defaults to false.")
 var crtConfig = flag.Int("config", 1, "Current config in LWC")
 var maxOInstances = flag.Int("oi", 50, "Max number of open instances in leaderless LWC")
-var minBackoff = flag.Int("minbackoff", 500000, "Minimum backoff for a proposing replica that been preempted")
-var maxInitBackoff = flag.Int("maxibackoff", 900000, "Maximum initial backoff for a proposing replica that been preempted")
-var maxBackoff = flag.Int("maxbackoff", 10000000, "Maximum backoff for a proposing replica that been preempted")
+var minBackoff = flag.Int("minbackoff", 5000, "Minimum backoff for a proposing replica that been preempted")
+var maxInitBackoff = flag.Int("maxibackoff", 9000, "Maximum initial backoff for a proposing replica that been preempted")
+var maxBackoff = flag.Int("maxbackoff", 1000000, "Maximum backoff for a proposing replica that been preempted")
 var noopWait = flag.Int("noopwait", 10000, "Wait time in microseconds before proposing no-op")
 
 var procs *int = flag.Int("p", 2, "GOMAXPROCS. Defaults to 2")
