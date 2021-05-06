@@ -189,7 +189,8 @@ func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo
 			maxInitBackoff: maxInitBO,
 			maxBackoff:     maxBO,
 		},
-		sig: signalChan,
+		sig:    signalChan,
+		factor: factor,
 	}
 }
 
@@ -243,9 +244,8 @@ func (bm *BackoffManager) BeginBackoff(inst int32, attemptedConfBal lwcproto.Con
 		attemptNo:        curAttempt,
 	}
 
+	timer := time.NewTimer(time.Duration(next) * time.Microsecond)
 	go func() {
-		timer := time.NewTimer(time.Duration(next) * time.Microsecond)
-
 		<-timer.C
 		*bm.sig <- RetryInfo{
 			InstToPrep:       inst,
@@ -277,7 +277,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 //type
 
 func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64) *Replica {
-	retryInstances := make(chan RetryInfo, maxOpenInstances*10000000)
+	retryInstances := make(chan RetryInfo, maxOpenInstances*1000000)
 	r := &Replica{
 		Replica:          genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
 		configChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -1010,14 +1010,13 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 				break
 			default:
 				if r.shouldProposeNoop(preply.Instance) { //not mem safe but it doesn't really matter
+					noopTimer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
 
 					go func() {
-						noopTimer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
-
 						instNoop := preply.Instance
 						instPropConfBal := inst.pbk.propCurConfBal
-						if len(r.proposableInstances) > 1000 {
-							for i := 0; i < 800; i++ {
+						if int32(len(r.proposableInstances)) > r.maxBeganInstances {
+							for i := 0; i < int(r.maxBeganInstances); i++ {
 								<-r.proposableInstances
 							}
 
@@ -1028,8 +1027,8 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 							proposingConfBal: instPropConfBal,
 						}
 
-						if len(r.noopInstance) > 1000 {
-							for i := 0; i < 800; i++ {
+						if int32(len(r.noopInstance)) > r.maxBeganInstances {
+							for i := 0; i < int(r.maxBeganInstances); i++ {
 								<-r.noopInstance
 							}
 
