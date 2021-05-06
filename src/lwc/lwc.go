@@ -227,11 +227,15 @@ func (bm *BackoffManager) BeginBackoff(inst int32, attemptedConfBal lwcproto.Con
 
 	t := float64(curAttempt) + rand.Float64()
 	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(bm.factor*t))
-	tmp *= 1000 + float64(bm.minBackoff)
-	next := int32(tmp) - prevBackoff
+	tmp *= 1000
+	next := int32(tmp) - prevBackoff + bm.minBackoff
 
 	if next > bm.maxBackoff {
 		next = bm.maxBackoff //- prevBackoff
+	}
+
+	if next < bm.minBackoff {
+		next += bm.minBackoff
 	}
 
 	log.Printf("Began backoff of %dus for instance %d on conf-bal %d.%d.%d", next, inst, attemptedConfBal.Config, attemptedConfBal.Number, attemptedConfBal.PropID)
