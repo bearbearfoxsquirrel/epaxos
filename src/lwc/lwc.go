@@ -1073,8 +1073,10 @@ func (r *Replica) shouldProposeNoop(inst int32) bool {
 		return true
 	}
 	for i := inst; i <= r.crtInstance; i++ {
-		if r.instanceSpace[i].abk.status >= ACCEPTED {
-			return true
+		if r.instanceSpace[i] != nil {
+			if r.instanceSpace[i].abk.status >= ACCEPTED {
+				return true
+			}
 		}
 	}
 	return false
