@@ -293,6 +293,7 @@ func (r Replica) replicaLoop() {
 			r.RandomisePeerOrder()
 			dlog.Println("Recomputing closest peers")
 			newPeerOrderTimer = time.NewTimer(1 * time.Second)
+			break
 			//go func() {
 			//	<-newPeerOrderTimer.C
 			//	timerDone <- true

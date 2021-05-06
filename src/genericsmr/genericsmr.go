@@ -76,8 +76,8 @@ type Replica struct {
 	rpcTable map[uint8]*RPCPair
 	rpcCode  uint8
 
-	Ewma []float64
-	//Latencies []int64
+	Ewma      []float64
+	Latencies []int64
 
 	Mutex sync.Mutex
 
@@ -113,7 +113,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		make(map[uint8]*RPCPair),
 		genericsmrproto.GENERIC_SMR_BEACON_REPLY + 1,
 		make([]float64, len(peerAddrList)),
-
+		make([]int64, len(peerAddrList)),
 		sync.Mutex{},
 		&genericsmrproto.Stats{make(map[string]int)}}
 
@@ -326,6 +326,7 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 				}
 				rpair.Chan <- obj
 			} else {
+
 				log.Fatal("Error: received unknown message type ", msgType, " from  ", rid)
 			}
 		}
@@ -436,6 +437,10 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
 
+	if _, present := r.rpcTable[code]; !present && code != genericsmrproto.GENERIC_SMR_BEACON_REPLY && code != genericsmrproto.GENERIC_SMR_BEACON && code != 0 {
+		panic("Invalid code to send")
+	}
+
 	w := r.PeerWriters[peerId]
 	if w == nil {
 		log.Printf("Connection to %d lost!\n", peerId)
@@ -448,6 +453,11 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 
 func (r *Replica) SendMsgNoFlush(peerId int32, code uint8, msg fastrpc.Serializable) {
 	w := r.PeerWriters[peerId]
+
+	if _, present := r.rpcTable[code]; !present && code != genericsmrproto.GENERIC_SMR_BEACON_REPLY && code != genericsmrproto.GENERIC_SMR_BEACON && code != 0 {
+		panic("Invalid code to send")
+	}
+
 	if w == nil {
 		log.Printf("Connection to %d lost!\n", peerId)
 		return
@@ -502,33 +512,33 @@ func (r *Replica) ReplyBeacon(beacon *Beacon) {
 
 // updates the preferred order in which to communicate with peers according to a preferred quorum
 func (r *Replica) UpdatePreferredPeerOrder(quorum []int32) {
-	/*	aux := make([]int32, r.N)
-		i := 0
-		for _, p := range quorum {
-			if p == r.Id {
-				continue
-			}
-			aux[i] = p
-			i++
-		}
-
-		for _, p := range r.PreferredPeerOrder {
-			found := false
-			for j := 0; j < i; j++ {
-				if aux[j] == p {
-					found = true
-					break
+	/*		aux := make([]int32, r.N)
+			i := 0
+			for _, p := range quorum {
+				if p == r.Id {
+					continue
 				}
-			}
-			if !found {
 				aux[i] = p
 				i++
 			}
-		}
 
-		r.Mutex.Lock()
-		r.PreferredPeerOrder = aux
-		r.Mutex.Unlock()*/
+			for _, p := range r.PreferredPeerOrder {
+				found := false
+				for j := 0; j < i; j++ {
+					if aux[j] == p {
+						found = true
+						break
+					}
+				}
+				if !found {
+					aux[i] = p
+					i++
+				}
+			}
+
+			r.Mutex.Lock()
+			r.PreferredPeerOrder = aux
+			r.Mutex.Unlock()*/
 }
 
 func (r *Replica) RandomisePeerOrder() {
@@ -542,12 +552,22 @@ func (r *Replica) RandomisePeerOrder() {
 	})
 
 	// move self to end (we don't ever send to selves)
+	theEnd := len(r.PreferredPeerOrder) - 1
 	for i := 0; i < len(r.PreferredPeerOrder); i++ {
 		if r.PreferredPeerOrder[i] == r.Id {
-			tmp := r.PreferredPeerOrder[len(r.PreferredPeerOrder)-1]
-			r.PreferredPeerOrder[len(r.PreferredPeerOrder)-1] = r.PreferredPeerOrder[i]
+			tmp := r.PreferredPeerOrder[theEnd]
+			r.PreferredPeerOrder[theEnd] = r.PreferredPeerOrder[i]
 			r.PreferredPeerOrder[i] = tmp
+		}
+	}
 
+	theEnd--
+	for i := 0; i < theEnd; i++ {
+		if !r.Alive[r.PreferredPeerOrder[i]] {
+			tmp := r.PreferredPeerOrder[theEnd]
+			r.PreferredPeerOrder[theEnd] = r.PreferredPeerOrder[i]
+			r.PreferredPeerOrder[i] = tmp
+			theEnd--
 		}
 	}
 	r.Mutex.Unlock()
@@ -563,7 +583,7 @@ func (r *Replica) RandomisePeerOrder() {
 				r.Mutex.Unlock()
 				r.SendBeacon(i)
 			} else {
-			//	r.Latencies[i] = math.MaxInt64
+				r.Latencies[i] = math.MaxInt64
 				r.Mutex.Unlock()
 			}
 		}
@@ -576,9 +596,9 @@ func (r *Replica) RandomisePeerOrder() {
 	for i := int32(0); i < int32(r.N); i++ {
 		pos := 0
 		for j := int32(0); j < int32(r.N); j++ {
-		//	if (r.Latencies[j] < r.Latencies[i]) || ((r.Latencies[j] == r.Latencies[i]) && (j < i)) {
-		//		pos++
-		//	}
+			if (r.Latencies[j] < r.Latencies[i]) || ((r.Latencies[j] == r.Latencies[i]) && (j < i)) {
+				pos++
+			}
 		}
 		quorum[pos] = int32(i)
 	}
@@ -590,6 +610,6 @@ func (r *Replica) RandomisePeerOrder() {
 		node := r.PreferredPeerOrder[i]
 		lat := float64(r.Latencies[node]) / float64(npings*1000000)
 		log.Println(node, " -> ", lat, "ms")
-	}*/
-
+	}
+	*/
 }

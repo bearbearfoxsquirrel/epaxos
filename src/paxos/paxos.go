@@ -126,9 +126,18 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 		return
 	}
 
-	var b [5]byte
-	binary.LittleEndian.PutUint32(b[0:4], uint32(inst.bal))
-	b[4] = byte(inst.status)
+	var b [1]byte
+	b[0] = byte(inst.status)
+	r.StableStore.Write(b[:])
+}
+
+func (r *Replica) recordConfig(config int32) {
+	if !r.Durable {
+		return
+	}
+
+	var b [4]byte
+	binary.LittleEndian.PutUint32(b[0:4], uint32(config))
 	r.StableStore.Write(b[:])
 }
 
@@ -472,7 +481,7 @@ func (r *Replica) handlePrepare(prepare *paxosproto.Prepare) {
 		dlog.Printf("Ballot %d already joined", prepare.Ballot)
 	}
 
-	preply := &paxosproto.PrepareReply{prepare.Instance, inst.bal, inst.vbal, r.defaultBallot[r.Id], r.Id, inst.cmds}
+	preply := &paxosproto.PrepareReply{r.maxRecvBallot, prepare.Instance, inst.bal, inst.vbal, r.defaultBallot[r.Id], r.Id, inst.cmds}
 	r.replyPrepare(prepare.LeaderId, preply)
 
 }

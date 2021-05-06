@@ -7,6 +7,7 @@ import (
 	"gpaxos"
 	"io/ioutil"
 	"log"
+	"lwc"
 	"masterproto"
 	"mencius"
 	"net"
@@ -27,6 +28,14 @@ var myAddr *string = flag.String("addr", "", "Server address (this machine). Def
 var doMencius *bool = flag.Bool("m", false, "Use Mencius as the replication protocol. Defaults to false.")
 var doGpaxos *bool = flag.Bool("g", false, "Use Generalized Paxos as the replication protocol. Defaults to false.")
 var doEpaxos *bool = flag.Bool("e", false, "Use EPaxos as the replication protocol. Defaults to false.")
+var doLWC *bool = flag.Bool("l", false, "Use Less Writey Consensus as the replication protocol. Defaults to false.")
+var crtConfig = flag.Int("config", 1, "Current config in LWC")
+var maxOInstances = flag.Int("oi", 50, "Max number of open instances in leaderless LWC")
+var minBackoff = flag.Int("minbackoff", 500000, "Minimum backoff for a proposing replica that been preempted")
+var maxInitBackoff = flag.Int("maxibackoff", 900000, "Maximum initial backoff for a proposing replica that been preempted")
+var maxBackoff = flag.Int("maxbackoff", 10000000, "Maximum backoff for a proposing replica that been preempted")
+var noopWait = flag.Int("noopwait", 10000, "Wait time in microseconds before proposing no-op")
+
 var procs *int = flag.Int("p", 2, "GOMAXPROCS. Defaults to 2")
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 var thrifty = flag.Bool("thrifty", false, "Use only as many messages as strictly required for inter-replica communication.")
@@ -88,6 +97,11 @@ func main() {
 	} else if *doGpaxos {
 		log.Println("Starting Generalized Paxos replica...")
 		rep := gpaxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *maxfailures)
+		rpc.Register(rep)
+
+	} else if *doLWC {
+		log.Println("Starting LWC replica...")
+		rep := lwc.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait))
 		rpc.Register(rep)
 	} else {
 		log.Println("Starting classic Paxos replica...")

@@ -4,13 +4,23 @@ import (
 	"state"
 )
 
+const (
+	PREPARE uint8 = iota
+	PREPARE_REPLY
+	ACCEPT
+	ACCEPT_REPLY
+	COMMIT
+	COMMIT_SHORT
+)
+
 type Prepare struct {
-	LeaderId   int32
-	Instance   int32
-	Ballot     int32
+	LeaderId int32
+	Instance int32
+	Ballot   int32
 }
 
 type PrepareReply struct {
+	LBallot       int32
 	Instance      int32
 	Ballot        int32
 	VBallot       int32
