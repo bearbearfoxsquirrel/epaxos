@@ -271,7 +271,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 //type
 
 func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32) *Replica {
-	retryInstances := make(chan RetryInfo, maxOpenInstances)
+	retryInstances := make(chan RetryInfo, maxOpenInstances*1000)
 	r := &Replica{
 		Replica:          genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
 		configChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
