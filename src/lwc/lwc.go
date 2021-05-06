@@ -231,7 +231,7 @@ func (bm *BackoffManager) BeginBackoff(inst int32, attemptedConfBal lwcproto.Con
 	next := int32(tmp) - prevBackoff + bm.minBackoff
 
 	if next > bm.maxBackoff {
-		next = bm.maxBackoff //- prevBackoff
+		next = bm.maxBackoff - prevBackoff
 	}
 
 	if next < bm.minBackoff {
