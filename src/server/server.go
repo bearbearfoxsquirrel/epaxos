@@ -29,6 +29,7 @@ var doMencius *bool = flag.Bool("m", false, "Use Mencius as the replication prot
 var doGpaxos *bool = flag.Bool("g", false, "Use Generalized Paxos as the replication protocol. Defaults to false.")
 var doEpaxos *bool = flag.Bool("e", false, "Use EPaxos as the replication protocol. Defaults to false.")
 var doLWC *bool = flag.Bool("l", false, "Use Less Writey Consensus as the replication protocol. Defaults to false.")
+var doPatientLeaderlessLWP *bool = flag.Bool("lp", false, "Use Less Writey Consensus (but do patient proposals) as the replication protocol. Defaults to false.")
 var crtConfig = flag.Int("config", 1, "Current config in LWC")
 var maxOInstances = flag.Int("oi", 50, "Max number of open instances in leaderless LWC")
 var minBackoff = flag.Int("minbackoff", 5000, "Minimum backoff for a proposing replica that been preempted")
@@ -104,6 +105,10 @@ func main() {
 		log.Println("Starting LWC replica...")
 		rep := lwc.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor)
 		rpc.Register(rep)
+	} else if *doPatientLeaderlessLWP {
+		//	rep := lwc.NewReplicaPatient(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor)
+		//	rpc.Register(rep)
+
 	} else {
 		log.Println("Starting classic Paxos replica...")
 		rep := paxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures)
