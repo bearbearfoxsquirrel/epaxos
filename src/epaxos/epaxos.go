@@ -77,6 +77,7 @@ type Replica struct {
 	maxRecvBallot         int32
 	batchWait             int
 	transconf             bool
+	fastLearn             bool
 }
 
 type Instance struct {
@@ -120,7 +121,7 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool) *Replica {
 	r := &Replica{
 		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -149,7 +150,8 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		false,
 		-1,
 		batchWait,
-		transconf}
+		transconf,
+		fastLearn}
 
 	r.Beacon = beacon
 	r.Durable = durable
@@ -579,7 +581,7 @@ func (r *Replica) bcastPreAccept(replica int32, instance int32) {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
 			continue
 		}
-		log.Println("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+		log.Printf("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
 		r.SendMsg(r.PreferredPeerOrder[q], r.preAcceptRPC, pa)
 		sent++
 		if sent >= n {
@@ -827,11 +829,11 @@ func (r *Replica) startPhase1(cmds []state.Command, replica int32, instance int3
 	}
 
 	inst := r.newInstance(replica, instance, cmds, ballot, ballot, epaxosproto.PREACCEPTED, seq, deps)
-	inst.lb = r.newLeaderBookkeeping(proposals, deps, comDeps, deps, ballot, cmds, epaxosproto.PREACCEPTED, -1)
 	r.InstanceSpace[replica][instance] = inst
 
 	r.updateConflicts(cmds, replica, instance, seq)
 
+	inst.lb = r.newLeaderBookkeeping(proposals, deps, comDeps, deps, ballot, cmds, epaxosproto.PREACCEPTED, seq)
 	if seq >= r.maxSeq {
 		r.maxSeq = seq
 	}
@@ -880,6 +882,7 @@ func (r *Replica) handlePreAccept(preAccept *epaxosproto.PreAccept) {
 
 		//reordered handling of commit/accept and pre-accept
 		if inst.Cmds == nil {
+			panic("this shouldn't happen????")
 			r.InstanceSpace[preAccept.LeaderId][preAccept.Instance].Cmds = preAccept.Command
 			r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
 			r.recordCommands(preAccept.Command)
@@ -893,6 +896,9 @@ func (r *Replica) handlePreAccept(preAccept *epaxosproto.PreAccept) {
 		if changed {
 			status = epaxosproto.PREACCEPTED
 		}
+
+		//	originalDeps := make([]int32, len(inst.Deps))
+		//	copy(originalDeps, inst.Deps)
 		inst.Cmds = preAccept.Command
 		inst.Seq = seq
 		inst.Deps = deps
@@ -900,11 +906,52 @@ func (r *Replica) handlePreAccept(preAccept *epaxosproto.PreAccept) {
 		inst.vbal = preAccept.Ballot
 		inst.Status = status
 
-		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
-		r.recordInstanceMetadata(r.InstanceSpace[preAccept.Replica][preAccept.Instance])
-		r.recordCommands(preAccept.Command)
-		r.sync()
+		/*eqDeps := true
+		if len(inst.Deps) != len(preAccept.Deps) {
+			eqDeps = false
+		} else {
+			for i:=0; i<len(inst.Deps); i++ {
+				if inst.Deps[i] != preAccept.Deps[i] {
+					eqDeps = false
+					break
+				}
+			}
+		}
+		*/
+		if r.N <= 3 && r.fastLearn { //eqDeps && inst.Seq == preAccept.Seq {
+			//	inst.Status = epaxosproto.COMMITTED
+			//	r.updateCommitted(preAccept.Replica)
 
+			commit := &epaxosproto.Commit{
+				LeaderId: preAccept.LeaderId,
+				Replica:  preAccept.Replica,
+				Instance: preAccept.Instance,
+				Ballot:   preAccept.Ballot,
+				Command:  preAccept.Command,
+				Seq:      preAccept.Seq,
+				Deps:     preAccept.Deps,
+			}
+
+			dlog.Printf("Able to quick learn %d.%d with seq %d", preAccept.Instance, preAccept.Replica, preAccept.Seq)
+			r.handleCommit(commit)
+			for q := 0; q < r.N-1; q++ {
+				if !r.Alive[r.PreferredPeerOrder[q]] {
+					continue
+				}
+				dlog.Printf("Sending Commit %d.%d to %d\n", preAccept.Replica, preAccept.Instance, r.PreferredPeerOrder[q])
+				r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, commit)
+			}
+			return
+		} else {
+			dlog.Printf("Cannot quick learn %d.%d with seq %d. We are at seq %d", preAccept.Replica, preAccept.Instance, preAccept.Seq, inst.Seq)
+
+			r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
+			r.recordInstanceMetadata(r.InstanceSpace[preAccept.Replica][preAccept.Instance])
+			r.recordCommands(preAccept.Command)
+			r.sync()
+
+			//	panic("will not quick learn")
+		}
 	}
 
 	reply := &epaxosproto.PreAcceptReply{

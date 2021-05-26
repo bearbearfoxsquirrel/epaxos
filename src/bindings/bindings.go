@@ -255,11 +255,8 @@ func (b *Parameters) Disconnect() {
 // not idempotent in case of a failure
 func (b *Parameters) Write(id int32, key int64, value []byte) {
 	//b.id++
-	args := genericsmrproto.Propose{id, state.Command{state.PUT, 0, state.NIL()}, 0}
+	args := genericsmrproto.Propose{id, state.Command{state.PUT, state.Key(key), value}, 0}
 	args.CommandId = id //b.id
-	args.Command.K = state.Key(key)
-	args.Command.V = value
-	args.Command.Op = state.PUT
 
 	if b.verbose {
 		log.Println(args.Command.String())

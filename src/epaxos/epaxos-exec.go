@@ -133,6 +133,7 @@ func (e *Exec) strongconnect(v *Instance, index *int) bool {
 				dlog.Printf("Executing "+w.Cmds[idx].String()+" at %d.%d with (seq=%d, deps=%d, scc_size=%d, shouldRespond=%t)\n", w.id.replica, w.id.instance, w.Seq, w.Deps, len(list), shouldRespond)
 				if w.Cmds[idx].Op == state.NONE {
 					// nothing to do
+
 				} else if shouldRespond {
 					dlog.Println("Executed value being sent to clients")
 
@@ -148,7 +149,20 @@ func (e *Exec) strongconnect(v *Instance, index *int) bool {
 						w.lb.clientProposals[idx].Mutex)
 				} else if w.Cmds[idx].Op == state.PUT {
 					w.Cmds[idx].Execute(e.r.State)
+					/*	for i := 0; i < len(w.Deps); i++ {
+							if w.Deps[i] > -1 {
+								depsDeps := e.r.InstanceSpace[0][w.Deps[i]].Deps
+								for j := 0; j < len(depsDeps); i++ {
+									if depsDeps[j] != -1 {
+										e.r.InstanceSpace[j][depsDeps[j]] = nil
+									}
+								}
+							}
+						}
+
+					*/
 				}
+
 			}
 			w.Status = epaxosproto.EXECUTED
 		}

@@ -51,6 +51,7 @@ var batchWait = flag.Int("batchwait", 0, "Milliseconds to wait before sending a 
 var transitiveConflicts = flag.Bool("transitiveconf", true, "Conflict relation is transitive.")
 var storageParentDir = flag.String("storageparentdir", "./", "The parent directory of the stable storage file. Defaults to ./")
 var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
+var fastLearn *bool = flag.Bool("flearn", false, "Learn quickly when f=1")
 
 func main() {
 	flag.Parse()
@@ -90,7 +91,7 @@ func main() {
 	//TODO give parent dir to all replica types
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
-		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir)
+		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn)
 		rpc.Register(rep)
 	} else if *doMencius {
 		log.Println("Starting Mencius replica...")

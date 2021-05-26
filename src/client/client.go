@@ -35,7 +35,7 @@ var settleInTime = flag.Int("settletime", 60, "Number of seconds to allow before
 var numLatenciesRecording = flag.Int("numlatencies", 30000, "Number of latencies to record")
 
 type ClientValue struct {
-	uid   int64 //not great but its only for testing. Only need uid for local client
+	uid   int32 //not great but its only for testing. Only need uid for local client
 	key   int64
 	value []byte
 }
@@ -140,7 +140,7 @@ func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToReco
 
 type ClientBenchmarker struct {
 	timeseriesStates     TimeseriesStats
-	valueSubmissionTimes map[int64]time.Time
+	valueSubmissionTimes map[int32]time.Time
 	latencyRecorder      LatencyRecorder
 	clientID             int64
 }
@@ -148,7 +148,7 @@ type ClientBenchmarker struct {
 func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string) ClientBenchmarker {
 	benchmarker := ClientBenchmarker{
 		timeseriesStates:     NewTimeseriesStates(),
-		valueSubmissionTimes: make(map[int64]time.Time),
+		valueSubmissionTimes: make(map[int32]time.Time),
 		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord),
 		clientID:             clientID,
 	}
@@ -161,6 +161,7 @@ func (benchmarker *ClientBenchmarker) register(value ClientValue) bool {
 		return false
 	}
 	benchmarker.valueSubmissionTimes[value.uid] = time.Now()
+
 	return true
 }
 
@@ -182,13 +183,16 @@ func (benchmarker *ClientBenchmarker) timeseriesStep() {
 	benchmarker.timeseriesStates.reset()
 }
 
-func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize int) ClientValue {
+func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize int, maxOutstanding int) ClientValue {
+	if len(benchmarker.valueSubmissionTimes) == maxOutstanding {
+		panic("too many added to client outstadning values")
+	}
 	registered := false
 	wValue := make([]byte, valSize)
 	rand.Read(wValue)
 	val := ClientValue{
-		uid:   int64(rand.Int31()),
-		key:   int64(rand.Int31() % int32(*conflicts+1)),
+		uid:   rand.Int31(),
+		key:   rand.Int63() % int64(*conflicts+1),
 		value: wValue,
 	}
 	for !registered {
@@ -234,25 +238,24 @@ func main() {
 	go func() {
 		replicaReader := proxy.GetListener()
 		for {
+
 			rep := new(genericsmrproto.ProposeReplyTS)
-			//b.receiveMutex.Lock()
 			if err := rep.Unmarshal(replicaReader); err == nil {
 				if rep.OK == uint8(1) {
 					valueDone <- ClientValue{
-						uid:   int64(rep.CommandId),
+						uid:   rep.CommandId,
 						key:   int64(rand.Int31() % int32(*conflicts+1)),
 						value: rep.Value,
 					}
 				} else {
 					err = errors.New("Failed to receive a response.")
 				}
-
 			}
 		}
 	}()
 
 	for i := 0; i < *outstanding; i++ {
-		value := generateAndBeginBenchmarkingValue(benchmarker, *psize)
+		value := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
 		proxy.Write(int32(value.uid), value.key, value.value)
 		//go benchmarkValue(proxy, valueDone, value, &mutex)
 	}
@@ -276,13 +279,18 @@ func main() {
 				<-statsTimer.C
 				shouldStats <- true
 			}()
+			break
 		case value := <-valueDone:
-			benchmarker.close(value)
-			newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize)
-			benchmarkValue(proxy, newValue)
+			done := benchmarker.close(value)
+			if !done {
+				//	panic("returned value already done or never started")
+			} else {
+				newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
+				benchmarkValue(proxy, newValue)
+			}
 			//case value <-listener:
-
-		default:
+			break
+			//default:
 		}
 	}
 

@@ -34,7 +34,7 @@ func (bal Ballot) Equal(cmp Ballot) bool {
 }
 
 type Ballot struct {
-	Number int16
+	Number int32
 	PropID int16
 }
 
@@ -75,6 +75,6 @@ type Commit struct {
 type CommitShort struct {
 	LeaderId int32
 	Instance int32
-	Count    int32
 	ConfigBal
+	Count int32
 }
