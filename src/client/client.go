@@ -64,7 +64,7 @@ func (timeseriesStats TimeseriesStats) String() string {
 	if timeseriesStats.minLatency == math.MaxInt64 {
 		minLat = 0
 	}
-	return fmt.Sprintf("%d value/sec, %.2f Mbps, latency min %d us max %d us avg %d us\n",
+	return fmt.Sprintf("%d value/sec, %.2f Mbps, latency min %d us max %d us avg %d us",
 		timeseriesStats.deliveredRequests, mbps, minLat,
 		timeseriesStats.maxLatency, timeseriesStats.avgLatency)
 }

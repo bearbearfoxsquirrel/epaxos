@@ -118,10 +118,9 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		&genericsmrproto.Stats{make(map[string]int)}}
 
 	storage = storageParentDir
-
 	var err error
 	r.StableStore, err =
-		os.Create(fmt.Sprintf("%v/stable-store-replica%d", storage, r.Id))
+		os.OpenFile(fmt.Sprintf("%v/stable-store-replica%d", storage, r.Id), os.O_RDWR|os.O_CREATE, 0755)
 
 	if err != nil {
 		log.Fatal(err)
@@ -566,35 +565,35 @@ func (r *Replica) RandomisePeerOrder() {
 	r.Mutex.Lock()
 	old := make([]int32, r.N)
 	copy(old, r.PreferredPeerOrder)
-	for testEq(old, r.PreferredPeerOrder) {
+	//for testEq(old, r.PreferredPeerOrder) {
 
-		for i := 0; i < len(r.PreferredPeerOrder); i++ {
-			r.PreferredPeerOrder[i] = int32(i)
-		}
-		rand.Shuffle(r.N, func(i, j int) {
-			r.PreferredPeerOrder[i], r.PreferredPeerOrder[j] = r.PreferredPeerOrder[j], r.PreferredPeerOrder[i]
-		})
+	for i := 0; i < len(r.PreferredPeerOrder); i++ {
+		r.PreferredPeerOrder[i] = int32(i)
+	}
+	rand.Shuffle(r.N, func(i, j int) {
+		r.PreferredPeerOrder[i], r.PreferredPeerOrder[j] = r.PreferredPeerOrder[j], r.PreferredPeerOrder[i]
+	})
 
-		// move self to end (we don't ever send to selves)
-		theEnd := len(r.PreferredPeerOrder) - 1
-		for i := 0; i < len(r.PreferredPeerOrder); i++ {
-			if r.PreferredPeerOrder[i] == r.Id {
-				tmp := r.PreferredPeerOrder[theEnd]
-				r.PreferredPeerOrder[theEnd] = r.PreferredPeerOrder[i]
-				r.PreferredPeerOrder[i] = tmp
-			}
-		}
-
-		theEnd--
-		for i := 0; i < theEnd; i++ {
-			if !r.Alive[r.PreferredPeerOrder[i]] {
-				tmp := r.PreferredPeerOrder[theEnd]
-				r.PreferredPeerOrder[theEnd] = r.PreferredPeerOrder[i]
-				r.PreferredPeerOrder[i] = tmp
-				theEnd--
-			}
+	// move self to end (we don't ever send to selves)
+	theEnd := len(r.PreferredPeerOrder) - 1
+	for i := 0; i < len(r.PreferredPeerOrder); i++ {
+		if r.PreferredPeerOrder[i] == r.Id {
+			tmp := r.PreferredPeerOrder[theEnd]
+			r.PreferredPeerOrder[theEnd] = r.PreferredPeerOrder[i]
+			r.PreferredPeerOrder[i] = tmp
 		}
 	}
+
+	theEnd--
+	for i := 0; i < theEnd; i++ {
+		if !r.Alive[r.PreferredPeerOrder[i]] {
+			tmp := r.PreferredPeerOrder[theEnd]
+			r.PreferredPeerOrder[theEnd] = r.PreferredPeerOrder[i]
+			r.PreferredPeerOrder[i] = tmp
+			theEnd--
+		}
+	}
+	//	}
 	r.Mutex.Unlock()
 	/*npings := 20
 

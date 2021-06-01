@@ -90,12 +90,24 @@ func (q *ClientProposalQueue) TryEnqueue(propose *genericsmr.Propose) {
 }
 
 func (q *ClientProposalQueue) TryRequeue(propose *genericsmr.Propose) {
-	if !q.isOutstanding(propose) {
-		panic("Attempting to requeue value that is not outstanding")
+	//if !q.isOutstanding(propose) {
+	//	panic("Attempting to requeue value that is not outstanding")
+	//}
+
+	if q.isClosed(propose) {
+		log.Println("Will not queue value that is closed")
+		return
 	}
 
+	uid := UID{
+		commandID: propose.CommandId,
+		timestamp: propose.Timestamp,
+	}
+
+	delete(q.outstanding, uid)
+
 	if !q.tryAddQueuedUID(propose) {
-		log.Print("Not able to requeue")
+		log.Print("Already requeued value")
 		return
 	}
 	select {
@@ -113,7 +125,7 @@ func (q *ClientProposalQueue) tryRemoveQueuedUID(propose *genericsmr.Propose) {
 	}
 	_, exists := q.queued[uid]
 	if !exists {
-		panic("already added")
+		panic("Already dequed value")
 	} else {
 		delete(q.queued, uid)
 	}
@@ -134,14 +146,14 @@ func (q *ClientProposalQueue) setOutstanding(propose *genericsmr.Propose) {
 }
 
 func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
-	if len(q.queued) == 0 {
+	if len(q.queued) == 0 || (len(q.proposalsQueue) == 0 && len(q.reproposalsQueue) == 0) {
 		return nil
 	}
 	for {
 		select {
 		case proposal := <-q.reproposalsQueue:
 			q.tryRemoveQueuedUID(proposal)
-			if q.isClosed(proposal) {
+			if !q.isClosed(proposal) {
 				q.setOutstanding(proposal)
 				log.Print("Unqueued retry client proposal")
 				return proposal
@@ -153,7 +165,7 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 			select {
 			case proposal := <-q.proposalsQueue:
 				q.tryRemoveQueuedUID(proposal)
-				if q.isClosed(proposal) {
+				if !q.isClosed(proposal) {
 					q.setOutstanding(proposal)
 					log.Print("unqueued client proposal")
 					return proposal
@@ -161,7 +173,16 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 					continue
 				}
 			default:
-				panic("should be able to dequeue but can't")
+				/*	if len(q.outstanding) > 0 {
+					for _, val := range q.outstanding {
+						shouldGet :=  rand2.Int31() % 3 == 0
+						if shouldGet {
+							return val
+						}
+					}
+				}*/
+				println("All values in queue are already closed so returning nil")
+				//panic("should be able to dequeue but can't")
 				return nil
 			}
 		}
@@ -181,24 +202,24 @@ func (q *ClientProposalQueue) isQueued(propose *genericsmr.Propose) bool {
 	}
 }
 func (q *ClientProposalQueue) CloseValue(propose *genericsmr.Propose) {
-	if !q.isOutstanding(propose) { // need to change if allowing multiple proposals of outstanding value
-		panic("Closing value that is outstanding")
-	} else {
-		uid := UID{
-			commandID: propose.CommandId,
-			timestamp: propose.Timestamp,
-		}
-
-		//	if q.isQueued(propose) {
-
-		//		panic("closing value that is queued for reproposal") // could have closed map to remove these as they are dequed
-		//	}
-		q.closed[uid] = struct{}{}
-
-		delete(q.outstanding, uid)
+	//	if !q.isOutstanding(propose) { // need to change if allowing multiple proposals of outstanding value
+	//	panic("Closing value that is outstanding")
+	//} else {
+	uid := UID{
+		commandID: propose.CommandId,
+		timestamp: propose.Timestamp,
 	}
+
+	//	if q.isQueued(propose) {
+	// add to closed so that it can be prevented from being proposed again
+	//		panic("closing value that is queued for reproposal") // could have closed map to remove these as they are dequed
+	//	}
+	q.closed[uid] = struct{}{}
+
+	delete(q.outstanding, uid)
+	//}
 }
 
 func (q *ClientProposalQueue) Len() int {
-	return len(q.queued)
+	return len(q.queued) //+ len(q.outstanding)
 }
