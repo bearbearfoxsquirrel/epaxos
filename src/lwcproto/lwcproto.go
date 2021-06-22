@@ -33,6 +33,13 @@ func (bal Ballot) Equal(cmp Ballot) bool {
 	return bal.Number == cmp.Number && bal.PropID == cmp.PropID
 }
 
+func (bal Ballot) IsZero() bool {
+	return bal.Equal(Ballot{
+		Number: -1,
+		PropID: -1,
+	})
+}
+
 type Ballot struct {
 	Number int32
 	PropID int16

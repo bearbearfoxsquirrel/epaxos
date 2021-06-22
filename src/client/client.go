@@ -156,6 +156,11 @@ func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, re
 	return benchmarker
 }
 
+func (benchmarker *ClientBenchmarker) reset() {
+	benchmarker.valueSubmissionTimes = make(map[int32]time.Time)
+	benchmarker.timeseriesStates.reset()
+}
+
 func (benchmarker *ClientBenchmarker) register(value ClientValue) bool {
 	if _, exists := benchmarker.valueSubmissionTimes[value.uid]; exists {
 		return false
@@ -249,16 +254,15 @@ func main() {
 					}
 				} else {
 					err = errors.New("Failed to receive a response.")
+					replicaReader = proxy.GetListener()
+					benchmarker.reset()
+					beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 				}
 			}
 		}
 	}()
 
-	for i := 0; i < *outstanding; i++ {
-		value := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
-		proxy.Write(int32(value.uid), value.key, value.value)
-		//go benchmarkValue(proxy, valueDone, value, &mutex)
-	}
+	beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 
 	shouldStats := make(chan bool)
 	statsTimer := time.NewTimer(time.Duration(1) * time.Second)
@@ -286,6 +290,7 @@ func main() {
 				//	panic("returned value already done or never started")
 			} else {
 				newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
+
 				benchmarkValue(proxy, newValue)
 			}
 			//case value <-listener:
@@ -294,4 +299,11 @@ func main() {
 		}
 	}
 
+}
+
+func beginBenchmarkingValues(benchmarker ClientBenchmarker, proxy *bindings.Parameters, outstanding int) {
+	for i := 0; i < outstanding; i++ {
+		value := generateAndBeginBenchmarkingValue(benchmarker, *psize, outstanding)
+		proxy.Write(value.uid, value.key, value.value)
+	}
 }

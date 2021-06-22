@@ -52,6 +52,9 @@ var transitiveConflicts = flag.Bool("transitiveconf", true, "Conflict relation i
 var storageParentDir = flag.String("storageparentdir", "./", "The parent directory of the stable storage file. Defaults to ./")
 var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
 var fastLearn *bool = flag.Bool("flearn", false, "Learn quickly when f=1")
+var whoCrash *int = flag.Int("whocrash", -1, "Who will crash in this run (-1 means no one)")
+var whenCrashSeconds *int = flag.Int("whencrash", -1, "When will they crash after beginning to execute (seconds)")
+var howLongCrashSeconds *int = flag.Int("howlongcrash", -1, "When will they restart after crashing (seconds)")
 
 func main() {
 	flag.Parse()
@@ -88,6 +91,9 @@ func main() {
 
 	log.Printf("Tolerating %d max. failures\n", *maxfailures)
 
+	whenCrash := time.Duration(*whenCrashSeconds) * time.Second
+	howLongCrash := time.Duration(*howLongCrashSeconds) * time.Second
+
 	//TODO give parent dir to all replica types
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
@@ -104,7 +110,7 @@ func main() {
 
 	} else if *doLWC {
 		log.Println("Starting LWC replica...")
-		rep := lwc.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor)
+		rep := lwc.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash)
 		rpc.Register(rep)
 	} else if *doPatientLeaderlessLWP {
 		//	rep := lwc.NewReplicaPatient(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor)

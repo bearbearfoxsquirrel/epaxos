@@ -286,11 +286,25 @@ func (r Replica) replicaLoop() {
 	//go func() {
 	//	<-newPeerOrderTimer.C
 	//	timerDone <- true
-	//}()
+	//}(
+	doner := make(chan struct{})
+	if r.Id == 1 {
+		go func() {
+			t := time.NewTimer(60 * time.Second)
+			<-t.C
+			doner <- struct{}{}
+		}()
+	}
+
 	for !r.Shutdown {
 		onOffProposeChan := r.ProposeChan
 
 		select {
+		//case <-doner:
+		//	log.Println("Crahsing")
+
+		//	time.Sleep(30 * time.Second)
+		//	log.Println("Done crashing")
 		case <-newPeerOrderTimer.C:
 			r.RandomisePeerOrder()
 			dlog.Println("Recomputing closest peers")
@@ -559,6 +573,7 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	lb := r.InstanceSpace[replica][instance].lb
 	args := &epaxosproto.Prepare{r.Id, replica, instance, lb.lastTriedBallot}
 
+	// todo add thrifty
 	n := r.N - 1
 	q := r.Id
 	for sent := 0; sent < n; {

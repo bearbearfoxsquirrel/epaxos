@@ -1,8 +1,8 @@
 package clientproposalqueue
 
 import (
+	"dlog"
 	"genericsmr"
-	"log"
 )
 
 type UID struct {
@@ -95,7 +95,7 @@ func (q *ClientProposalQueue) TryRequeue(propose *genericsmr.Propose) {
 	//}
 
 	if q.isClosed(propose) {
-		log.Println("Will not queue value that is closed")
+		dlog.Println("Will not queue value that is closed")
 		return
 	}
 
@@ -107,12 +107,12 @@ func (q *ClientProposalQueue) TryRequeue(propose *genericsmr.Propose) {
 	delete(q.outstanding, uid)
 
 	if !q.tryAddQueuedUID(propose) {
-		log.Print("Already requeued value")
+		dlog.Println("Already requeued value")
 		return
 	}
 	select {
 	case q.reproposalsQueue <- propose:
-		log.Print("requeued client proposal")
+		dlog.Println("requeued client proposal")
 		break
 	default:
 		panic("No space left to TryRequeue")
@@ -155,7 +155,7 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 			q.tryRemoveQueuedUID(proposal)
 			if !q.isClosed(proposal) {
 				q.setOutstanding(proposal)
-				log.Print("Unqueued retry client proposal")
+				dlog.Println("Unqueued retry client proposal")
 				return proposal
 			} else {
 				continue
@@ -167,7 +167,7 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 				q.tryRemoveQueuedUID(proposal)
 				if !q.isClosed(proposal) {
 					q.setOutstanding(proposal)
-					log.Print("unqueued client proposal")
+					dlog.Println("unqueued client proposal")
 					return proposal
 				} else {
 					continue
@@ -181,7 +181,7 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 						}
 					}
 				}*/
-				println("All values in queue are already closed so returning nil")
+				dlog.Println("All values in queue are already closed so returning nil")
 				//panic("should be able to dequeue but can't")
 				return nil
 			}
