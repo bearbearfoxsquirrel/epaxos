@@ -708,9 +708,9 @@ func (r *Replica) bcastPrepareToAlive(instance int32) {
 
 	n := r.N - 1
 
-	if r.Thrifty {
-		n = r.ReadQuorumSize() - 1
-	}
+	//if r.Thrifty {
+	//	n = r.ReadQuorumSize() - 1
+	//}
 	r.CalculateAlive()
 	r.RandomisePeerOrder()
 	sent := 0
