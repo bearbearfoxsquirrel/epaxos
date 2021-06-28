@@ -305,6 +305,12 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 				}()
 			} else {
 				log.Fatal("Error: received unknown message type ", msgType, " from  ", rid)
+				//	for _, v := range r.rpcTable{
+				//		obj := v.Obj.New()
+				//		obj.Unmarshal(reader)
+				//log.Println(obj)
+
+				//	}
 			}
 		}
 	}
@@ -425,6 +431,10 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 	if w == nil {
 		log.Printf("Connection to %d lost!\n", peerId)
 		return
+	}
+
+	if code == 0 {
+		panic("bad rpc code")
 	}
 	w.WriteByte(code)
 	msg.Marshal(w)

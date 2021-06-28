@@ -78,6 +78,8 @@ type Replica struct {
 	batchWait             int
 	transconf             bool
 	fastLearn             bool
+	emulatedSS            bool
+	emulatedWriteTime     time.Duration
 }
 
 type Instance struct {
@@ -121,7 +123,7 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration) *Replica {
 	r := &Replica{
 		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -151,7 +153,9 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		-1,
 		batchWait,
 		transconf,
-		fastLearn}
+		fastLearn,
+		emulatedSS,
+		emulatedWriteTime}
 
 	r.Beacon = beacon
 	r.Durable = durable
@@ -222,14 +226,16 @@ func (r *Replica) recordCommands(cmds []state.Command) {
 		cmds[i].Marshal(io.Writer(r.StableStore))
 	}
 }
-
-//sync with the stable store
 func (r *Replica) sync() {
 	if !r.Durable {
 		return
 	}
-
-	r.StableStore.Sync()
+	//log.Println("synced")
+	if r.emulatedSS {
+		time.Sleep(r.emulatedWriteTime)
+	} else {
+		_ = r.StableStore.Sync()
+	}
 }
 
 /* Clock goroutine */
@@ -942,7 +948,10 @@ func (r *Replica) handlePreAccept(preAccept *epaxosproto.PreAccept) {
 		inst.bal = preAccept.Ballot
 		inst.vbal = preAccept.Ballot
 		inst.Status = status
-		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
+
+		// Sarah: Updated 1/14 from preAccept.Seq to seq
+		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, seq)
+		//		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
 
 		if r.N <= 3 && r.fastLearn { //eqDeps && inst.Seq == preAccept.Seq {
 			//	inst.Status = epaxosproto.COMMITTED
@@ -1037,16 +1046,16 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 
 	// differ from original code: (r.N <= 3 && !r.Thrifty) not inline with SOSP Section 4.4
 	seq, deps, allEqual := r.mergeAttributes(lb.seq, lb.deps, pareply.Seq, pareply.Deps)
-	if r.N <= 3 && r.Thrifty {
-		// no need to check for equality
-	} else {
-		inst.lb.allEqual = inst.lb.allEqual && allEqual
-		if !allEqual {
-			r.Mutex.Lock()
-			r.Stats.M["conflicted"]++
-			r.Mutex.Unlock()
-		}
+	//	if r.N <= 3 && r.Thrifty {
+	// no need to check for equality
+	//	} else {
+	inst.lb.allEqual = inst.lb.allEqual && allEqual
+	if !allEqual {
+		r.Mutex.Lock()
+		r.Stats.M["conflicted"]++
+		r.Mutex.Unlock()
 	}
+	//	}
 
 	// differ from original code: following section 4.4 in SOSP
 	allCommitted := true
