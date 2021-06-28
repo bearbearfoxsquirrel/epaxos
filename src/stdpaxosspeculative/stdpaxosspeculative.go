@@ -485,7 +485,7 @@ func (r *Replica) restart() {
 		inst := r.instanceSpace[i]
 		if inst != nil {
 			if inst.abk.status != COMMITTED {
-				log.Printf("Beginning instance %d", i)
+				dlog.Printf("Beginning instance %d", i)
 				// prepare on new config
 				// send prepare
 				r.proposerBeginNextConfBal(i)
@@ -528,10 +528,10 @@ func (r *Replica) run() {
 		select {
 
 		case <-doner:
-			log.Println("Crahsing")
+			dlog.Println("Crahsing")
 			time.Sleep(r.howLongCrash)
 			r.restart()
-			log.Println("Done crashing")
+			dlog.Println("Done crashing")
 			break
 
 		case next := <-r.retryInstance:
@@ -624,7 +624,7 @@ func (r *Replica) retryPropose(proposalInfo ProposalInfo) {
 				break
 			default:
 				pbk.cmds = state.NOOP()
-				log.Println("Proposing noop")
+				dlog.Println("Proposing noop")
 				break
 			}
 		} else {
@@ -1324,7 +1324,7 @@ func (r *Replica) propose(inst int32) {
 			} else {
 				//if r.shouldProposeNoop(inst) {
 				pbk.cmds = state.NOOP()
-				log.Println("Proposing noop")
+				dlog.Println("Proposing noop")
 				//} else {
 				//	return
 				//}
@@ -1514,7 +1514,7 @@ func (r *Replica) howManyAttemptsToChoose(inst int32) {
 		panic("cannot how many attempts taken to chose value check unless closed")
 	}
 	attempts := pbk.maxAcceptedConfBal.Number / r.maxBalInc
-	log.Printf("Attempts to chose instance %d: %d", inst, attempts)
+	dlog.Printf("Attempts to chose instance %d: %d", inst, attempts)
 }
 func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []state.Command) {
 	instance := r.instanceSpace[inst]
