@@ -670,9 +670,9 @@ func (r *Replica) bcastPrepareToAlive(instance int32) {
 
 	n := r.N - 1
 
-	if r.Thrifty {
-		n = r.ReadQuorumSize() - 1
-	}
+	//	if r.Thrifty {
+	//	n = r.ReadQuorumSize() - 1
+	//}
 	r.CalculateAlive()
 	r.RandomisePeerOrder()
 	sent := 0
@@ -727,41 +727,6 @@ func (r *Replica) bcastAcceptToAlive(instance int32) {
 	}
 }
 
-func (r *Replica) bcastAcceptNoFlush(instance int32) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("Accept bcast failed:", err)
-		}
-	}()
-
-	pa.LeaderId = r.Id
-	pa.Instance = instance
-	pa.ConfigBal = r.instanceSpace[instance].pbk.propCurConfBal
-	pa.Command = r.instanceSpace[instance].pbk.cmds
-	args := &pa
-
-	n := r.N - 1
-
-	if r.Thrifty {
-		n = r.WriteQuorumSize() - 1
-	}
-
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-	sent := 0
-	for q := 0; q < r.N-1; q++ {
-		if !r.Alive[r.PreferredPeerOrder[q]] {
-			continue
-		}
-		dlog.Printf("send accept to %d\n", r.PreferredPeerOrder[q])
-		r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.acceptRPC, args)
-		sent++
-		if sent >= n {
-			break
-		}
-	}
-}
-
 var pc lwcproto.Commit
 var pcs lwcproto.CommitShort
 
@@ -792,9 +757,9 @@ func (r *Replica) bcastCommitToAlive(instance int32, confBal lwcproto.ConfigBal,
 
 		_, inQrm := r.instanceSpace[instance].pbk.proposalInfos[confBal].aids[r.PreferredPeerOrder[q]]
 		if inQrm {
-			r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+			r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
 		} else {
-			r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+			r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, &pc)
 		}
 		sent++
 	}

@@ -896,6 +896,8 @@ func (r *Replica) acceptorPrepareOnBal(inst int32, bal stdpaxosproto.Ballot) {
 
 	dlog.Printf("Acceptor Preparing Config-Ballot %d.%d.%d ", bal.Number, bal.PropID)
 	r.instanceSpace[inst].abk.curBal = bal
+	r.recordInstanceMetadata(instance)
+	r.sync()
 }
 
 func (r *Replica) acceptorAcceptOnBal(inst int32, bal stdpaxosproto.Ballot, cmds []state.Command) {
