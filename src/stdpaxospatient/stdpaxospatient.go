@@ -975,21 +975,11 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 }
 
 func (r *Replica) acceptorPrepareOnConfBal(inst int32, confBal stdpaxosproto.Ballot) {
-	instance := r.instanceSpace[inst]
-	abk := instance.abk
-	//	if r.instanceSpace[inst].pbk.status == CLOSED || r.instanceSpace[inst].abk.status == COMMITTED {
-	//		panic("oh nnooooooooo")
-	//	}
-	//	cur := stdpaxosproto.Ballot{
-	//		Config: r.crtConfig,
-	//		Ballot: abk.curBal,
-	//	}
-	//if cur.GreaterThan(confBal) && !cur.Equal(confBal) {
-	//		panic("preparing on out of date conf bal")
-	//	}
-	abk.status = PREPARED
-	dlog.Printf("Acceptor Preparing Config-Ballot %d.%d ", confBal.Number, confBal.PropID)
-	abk.curBal = confBal
+	r.instanceSpace[inst].abk.status = PREPARED
+	dlog.Printf("Acceptor Preparing Ballot %d.%d ", confBal.Number, confBal.PropID)
+	r.instanceSpace[inst].abk.curBal = confBal
+	r.recordInstanceMetadata(r.instanceSpace[inst])
+	r.sync()
 }
 
 func (r *Replica) acceptorAcceptOnConfBal(inst int32, confBal stdpaxosproto.Ballot, cmds []state.Command) {
