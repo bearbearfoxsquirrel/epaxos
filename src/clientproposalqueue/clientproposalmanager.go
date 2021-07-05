@@ -156,7 +156,7 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 		select {
 		case proposal := <-q.reproposalsQueue:
 			//		q.tryRemoveQueuedUID(proposal)
-			//if !q.isClosed(proposal) {
+			//	if !q.isClosed(proposal) {
 			//		q.setOutstanding(proposal)
 			dlog.Println("Unqueued retry client proposal")
 			return proposal
@@ -200,10 +200,10 @@ func (q *ClientProposalQueue) CloseValue(propose *genericsmr.Propose) {
 	//	if !q.isOutstanding(propose) { // need to change if allowing multiple proposals of outstanding value
 	//	panic("Closing value that is outstanding")
 	//} else {
-	//uid := UID{
-	//	commandID: propose.CommandId,
-	//	timestamp: propose.Timestamp,
-	//}
+	//	uid := UID{
+	//		commandID: propose.CommandId,
+	//		timestamp: propose.Timestamp,
+	//	}
 
 	//	if q.isQueued(propose) {
 	// add to closed so that it can be prevented from being proposed again

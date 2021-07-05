@@ -34,6 +34,7 @@ type PrepareReply struct {
 	Bal        Ballot
 	VBal       Ballot
 	AcceptorId int32
+	WhoseCmd   int32
 	Command    []state.Command
 }
 
@@ -41,7 +42,8 @@ type Accept struct {
 	LeaderId int32
 	Instance int32
 	Ballot
-	Command []state.Command
+	WhoseCmd int32
+	Command  []state.Command
 }
 
 type AcceptReply struct {
@@ -49,18 +51,22 @@ type AcceptReply struct {
 	AcceptorId int32
 	Cur        Ballot
 	Req        Ballot
+	WhoseCmd   int32
 }
 
 type Commit struct {
 	LeaderId int32
 	Instance int32
 	Ballot
-	Command []state.Command
+	WhoseCmd   int32
+	MoreToCome int32
+	Command    []state.Command
 }
 
 type CommitShort struct {
 	LeaderId int32
 	Instance int32
 	Ballot
-	Count int32
+	Count    int32
+	WhoseCmd int32
 }

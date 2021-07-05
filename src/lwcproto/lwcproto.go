@@ -55,6 +55,7 @@ type PrepareReply struct {
 	ConfigBal  ConfigBal
 	VConfigBal ConfigBal
 	AcceptorId int32
+	WhoseCmd   int32
 	Command    []state.Command
 }
 
@@ -62,7 +63,8 @@ type Accept struct {
 	LeaderId int32
 	Instance int32
 	ConfigBal
-	Command []state.Command
+	WhoseCmd int32
+	Command  []state.Command
 }
 
 type AcceptReply struct {
@@ -70,18 +72,22 @@ type AcceptReply struct {
 	AcceptorId int32
 	Cur        ConfigBal
 	Req        ConfigBal
+	WhoseCmd   int32
 }
 
 type Commit struct {
 	LeaderId int32
 	Instance int32
 	ConfigBal
-	Command []state.Command
+	WhoseCmd   int32
+	MoreToCome int32
+	Command    []state.Command
 }
 
 type CommitShort struct {
 	LeaderId int32
 	Instance int32
 	ConfigBal
-	Count int32
+	Count    int32
+	WhoseCmd int32
 }

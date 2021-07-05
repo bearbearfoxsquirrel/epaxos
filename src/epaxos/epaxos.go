@@ -286,21 +286,14 @@ func (r *Replica) BatchingEnabled() bool {
    Main event processing loop      *
 ************************************/
 func (r Replica) replicaLoop() {
-	//timerDone := make(chan bool)
-	newPeerOrderTimer := time.NewTimer(1 * time.Second)
-
-	//go func() {
-	//	<-newPeerOrderTimer.C
-	//	timerDone <- true
-	//}(
-	doner := make(chan struct{})
-	if r.Id == 1 {
-		go func() {
-			t := time.NewTimer(60 * time.Second)
-			<-t.C
-			doner <- struct{}{}
-		}()
-	}
+	/*	doner := make(chan struct{})
+		if r.Id == 1 {
+			go func() {
+				t := time.NewTimer(60 * time.Second)
+				<-t.C
+				doner <- struct{}{}
+			}()
+		}*/
 
 	for !r.Shutdown {
 		onOffProposeChan := r.ProposeChan
@@ -308,19 +301,7 @@ func (r Replica) replicaLoop() {
 		select {
 		//case <-doner:
 		//	log.Println("Crahsing")
-
-		//	time.Sleep(30 * time.Second)
 		//	log.Println("Done crashing")
-		case <-newPeerOrderTimer.C:
-			r.RandomisePeerOrder()
-			dlog.Println("Recomputing closest peers")
-			newPeerOrderTimer = time.NewTimer(100 * time.Millisecond)
-			break
-			//go func() {
-			//	<-newPeerOrderTimer.C
-			//	timerDone <- true
-			//}()
-
 		case propose := <-onOffProposeChan:
 			//got a Propose from a client
 			dlog.Println("Handle propose from client now")
@@ -490,29 +471,7 @@ func (r *Replica) executeCommands() {
 				if ok := r.exec.executeCommand(int32(q), inst); ok {
 					executed = true
 					if inst == r.ExecedUpTo[q]+1 {
-
 						r.ExecedUpTo[q] = inst
-						//							inster :=
-
-						// reclaim some memory
-						//deps := r.InstanceSpace[q][inst].Deps
-						//	r.InstanceSpace[q][inst].lb = nil
-						//	r.InstanceSpace[q][inst].Cmds = nil
-						//	for j := 0; j < len(deps); j++ {
-						//if deps[j] > -1 {
-						//	inster := r.InstanceSpace[j][deps[j]]
-
-						//	for i := 0; i < len(inster.Deps); i++ {
-						//		if inster.Deps[i] > -1 {
-						//			test :=r.InstanceSpace[i][inster.Deps[i]]
-						//	r.InstanceSpace[i][inster.Deps[i]]	=nil
-						//			test.Cmds = nil
-						//			test.lb = nil
-						//		}
-						//	}
-						//		}
-
-						//	}
 					}
 				}
 			}
@@ -578,7 +537,8 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	}()
 	lb := r.InstanceSpace[replica][instance].lb
 	args := &epaxosproto.Prepare{r.Id, replica, instance, lb.lastTriedBallot}
-
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
 	// todo add thrifty
 	n := r.N - 1
 	q := r.Id
@@ -619,12 +579,14 @@ func (r *Replica) bcastPreAccept(replica int32, instance int32) {
 		n = r.Replica.FastQuorumSize() - 1
 	}
 
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
 	sent := 0
 	for q := 0; q < r.N-1; q++ {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
 			continue
 		}
-		log.Printf("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+		dlog.Printf("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
 		r.SendMsg(r.PreferredPeerOrder[q], r.preAcceptRPC, pa)
 		sent++
 		if sent >= n {
@@ -649,6 +611,8 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 	tpa.Seq = lb.seq
 	tpa.Deps = lb.deps
 
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
 	for q := int32(0); q < int32(r.N); q++ {
 		if q == r.Id {
 			continue
@@ -656,7 +620,7 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 		if !r.Alive[q] {
 			continue
 		}
-		log.Println("Sending TryPreAccept %d.%d w. ballot %d and deps %d to %d\n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+		dlog.Println("Sending TryPreAccept %d.%d w. ballot %d and deps %d to %d\n", replica, instance, lb.lastTriedBallot, lb.deps, q)
 		r.SendMsg(q, r.tryPreAcceptRPC, tpa)
 	}
 }
@@ -682,6 +646,8 @@ func (r *Replica) bcastAccept(replica int32, instance int32) {
 		n = r.N / 2
 	}
 
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
 	sent := 0
 	for q := 0; q < r.N-1; q++ {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
@@ -712,6 +678,8 @@ func (r *Replica) bcastCommit(replica int32, instance int32) {
 	ec.Deps = lb.deps
 	ec.Ballot = lb.ballot
 
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
 	for q := 0; q < r.N-1; q++ {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
 			continue
@@ -950,8 +918,8 @@ func (r *Replica) handlePreAccept(preAccept *epaxosproto.PreAccept) {
 		inst.Status = status
 
 		// Sarah: Updated 1/14 from preAccept.Seq to seq
-		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, seq)
-		//		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
+		//	r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, seq)
+		r.updateConflicts(preAccept.Command, preAccept.Replica, preAccept.Instance, preAccept.Seq)
 
 		if r.N <= 3 && r.fastLearn { //eqDeps && inst.Seq == preAccept.Seq {
 			//	inst.Status = epaxosproto.COMMITTED
@@ -1046,14 +1014,15 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 
 	// differ from original code: (r.N <= 3 && !r.Thrifty) not inline with SOSP Section 4.4
 	seq, deps, allEqual := r.mergeAttributes(lb.seq, lb.deps, pareply.Seq, pareply.Deps)
-	//	if r.N <= 3 && r.Thrifty {
-	// no need to check for equality
-	//	} else {
-	inst.lb.allEqual = inst.lb.allEqual && allEqual
-	if !allEqual {
-		r.Mutex.Lock()
-		r.Stats.M["conflicted"]++
-		r.Mutex.Unlock()
+	if r.N <= 3 && r.Thrifty {
+		// no need to check for equality
+	} else {
+		inst.lb.allEqual = inst.lb.allEqual && allEqual
+		if !allEqual {
+			r.Mutex.Lock()
+			r.Stats.M["conflicted"]++
+			r.Mutex.Unlock()
+		}
 	}
 	//	}
 
@@ -1096,7 +1065,7 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 		r.updateCommitted(pareply.Replica)
 		if inst.lb.clientProposals != nil && !r.Dreply {
 			// give clients the all clear
-			log.Println("Commited value being sent to clients")
+			dlog.Println("Commited value being sent to clients")
 			for i := 0; i < len(inst.lb.clientProposals); i++ {
 				r.ReplyProposeTS(
 					&genericsmrproto.ProposeReplyTS{
@@ -1235,7 +1204,7 @@ func (r *Replica) handleAcceptReply(areply *epaxosproto.AcceptReply) {
 
 		if inst.lb.clientProposals != nil && !r.Dreply {
 			// give clients the all clear
-			log.Println("Sending slowly commited value to clients")
+			dlog.Println("Sending slowly commited value to clients")
 			for i := 0; i < len(inst.lb.clientProposals); i++ {
 
 				r.ReplyProposeTS(
@@ -1328,7 +1297,7 @@ func (r *Replica) handleCommit(commit *epaxosproto.Commit) {
 
 func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *genericsmrproto.BeTheLeaderReply) error {
 	r.IsLeader = true
-	log.Println("I am the leader")
+	dlog.Println("I am the leader")
 	return nil
 }
 

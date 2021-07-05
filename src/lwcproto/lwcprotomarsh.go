@@ -132,9 +132,9 @@ func (p *PrepareReplyCache) Put(t *PrepareReply) {
 	p.mu.Unlock()
 }
 func (t *PrepareReply) Marshal(wire io.Writer) {
-	var b [28]byte
+	var b [32]byte
 	var bs []byte
-	bs = b[:28]
+	bs = b[:32]
 	tmp32 := t.Instance
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -174,6 +174,13 @@ func (t *PrepareReply) Marshal(wire io.Writer) {
 	bs[25] = byte(tmp32 >> 8)
 	bs[26] = byte(tmp32 >> 16)
 	bs[27] = byte(tmp32 >> 24)
+
+	tmp32 = t.WhoseCmd
+	bs[28] = byte(tmp32)
+	bs[29] = byte(tmp32 >> 8)
+	bs[30] = byte(tmp32 >> 16)
+	bs[31] = byte(tmp32 >> 24)
+
 	wire.Write(bs)
 	bs = b[:]
 	alen1 := int64(len(t.Command))
@@ -191,10 +198,10 @@ func (t *PrepareReply) Unmarshal(rr io.Reader) error {
 	if wire, ok = rr.(byteReader); !ok {
 		wire = bufio.NewReader(rr)
 	}
-	var b [28]byte
+	var b [32]byte
 	var bs []byte
-	bs = b[:28]
-	if _, err := io.ReadAtLeast(wire, bs, 28); err != nil {
+	bs = b[:32]
+	if _, err := io.ReadAtLeast(wire, bs, 32); err != nil {
 		return err
 	}
 	t.Instance = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
@@ -208,6 +215,7 @@ func (t *PrepareReply) Unmarshal(rr io.Reader) error {
 	t.VConfigBal.PropID = int16((uint16(bs[22]) | (uint16(bs[23]) << 8)))
 
 	t.AcceptorId = int32((uint32(bs[24]) | (uint32(bs[25]) << 8) | (uint32(bs[26]) << 16) | (uint32(bs[27]) << 24)))
+	t.WhoseCmd = int32((uint32(bs[28]) | (uint32(bs[29]) << 8) | (uint32(bs[30]) << 16) | (uint32(bs[31]) << 24)))
 	alen1, err := binary.ReadVarint(wire)
 	if err != nil {
 		return err
@@ -256,9 +264,9 @@ func (p *AcceptCache) Put(t *Accept) {
 	p.mu.Unlock()
 }
 func (t *Accept) Marshal(wire io.Writer) {
-	var b [18]byte
+	var b [22]byte
 	var bs []byte
-	bs = b[:18]
+	bs = b[:22]
 	tmp32 := t.LeaderId
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -285,6 +293,12 @@ func (t *Accept) Marshal(wire io.Writer) {
 	bs[16] = byte(tmp16)
 	bs[17] = byte(tmp16 >> 8)
 
+	tmp32 = t.WhoseCmd
+	bs[18] = byte(tmp32)
+	bs[19] = byte(tmp32 >> 8)
+	bs[20] = byte(tmp32 >> 16)
+	bs[21] = byte(tmp32 >> 24)
+
 	wire.Write(bs)
 	bs = b[:]
 	alen1 := int64(len(t.Command))
@@ -302,10 +316,10 @@ func (t *Accept) Unmarshal(rr io.Reader) error {
 	if wire, ok = rr.(byteReader); !ok {
 		wire = bufio.NewReader(rr)
 	}
-	var b [18]byte
+	var b [22]byte
 	var bs []byte
-	bs = b[:18]
-	if _, err := io.ReadAtLeast(wire, bs, 18); err != nil {
+	bs = b[:22]
+	if _, err := io.ReadAtLeast(wire, bs, 22); err != nil {
 		return err
 	}
 	t.LeaderId = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
@@ -313,6 +327,8 @@ func (t *Accept) Unmarshal(rr io.Reader) error {
 	t.Config = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
 	t.Number = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
 	t.PropID = int16((uint16(bs[16]) | (uint16(bs[17]) << 8)))
+
+	t.WhoseCmd = int32((uint32(bs[18]) | (uint32(bs[19]) << 8) | (uint32(bs[20]) << 16) | (uint32(bs[21]) << 24)))
 
 	alen1, err := binary.ReadVarint(wire)
 	if err != nil {
@@ -362,9 +378,9 @@ func (p *AcceptReplyCache) Put(t *AcceptReply) {
 	p.mu.Unlock()
 }
 func (t *AcceptReply) Marshal(wire io.Writer) {
-	var b [29]byte
+	var b [32]byte
 	var bs []byte
-	bs = b[:28]
+	bs = b[:32]
 	tmp32 := t.Instance
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -406,14 +422,20 @@ func (t *AcceptReply) Marshal(wire io.Writer) {
 	bs[26] = byte(tmp16)
 	bs[27] = byte(tmp16 >> 8)
 
+	tmp32 = t.WhoseCmd
+	bs[28] = byte(tmp32)
+	bs[29] = byte(tmp32 >> 8)
+	bs[30] = byte(tmp32 >> 16)
+	bs[31] = byte(tmp32 >> 24)
+
 	wire.Write(bs)
 }
 
 func (t *AcceptReply) Unmarshal(wire io.Reader) error {
-	var b [28]byte
+	var b [32]byte
 	var bs []byte
-	bs = b[:28]
-	if _, err := io.ReadAtLeast(wire, bs, 28); err != nil {
+	bs = b[:32]
+	if _, err := io.ReadAtLeast(wire, bs, 32); err != nil {
 		return err
 	}
 	t.Instance = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
@@ -427,6 +449,8 @@ func (t *AcceptReply) Unmarshal(wire io.Reader) error {
 	t.Req.Config = int32((uint32(bs[18]) | (uint32(bs[19]) << 8) | (uint32(bs[20]) << 16) | (uint32(bs[21]) << 24)))
 	t.Req.Number = int32((uint32(bs[22]) | (uint32(bs[23]) << 8) | (uint32(bs[24]) << 16) | (uint32(bs[25]) << 24)))
 	t.Req.PropID = int16((uint16(bs[26]) | (uint16(bs[27]) << 8)))
+
+	t.WhoseCmd = int32((uint32(bs[28]) | (uint32(bs[29]) << 8) | (uint32(bs[30]) << 16) | (uint32(bs[31]) << 24)))
 
 	return nil
 }
@@ -468,9 +492,9 @@ func (p *CommitCache) Put(t *Commit) {
 	p.mu.Unlock()
 }
 func (t *Commit) Marshal(wire io.Writer) {
-	var b [18]byte
+	var b [26]byte
 	var bs []byte
-	bs = b[:18]
+	bs = b[:26]
 	tmp32 := t.LeaderId
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -496,6 +520,17 @@ func (t *Commit) Marshal(wire io.Writer) {
 	bs[16] = byte(tmp16)
 	bs[17] = byte(tmp16 >> 8)
 
+	tmp32 = t.WhoseCmd
+	bs[18] = byte(tmp32)
+	bs[19] = byte(tmp32 >> 8)
+	bs[20] = byte(tmp32 >> 16)
+	bs[21] = byte(tmp32 >> 24)
+
+	tmp32 = t.MoreToCome
+	bs[22] = byte(tmp32)
+	bs[23] = byte(tmp32 >> 8)
+	bs[24] = byte(tmp32 >> 16)
+	bs[25] = byte(tmp32 >> 24)
 	wire.Write(bs)
 	bs = b[:]
 	alen1 := int64(len(t.Command))
@@ -513,10 +548,10 @@ func (t *Commit) Unmarshal(rr io.Reader) error {
 	if wire, ok = rr.(byteReader); !ok {
 		wire = bufio.NewReader(rr)
 	}
-	var b [18]byte
+	var b [26]byte
 	var bs []byte
-	bs = b[:18]
-	if _, err := io.ReadAtLeast(wire, bs, 18); err != nil {
+	bs = b[:26]
+	if _, err := io.ReadAtLeast(wire, bs, 26); err != nil {
 		return err
 	}
 	t.LeaderId = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
@@ -525,6 +560,8 @@ func (t *Commit) Unmarshal(rr io.Reader) error {
 	t.Number = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
 	t.PropID = int16((uint16(bs[16]) | (uint16(bs[17]) << 8)))
 
+	t.WhoseCmd = int32((uint32(bs[18]) | (uint32(bs[19]) << 8) | (uint32(bs[20]) << 16) | (uint32(bs[21]) << 24)))
+	t.MoreToCome = int32((uint32(bs[22]) | (uint32(bs[23]) << 8) | (uint32(bs[24]) << 16) | (uint32(bs[25]) << 24)))
 	alen1, err := binary.ReadVarint(wire)
 	if err != nil {
 		return err
@@ -573,9 +610,9 @@ func (p *CommitShortCache) Put(t *CommitShort) {
 	p.mu.Unlock()
 }
 func (t *CommitShort) Marshal(wire io.Writer) {
-	var b [22]byte
+	var b [26]byte
 	var bs []byte
-	bs = b[:22]
+	bs = b[:26]
 	tmp32 := t.LeaderId
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -606,14 +643,21 @@ func (t *CommitShort) Marshal(wire io.Writer) {
 	bs[19] = byte(tmp32 >> 8)
 	bs[20] = byte(tmp32 >> 16)
 	bs[21] = byte(tmp32 >> 24)
+
+	tmp32 = t.WhoseCmd
+	bs[22] = byte(tmp32)
+	bs[23] = byte(tmp32 >> 8)
+	bs[24] = byte(tmp32 >> 16)
+	bs[25] = byte(tmp32 >> 24)
+
 	wire.Write(bs)
 }
 
 func (t *CommitShort) Unmarshal(wire io.Reader) error {
-	var b [22]byte
+	var b [26]byte
 	var bs []byte
-	bs = b[:22]
-	if _, err := io.ReadAtLeast(wire, bs, 22); err != nil {
+	bs = b[:26]
+	if _, err := io.ReadAtLeast(wire, bs, 26); err != nil {
 		return err
 	}
 	t.LeaderId = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
@@ -622,6 +666,8 @@ func (t *CommitShort) Unmarshal(wire io.Reader) error {
 	t.Number = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
 	t.PropID = int16((uint16(bs[16]) | (uint16(bs[17]) << 8)))
 	t.Count = int32((uint32(bs[18]) | (uint32(bs[19]) << 8) | (uint32(bs[20]) << 16) | (uint32(bs[21]) << 24)))
+
+	t.WhoseCmd = int32((uint32(bs[22]) | (uint32(bs[23]) << 8) | (uint32(bs[24]) << 16) | (uint32(bs[25]) << 24)))
 
 	return nil
 }
