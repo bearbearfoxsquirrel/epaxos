@@ -471,9 +471,7 @@ func (r *Replica) restart() {
 	toRecover := r.executedUpTo + 1
 	inst := r.instanceSpace[toRecover]
 	if inst != nil {
-		if inst.abk.status == COMMITTED {
-			panic("asdlfkjasdflkasjdf")
-		}
+
 		dlog.Printf("Beginning instance %d", toRecover)
 		r.makeCatchupInstance(toRecover)
 		r.sendSinglePrepare(toRecover)
@@ -675,9 +673,7 @@ func (r *Replica) tryNextAttempt(next RetryInfo) {
 	if (r.BackoffManager.NoHigherBackoff(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
 		r.proposerBeginNextConfBal(next.InstToPrep)
 		nextConfBal := r.instanceSpace[next.InstToPrep].pbk.propCurConfBal
-		if inst.abk.curBal.GreaterThan(inst.pbk.propCurConfBal) {
-			panic("not moved to highest seen conf bal")
-		}
+
 		r.acceptorPrepareOnConfBal(next.InstToPrep, nextConfBal)
 		r.bcastPrepare(next.InstToPrep)
 		dlog.Printf("Proposing next conf-bal %d.%d to instance %d\n", nextConfBal.Number, nextConfBal.PropID, next.InstToPrep)
@@ -898,7 +894,7 @@ func (r *Replica) bcastCommitToAll(instance int32, confBal stdpaxosproto.Ballot,
 
 func (r *Replica) getNextProposingBallot(instance int32) stdpaxosproto.Ballot {
 	pbk := r.instanceSpace[instance].pbk
-	abk := r.instanceSpace[instance].abk
+	//abk := r.instanceSpace[instance].abk
 	min := ((pbk.maxKnownBal.Number/r.maxBalInc)+1)*r.maxBalInc + int32(r.N)
 	//zero := time.Time{}
 	var max int32
@@ -908,15 +904,8 @@ func (r *Replica) getNextProposingBallot(instance int32) stdpaxosproto.Ballot {
 	//	} else {
 	max = min + (r.maxBalInc)
 	//	}
-	if max < 0 { // overflow
-		max = math.MaxInt32
-		panic("too many conf-bals")
-	}
 
 	next := int32(math.Floor(rand.Float64()*float64(max-min+1) + float64(min)))
-	if next < abk.curBal.Number {
-		panic("Trying outdated conf-bal?")
-	}
 
 	//if (instance % int32(r.N)) == r.Id {
 	//		next += max
@@ -931,10 +920,6 @@ func (r *Replica) getNextProposingBallot(instance int32) stdpaxosproto.Ballot {
 func (r *Replica) incToNextOpenInstance() {
 	r.crtInstance++
 
-	if r.instanceSpace[r.crtInstance] != nil {
-		str := fmt.Sprintf("Oh no, we've tried to begin an instance already begun %d", r.crtInstance)
-		panic(str)
-	}
 }
 
 func (r *Replica) makeEmptyInstance() *Instance {
@@ -961,9 +946,7 @@ func (r *Replica) makeEmptyInstance() *Instance {
 
 func (r *Replica) proposerBeginNextConfBal(inst int32) {
 	pbk := r.instanceSpace[inst].pbk
-	if pbk.status == CLOSED || r.instanceSpace[inst].abk.status == COMMITTED {
-		panic("oh nnooooooooo")
-	}
+
 	pbk.status = PREPARING
 	nextConfBal := r.getNextProposingBallot(inst)
 	pbk.proposalInfos[nextConfBal] = new(QuorumInfo)
@@ -1011,9 +994,7 @@ func (r *Replica) acceptorPrepareOnConfBal(inst int32, confBal stdpaxosproto.Bal
 
 func (r *Replica) acceptorAcceptOnConfBal(inst int32, confBal stdpaxosproto.Ballot, cmds []state.Command) {
 	abk := r.instanceSpace[inst].abk
-	if r.instanceSpace[inst].pbk.status == CLOSED || abk.status == COMMITTED {
-		panic("oh nnooooooooo")
-	}
+
 	abk.status = ACCEPTED
 
 	//cur := stdpaxosproto.Ballot{
@@ -1050,10 +1031,6 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingBallot std
 
 		if preemptingBallot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingBallot
-		}
-
-		if instance.abk.status == COMMITTED {
-			panic("trying backing off but already commmited")
 		}
 
 		pbk.status = BACKING_OFF
@@ -1123,21 +1100,12 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 		r.acceptorPrepareOnConfBal(prepare.Instance, prepare.Ballot)
 		r.proposerCheckAndHandlePreempt(prepare.Instance, prepare.Ballot, PROMISE)
 		r.checkAndHandleOldPreempted(prepare.Ballot, minSafe, inst.abk.VBal, inst.abk.cmds, prepare.Instance)
-		if inst.pbk.propCurConfBal.GreaterThan(prepare.Ballot) {
-			panic("why not proposer acknowledging or is greater than????")
-		}
-		if inst.pbk.status != BACKING_OFF {
-			panic("why not backed off????")
-		}
+
 	} else {
 		dlog.Printf("Config-Ballot %d.%d already joined, returning same promise", prepare.Number, prepare.PropID)
 	}
 
 	newBallot := inst.abk.curBal
-
-	if inst.abk.cmds != nil && inst.pbk.whoseCmds == -1 {
-		panic("returing command but we don't know whose")
-	}
 
 	var preply = &stdpaxosproto.PrepareReply{
 		Instance:   prepare.Instance,
@@ -1211,9 +1179,7 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	pbk.proposalInfos[accepted].quorumAdd(aid)
 	// not assumed local acceptor has accepted it
 	if int(pbk.proposalInfos[accepted].quorumCount()) >= r.WriteQuorumSize() {
-		if pbk.maxAcceptedConfBal.GreaterThan(accepted) && pbk.whoseCmds != whoseCmds && pbk.proposalInfos[pbk.propCurConfBal].qrmType == ACCEPTANCE {
-			panic("break in safety!!!")
-		}
+
 		r.bcastCommitToAll(inst, accepted, val)
 		r.acceptorCommit(inst, accepted, val)
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmds)
@@ -1246,9 +1212,7 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 			preply.Instance, preply.VBal.Number, preply.VBal.PropID)
 	} else if valWhatDone == CHOSEN {
 		dlog.Printf("Preparing instance recognised as chosen (instance %d), returning commit \n", preply.Instance)
-		if preply.Bal.IsZero() {
-			panic("Why we commit zero ballot???")
-		}
+
 		return
 	}
 
@@ -1275,9 +1239,7 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	qrm := pbk.proposalInfos[pbk.propCurConfBal]
 	qrm.quorumAdd(preply.AcceptorId)
 	dlog.Printf("Added replica's %d promise to qrm", preply.AcceptorId)
-	if inst.abk.curBal.GreaterThan(pbk.propCurConfBal) {
-		panic("somehow acceptor has moved on but proposer hasn't")
-	}
+
 	if int(qrm.quorumCount()+1) >= r.Replica.ReadQuorumSize() {
 		r.propose(preply.Instance)
 	}
@@ -1286,10 +1248,6 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 func (r *Replica) propose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
-
-	if pbk.status == CLOSED || instance.abk.status == COMMITTED {
-		panic("oh nnooooooooo")
-	}
 
 	pbk.status = READY_TO_PROPOSE
 	dlog.Println("Can now propose in instance", inst)
@@ -1335,9 +1293,7 @@ func (r *Replica) propose(inst int32) {
 			}
 		}
 	} else {
-		if pbk.whoseCmds == -1 {
-			panic("why whose cmds -1?")
-		}
+
 		whoseCmds = pbk.whoseCmds
 	}
 
@@ -1394,9 +1350,7 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	}
 
 	replyConfBal := inst.abk.curBal
-	if inst.pbk.whoseCmds == -1 && replyConfBal.Equal(accept.Ballot) {
-		panic("alskdjfalskdfj")
-	}
+
 	areply := &stdpaxosproto.AcceptReply{accept.Instance, r.Id, replyConfBal, accept.Ballot, inst.pbk.whoseCmds}
 	r.replyAccept(accept.LeaderId, areply)
 }
@@ -1465,9 +1419,6 @@ func (r *Replica) howManyAttemptsToChoose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 
-	if pbk.status != CLOSED {
-		panic("cannot how many attempts taken to chose value check unless closed")
-	}
 	attempts := pbk.maxAcceptedConfBal.Number / r.maxBalInc
 	dlog.Printf("Attempts to chose instance %d: %d", inst, attempts)
 }
@@ -1491,9 +1442,7 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 
 	switch r.whatHappenedToClientProposals(inst) {
 	case NotProposed:
-		if pbk.clientProposals != nil {
-			panic("said not proposed but has")
-		}
+
 		break
 	case ProposedButNotChosen:
 		log.Printf("%d client value(s) proposed in instance %d\n not chosen", len(pbk.clientProposals), inst)
@@ -1564,10 +1513,6 @@ func (r *Replica) acceptorCommit(instance int32, chosenAt stdpaxosproto.Ballot, 
 	inst := r.instanceSpace[instance]
 	abk := inst.abk
 	dlog.Printf("Committing (crtInstance=%d)\n", instance)
-
-	if inst.pbk.status == CLOSED || inst.abk.status == COMMITTED {
-		panic("shouldn't be commiting things multiple times")
-	}
 
 	inst.abk.status = COMMITTED
 	knowsVal := abk.VBal.Equal(chosenAt)
