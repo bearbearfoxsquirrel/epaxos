@@ -32,7 +32,8 @@ var scan *bool = flag.Bool("s", false, "replace read with short scan (100 elemen
 var connectReplica *int = flag.Int("connectreplica", -1, "Must state which replica to send requests to")
 var latencyOutput = flag.String("lato", "", "Must state where resultant latencies will be written")
 var settleInTime = flag.Int("settletime", 60, "Number of seconds to allow before recording latency")
-var numLatenciesRecording = flag.Int("numlatencies", 30000, "Number of latencies to record")
+var numLatenciesRecording = flag.Int("numlatencies", -1, "Number of latencies to record")
+var timeLatenciesRecording = flag.Int("timerecordlatsecs", -1, "How long to record latencies for")
 
 type ClientValue struct {
 	uid   int32 //not great but its only for testing. Only need uid for local client
@@ -92,29 +93,42 @@ func (stats *TimeseriesStats) reset() {
 type LatencyRecorder struct {
 	outputFile             *os.File
 	totalLatenciesToRecord int
-	timerDone              chan bool
-	beginRecording         bool
+	beginRecording         chan bool
+	shouldRecord           bool
 	numLatenciesLeft       int
+	timeLatenciesRecording time.Duration
+	stopRecording          chan struct{}
 }
 
 func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 	select {
-	case <-latencyRecorder.timerDone:
-		latencyRecorder.beginRecording = true
+	case <-latencyRecorder.beginRecording:
+		latencyRecorder.shouldRecord = true
+		go func() {
+			timer := time.NewTimer(latencyRecorder.timeLatenciesRecording)
+			<-timer.C
+			latencyRecorder.stopRecording <- struct{}{}
+		}()
+		break
+	case <-latencyRecorder.stopRecording:
+		latencyRecorder.shouldRecord = false
+		break
 	default:
+		break
 	}
 
-	if latencyRecorder.beginRecording && latencyRecorder.numLatenciesLeft > 0 {
+	if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
 		_, err := latencyRecorder.outputFile.WriteString(fmt.Sprintf("%d\n", latencyMicroseconds))
 		if err != nil {
 			dlog.Println("Error writing value")
 			return
 		}
 		latencyRecorder.numLatenciesLeft--
+
 	}
 }
 
-func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToRecord int) LatencyRecorder {
+func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToRecord int, timeLatenciesRecording time.Duration) LatencyRecorder {
 	file, err := os.Create(outputFileLoc)
 	if err != nil {
 		panic("Cannot open latency recording output file at location")
@@ -124,15 +138,17 @@ func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToReco
 		outputFile:             file,
 		totalLatenciesToRecord: numLatenciesToRecord,
 		numLatenciesLeft:       numLatenciesToRecord,
-		beginRecording:         false,
-		timerDone:              make(chan bool),
+		timeLatenciesRecording: timeLatenciesRecording,
+		shouldRecord:           false,
+		beginRecording:         make(chan bool),
+		stopRecording:          make(chan struct{}),
 	}
 
 	timer := time.NewTimer(time.Duration(settleTime) * time.Second)
 
 	go func() {
 		<-timer.C
-		recorder.timerDone <- true
+		recorder.beginRecording <- true
 	}()
 
 	return recorder
@@ -145,11 +161,11 @@ type ClientBenchmarker struct {
 	clientID             int64
 }
 
-func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string) ClientBenchmarker {
+func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string, timeLatenciesRecording time.Duration) ClientBenchmarker {
 	benchmarker := ClientBenchmarker{
 		timeseriesStates:     NewTimeseriesStates(),
 		valueSubmissionTimes: make(map[int32]time.Time),
-		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord),
+		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord, timeLatenciesRecording),
 		clientID:             clientID,
 	}
 
@@ -236,7 +252,7 @@ func main() {
 		clientId = int64(uuid.New().ID())
 	}
 
-	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput)
+	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput, time.Second*time.Duration(*timeLatenciesRecording))
 
 	valueDone := make(chan ClientValue, *outstanding)
 
