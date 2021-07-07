@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/signal"
 	"paxos"
-	"runtime"
 	"runtime/pprof"
 	"stdpaxospatient"
 	"stdpaxosspeculative"
@@ -74,8 +73,8 @@ var emulatedWriteTimeNs *int = flag.Int("emulatedwritetimens", 0, "emulated stab
 func main() {
 	flag.Parse()
 
-	runtime.GOMAXPROCS(*procs)
-
+	//runtime.GOMAXPROCS(*procs)
+	//	runtime.mg
 	if *quiet == true {
 		log.SetOutput(ioutil.Discard)
 	}
