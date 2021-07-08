@@ -1195,7 +1195,7 @@ func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 }
 
 func (r *Replica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcproto.ConfigBal, accepted lwcproto.ConfigBal, acceptedVal []state.Command, inst int32) {
-	if new.PropID != old.PropID && int32(new.PropID) != r.Id && old.PropID != -1 && new.GreaterThan(old) {
+	/*	if new.PropID != old.PropID && int32(new.PropID) != r.Id && old.PropID != -1 && new.GreaterThan(old) {
 		preemptOldPropMsg := &lwcproto.PrepareReply{
 			Instance:   inst,
 			ConfigBal:  new,
@@ -1205,7 +1205,7 @@ func (r *Replica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcprot
 			Command:    acceptedVal,
 		}
 		r.replyPrepare(int32(new.PropID), preemptOldPropMsg)
-	}
+	}*/
 }
 
 type ProposerAccValHandler int
