@@ -1061,8 +1061,10 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 		//if pbk.status != BACKING_OFF { // option for add multiple preempts if backing off already?
 		r.BackoffManager.CheckAndHandleBackoff(inst, pbk.propCurConfBal, preemptingConfigBal, preemterPhase)
 		//	}
+		if pbk.status == PREPARING {
+			r.checkAndOpenNewInstances(inst)
+		}
 		pbk.status = BACKING_OFF
-		r.checkAndOpenNewInstances(inst)
 		if preemptingConfigBal.Ballot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingConfigBal.Ballot
 		}
@@ -1195,7 +1197,7 @@ func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 }
 
 func (r *Replica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcproto.ConfigBal, accepted lwcproto.ConfigBal, acceptedVal []state.Command, inst int32) {
-	/*	if new.PropID != old.PropID && int32(new.PropID) != r.Id && old.PropID != -1 && new.GreaterThan(old) {
+	if new.PropID != old.PropID && int32(new.PropID) != r.Id && old.PropID != -1 && new.GreaterThan(old) {
 		preemptOldPropMsg := &lwcproto.PrepareReply{
 			Instance:   inst,
 			ConfigBal:  new,
@@ -1205,7 +1207,7 @@ func (r *Replica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcprot
 			Command:    acceptedVal,
 		}
 		r.replyPrepare(int32(new.PropID), preemptOldPropMsg)
-	}*/
+	}
 }
 
 type ProposerAccValHandler int
@@ -1244,10 +1246,8 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 		pbk.cmds = val
 
 		dlog.Printf("instance %d new val - proposer %d", inst, whoseCmd)
-		if int32(accepted.PropID) != r.Id {
-			r.checkAndOpenNewInstances(inst)
-		}
 		if r.whatHappenedToClientProposals(inst) == ProposedButNotChosen {
+			r.checkAndOpenNewInstances(inst)
 			r.requeueClientProposals(inst)
 			pbk.clientProposals = nil
 			dlog.Printf("requeing")
@@ -1262,9 +1262,9 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	// not assumed local acceptor has accepted it
 	if int(pbk.proposalInfos[accepted].quorumCount()) >= r.WriteQuorumSize() {
 
-		if int32(accepted.PropID) == r.Id {
-			r.bcastCommitToAll(inst, accepted, val)
-		}
+		//if int32(accepted.PropID) == r.Id {
+		r.bcastCommitToAll(inst, accepted, val)
+		//}
 		r.acceptorCommit(inst, accepted, val)
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmd, false)
 		return CHOSEN
