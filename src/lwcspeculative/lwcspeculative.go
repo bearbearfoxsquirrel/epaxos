@@ -83,6 +83,7 @@ type Replica struct {
 	timeout                    time.Duration
 	group1Size                 int
 	flushCommit                bool
+	ringCommit                 bool
 }
 
 type TimeoutInfo struct {
@@ -353,6 +354,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		timeout:             timeout,
 		flushCommit:         flushCommit,
 	}
+	r.ringCommit = true
 
 	if group1Size <= r.N-r.F {
 		r.group1Size = r.N - r.F
@@ -1133,13 +1135,13 @@ func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxEx
 						pc.ConfigBal = returingInst.abk.vConfBal
 						pc.Command = returingInst.abk.cmds
 						pc.WhoseCmd = returingInst.pbk.whoseCmds
-						if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
-							pc.MoreToCome = 1
-							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-							count++
-						} else {
-							pc.MoreToCome = 0
-							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+						pc.MoreToCome = 0
+						//	pc.MoreToCome = 1
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+						count++
+						//} else {
+						//	r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+						if count == maxExtraInstances {
 							break
 						}
 					}
@@ -1273,9 +1275,21 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	// not assumed local acceptor has accepted it
 	if int(pbk.proposalInfos[accepted].quorumCount()) >= r.WriteQuorumSize() {
 
-		//if int32(accepted.PropID) == r.Id {
-		r.bcastCommitToAll(inst, accepted, val)
-		//}
+		if int32(accepted.PropID) == r.Id {
+
+			//if r.ringCommit {
+			//	pc.LeaderId = r.Id
+			//	pc.Instance = inst
+			//	pc.ConfigBal = accepted
+			//	pc.WhoseCmd = r.instanceSpace[inst].pbk.whoseCmds
+			//	pc.MoreToCome = 0
+			//	pc.Command = val
+			//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, &pc )
+			//} else {
+
+			r.bcastCommitToAll(inst, accepted, val)
+			//}
+		}
 		r.acceptorCommit(inst, accepted, val)
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmd, false)
 		return CHOSEN
@@ -1589,9 +1603,9 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 		break
 	}
 
-	if !moreToCome {
-		r.checkAndOpenNewInstances(inst)
-	}
+	//if !moreToCome {
+	r.checkAndOpenNewInstances(inst)
+	//}
 
 	if pbk.clientProposals != nil && !r.Dreply {
 		// give client the all clear
@@ -1701,6 +1715,10 @@ func (r *Replica) handleCommit(commit *lwcproto.Commit) {
 		dlog.Printf("Already committed \n")
 		return
 	}
+
+	//if r.ringCommit {
+	//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, commit)
+	//}
 
 	r.acceptorCommit(commit.Instance, commit.ConfigBal, commit.Command)
 	if commit.MoreToCome > 0 {
