@@ -1065,7 +1065,7 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 		r.BackoffManager.CheckAndHandleBackoff(inst, pbk.propCurConfBal, preemptingConfigBal, preemterPhase)
 		//	}
 
-		//	r.checkAndOpenNewInstances(inst)
+		r.checkAndOpenNewInstances(inst)
 		pbk.status = BACKING_OFF
 		if preemptingConfigBal.Ballot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingConfigBal.Ballot
@@ -1258,9 +1258,9 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 		pbk.maxAcceptedConfBal = accepted
 		pbk.cmds = val
 
-		//	if int32(accepted.PropID) != r.Id {
-		//		r.checkAndOpenNewInstances(inst)
-		//	}
+		if int32(accepted.PropID) != r.Id {
+			r.checkAndOpenNewInstances(inst)
+		}
 		if r.whatHappenedToClientProposals(inst) == ProposedButNotChosen {
 			r.requeueClientProposals(inst)
 			pbk.clientProposals = nil
