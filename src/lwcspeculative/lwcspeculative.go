@@ -1121,30 +1121,41 @@ func (r *Replica) isMoreCommitsToComeAfter(inst int32) bool {
 func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
 	if inst.abk.status == COMMITTED {
-		count := int32(0)
-		for i := instance; i < r.crtInstance; i++ {
-			returingInst := r.instanceSpace[i]
-			if returingInst != nil {
-				if returingInst.abk.status == COMMITTED {
-					dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
-					pc.LeaderId = int32(returingInst.abk.vConfBal.PropID) //prepare.LeaderId
-					pc.Instance = i
-					pc.ConfigBal = returingInst.abk.vConfBal
-					pc.Command = returingInst.abk.cmds
-					pc.WhoseCmd = returingInst.pbk.whoseCmds
-					if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
-						pc.MoreToCome = 1
-						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-						count++
-					} else {
-						pc.MoreToCome = 0
-						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-						break
+		if instance+(int32(r.N)*r.maxOpenInstances) < r.crtInstance {
+			count := int32(0)
+			for i := instance; i < r.crtInstance; i++ {
+				returingInst := r.instanceSpace[i]
+				if returingInst != nil {
+					if returingInst.abk.status == COMMITTED {
+						dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
+						pc.LeaderId = int32(returingInst.abk.vConfBal.PropID) //prepare.LeaderId
+						pc.Instance = i
+						pc.ConfigBal = returingInst.abk.vConfBal
+						pc.Command = returingInst.abk.cmds
+						pc.WhoseCmd = returingInst.pbk.whoseCmds
+						if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
+							pc.MoreToCome = 1
+							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+							count++
+						} else {
+							pc.MoreToCome = 0
+							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+							break
+						}
 					}
 				}
 			}
+			_ = r.PeerWriters[whoRespondTo].Flush()
+		} else {
+			dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
+			pc.LeaderId = int32(inst.abk.vConfBal.PropID) //prepare.LeaderId
+			pc.Instance = instance
+			pc.ConfigBal = inst.abk.vConfBal
+			pc.Command = inst.abk.cmds
+			pc.WhoseCmd = inst.pbk.whoseCmds
+			pc.MoreToCome = 0
+			r.SendMsg(whoRespondTo, r.commitRPC, &pc)
 		}
-		_ = r.PeerWriters[whoRespondTo].Flush()
 		return true
 	} else {
 		return false
