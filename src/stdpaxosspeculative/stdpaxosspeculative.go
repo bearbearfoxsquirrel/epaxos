@@ -81,6 +81,8 @@ type Replica struct {
 	catchUpBatchSize           int32
 	lastSettleBatchInst        int32
 	timeout                    time.Duration
+	flushCommit                bool
+	group1Size                 int
 }
 
 type TimeoutInfo struct {
@@ -305,7 +307,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -347,8 +349,14 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		catchingUp:          false,
 		catchUpBatchSize:    catchupBatchSize,
 		timeout:             timeout,
+		flushCommit:         flushCommit,
 	}
 
+	if group1Size <= r.N-r.F {
+		r.group1Size = r.N - r.F
+	} else {
+		r.group1Size = group1Size
+	}
 	r.Durable = durable
 	r.clientValueQueue = clientproposalqueue.ClientProposalQueueInit(r.ProposeChan)
 
@@ -744,7 +752,7 @@ func (r *Replica) bcastPrepare(instance int32) {
 	n := r.N - 1
 
 	if r.Thrifty {
-		n = r.ReadQuorumSize() - 1
+		n = r.group1Size
 	}
 	r.CalculateAlive()
 	r.RandomisePeerOrder()
@@ -886,9 +894,17 @@ func (r *Replica) bcastCommitToAll(instance int32, confBal stdpaxosproto.Ballot,
 	for q := 0; q < r.N-1; q++ {
 		_, inQrm := r.instanceSpace[instance].pbk.proposalInfos[confBal].aids[r.PreferredPeerOrder[q]]
 		if inQrm {
-			r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+			if r.flushCommit {
+				r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+			} else {
+				r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+			}
 		} else {
-			r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+			if r.flushCommit {
+				r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+			} else {
+				r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+			}
 		}
 		sent++
 	}
