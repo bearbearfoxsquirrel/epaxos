@@ -1262,7 +1262,9 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	// not assumed local acceptor has accepted it
 	if int(pbk.proposalInfos[accepted].quorumCount()) >= r.WriteQuorumSize() {
 
-		r.bcastCommitToAll(inst, accepted, val)
+		if int32(accepted.PropID) == r.Id {
+			r.bcastCommitToAll(inst, accepted, val)
+		}
 		r.acceptorCommit(inst, accepted, val)
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmd, false)
 		return CHOSEN
