@@ -9,7 +9,7 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
-	"log"
+	//"log"
 	"lwcproto"
 	"math"
 	"math/rand"
