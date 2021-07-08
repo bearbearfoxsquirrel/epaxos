@@ -9,6 +9,7 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
+	"log"
 	"lwcproto"
 	"math"
 	"math/rand"
@@ -667,7 +668,7 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 				break
 			default:
 				pbk.cmds = state.NOOP()
-				dlog.Println("Proposing noop")
+				log.Println("Proposing noop")
 				break
 			}
 		} else {
@@ -1406,7 +1407,7 @@ func (r *Replica) propose(inst int32) {
 				return
 			} else {
 				pbk.cmds = state.NOOP()
-				dlog.Println("Proposing noop")
+				log.Println("Proposing noop")
 			}
 		}
 	} else {
