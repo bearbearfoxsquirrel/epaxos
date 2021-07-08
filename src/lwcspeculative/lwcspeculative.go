@@ -1135,13 +1135,13 @@ func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxEx
 						pc.ConfigBal = returingInst.abk.vConfBal
 						pc.Command = returingInst.abk.cmds
 						pc.WhoseCmd = returingInst.pbk.whoseCmds
-						pc.MoreToCome = 0
-						//	pc.MoreToCome = 1
-						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-						count++
-						//} else {
-						//	r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-						if count == maxExtraInstances {
+						if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
+							pc.MoreToCome = 1
+							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+							count++
+						} else {
+							pc.MoreToCome = 0
+							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
 							break
 						}
 					}
@@ -1603,9 +1603,9 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 		break
 	}
 
-	//if !moreToCome {
-	r.checkAndOpenNewInstances(inst)
-	//}
+	if !moreToCome {
+		r.checkAndOpenNewInstances(inst)
+	}
 
 	if pbk.clientProposals != nil && !r.Dreply {
 		// give client the all clear
