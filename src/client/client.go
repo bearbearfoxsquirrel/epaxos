@@ -238,6 +238,10 @@ func main() {
 	//	log.Fatalf("Conflicts percentage must be between 0 and 100.\n")
 	//}
 
+	if clientId == -1 {
+		clientId = int64(uuid.New().ID())
+	}
+
 	var proxy *bindings.Parameters
 	for {
 		proxy = bindings.NewParameters(*masterAddr, *masterPort, *verbose, *noLeader, *fast, *localReads, *connectReplica)
@@ -246,10 +250,6 @@ func main() {
 			break
 		}
 		proxy.Disconnect()
-	}
-
-	if clientId == -1 {
-		clientId = int64(uuid.New().ID())
 	}
 
 	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput, time.Second*time.Duration(*timeLatenciesRecording))
@@ -268,12 +268,13 @@ func main() {
 						key:   int64(rand.Int31() % int32(*conflicts+1)),
 						value: rep.Value,
 					}
-				} else {
-					err = errors.New("Failed to receive a response.")
-					replicaReader = proxy.GetListener()
-					benchmarker.reset()
-					beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 				}
+			} else {
+				err = errors.New("Failed to receive a response.")
+				proxy.Connect()
+				replicaReader = proxy.GetListener()
+				benchmarker.reset()
+				beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 			}
 		}
 	}()
@@ -311,7 +312,8 @@ func main() {
 			}
 			//case value <-listener:
 			break
-			//default:
+			//	default:
+			//	break
 		}
 	}
 

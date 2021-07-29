@@ -1,6 +1,9 @@
 package epaxos
 
 import (
+	"CommitExecutionComparator"
+	"time"
+
 	//    "state"
 	"dlog"
 	"epaxosproto"
@@ -58,6 +61,20 @@ func (e *Exec) findSCC(root *Instance) bool {
 	return ret
 }
 
+func (e *Exec) doRecord(log int32, seq int32) {
+	if e.r.cmpCommitAndExec {
+		id := CommitExecutionComparator.InstanceID{Log: log, Seq: seq}
+		now := time.Now()
+		if e.r.sepExecThread {
+			e.r.commitExecMutex.Lock()
+			e.r.commitExecComp.RecordExecution(id, now)
+			//e.r.execLatsToRec <- ToRecord{id, now}
+			e.r.commitExecMutex.Unlock()
+		} else {
+			e.r.commitExecComp.RecordExecution(id, now)
+		}
+	}
+}
 func (e *Exec) strongconnect(v *Instance, index *int) bool {
 	v.Index = *index
 	v.Lowlink = *index
@@ -131,6 +148,7 @@ func (e *Exec) strongconnect(v *Instance, index *int) bool {
 			for idx := 0; idx < len(w.Cmds); idx++ {
 				shouldRespond := e.r.Dreply && w.lb != nil && w.lb.clientProposals != nil
 				dlog.Printf("Executing "+w.Cmds[idx].String()+" at %d.%d with (seq=%d, deps=%d, scc_size=%d, shouldRespond=%t)\n", w.id.replica, w.id.instance, w.Seq, w.Deps, len(list), shouldRespond)
+
 				if w.Cmds[idx].Op == state.NONE {
 					// nothing to do
 
@@ -154,6 +172,8 @@ func (e *Exec) strongconnect(v *Instance, index *int) bool {
 
 			}
 			w.Status = epaxosproto.EXECUTED
+			e.doRecord(w.id.replica, w.id.instance)
+
 		}
 		stack = stack[0:l]
 	}

@@ -9,7 +9,7 @@ type ConfigBal struct {
 	Ballot
 }
 
-func (confBal ConfigBal) IsZeroVal() bool {
+func (confBal ConfigBal) IsZero() bool {
 	zero := ConfigBal{
 		Config: -1,
 		Ballot: Ballot{-1, -1},

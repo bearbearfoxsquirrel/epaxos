@@ -157,7 +157,7 @@ func (master *Master) Register(args *masterproto.RegisterArgs, reply *masterprot
 		//if addr == "" {
 		//	addr = "127.0.0.1"
 		//}
-		//	out, err := exec.Command("ping", addr, "-c 2", "-q").Output()
+		//	out, err := exec.Command("ping", addr, "-c 2", "-q").output()
 		//if err == nil {
 		//	master.latencies[index], _ = strconv.ParseFloat(strings.Split(string(out), "/")[4], 64)
 		//		log.Printf(" node %v [%v] -> %v", index, master.nodeList[index],master.latencies[index])

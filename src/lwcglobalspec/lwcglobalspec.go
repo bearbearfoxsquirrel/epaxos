@@ -1,6 +1,7 @@
-package lwcpatient
+package lwcglobalspec
 
 import (
+	"CommitExecutionComparator"
 	"clientproposalqueue"
 	"dlog"
 	"encoding/binary"
@@ -36,64 +37,66 @@ type ProposalInfo struct {
 	proposingConfBal lwcproto.ConfigBal
 }
 
+type Replica struct {
+	*genericsmr.Replica        // extends a generic Paxos replica
+	configChan                 chan fastrpc.Serializable
+	prepareChan                chan fastrpc.Serializable
+	acceptChan                 chan fastrpc.Serializable
+	commitChan                 chan fastrpc.Serializable
+	commitShortChan            chan fastrpc.Serializable
+	prepareReplyChan           chan fastrpc.Serializable
+	acceptReplyChan            chan fastrpc.Serializable
+	prepareRPC                 uint8
+	acceptRPC                  uint8
+	commitRPC                  uint8
+	commitShortRPC             uint8
+	prepareReplyRPC            uint8
+	acceptReplyRPC             uint8
+	instanceSpace              []*Instance // the space of all instances (used and not yet used)
+	crtInstance                int32       // highest active instance number that this replica knows about
+	crtConfig                  int32
+	Shutdown                   bool
+	counter                    int
+	flush                      bool
+	executedUpTo               int32
+	batchWait                  int
+	maxBalInc                  int32
+	maxOpenInstances           int32
+	crtOpenedInstances         []int32
+	proposableInstances        chan ProposalInfo
+	clientValueQueue           clientproposalqueue.ClientProposalQueue
+	noopWaitUs                 int32
+	retryInstance              chan RetryInfo
+	BackoffManager             BackoffManager
+	alwaysNoop                 bool
+	lastTimeClientChosen       time.Time
+	lastOpenProposalTime       time.Time
+	timeSinceValueLastSelected time.Time
+	fastLearn                  bool
+	whenCrash                  time.Duration
+	howLongCrash               time.Duration
+	whoCrash                   int32
+	initalProposalWait         time.Duration
+	emulatedSS                 bool
+	emulatedWriteTime          time.Duration
+	timeoutRetry               chan TimeoutInfo
+	catchingUp                 bool
+	catchUpBatchSize           int32
+	nextRecoveryBatchPoint     int32
+	timeout                    time.Duration
+	group1Size                 int
+	flushCommit                bool
+	ringCommit                 bool
+	cmpCommitAndExec           bool
+	commitExecComp             *CommitExecutionComparator.CommitExecutionComparator
+	catchupAcked               bool
+	recoveringFrom             int32
+}
+
 type TimeoutInfo struct {
 	ProposalInfo
 	phase    ProposerStatus
 	whoTried []int32
-}
-
-type Replica struct {
-	*genericsmr.Replica // extends a generic Paxos replica
-	configChan          chan fastrpc.Serializable
-	prepareChan         chan fastrpc.Serializable
-	acceptChan          chan fastrpc.Serializable
-	commitChan          chan fastrpc.Serializable
-	commitShortChan     chan fastrpc.Serializable
-	prepareReplyChan    chan fastrpc.Serializable
-	acceptReplyChan     chan fastrpc.Serializable
-	//instancesToRecover  chan int32
-	prepareRPC                    uint8
-	acceptRPC                     uint8
-	commitRPC                     uint8
-	commitShortRPC                uint8
-	prepareReplyRPC               uint8
-	acceptReplyRPC                uint8
-	instanceSpace                 []*Instance // the space of all instances (used and not yet used)
-	crtInstance                   int32       // highest active instance number that this replica knows about
-	crtConfig                     int32
-	Shutdown                      bool
-	counter                       int
-	flush                         bool
-	executedUpTo                  int32
-	batchWait                     int
-	maxBalInc                     int32
-	maxOpenInstances              int32
-	crtOpenedInstances            []int32
-	proposableInstances           chan ProposalInfo
-	clientValueQueue              clientproposalqueue.ClientProposalQueue
-	noopWaitUs                    int32
-	retryInstance                 chan RetryInfo
-	BackoffManager                BackoffManager
-	alwaysNoop                    bool
-	lastTimeClientChosen          time.Time
-	lastOpenProposalTime          time.Time
-	timeSinceLastProposedInstance time.Time
-	fastLearn                     bool
-	whenCrash                     time.Duration
-	howLongCrash                  time.Duration
-	whoCrash                      int32
-	emulatedSS                    bool
-	emulatedWriteTime             time.Duration
-	goHeartbeat                   chan struct{}
-	timeoutRetry                  chan TimeoutInfo
-	timeout                       time.Duration
-	catchupBatchSize              int32
-	catchingUp                    bool
-	lastSettleBatchInst           int32
-	flushCommit                   bool
-	group1Size                    int
-	nextRecoveryBatchPoint        int32
-	recoveringFrom                int32
 }
 
 type ProposerStatus int
@@ -326,7 +329,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpComitExec bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -345,7 +348,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		acceptReplyRPC:      0,
 		instanceSpace:       make([]*Instance, 15*1024*1024),
 		crtInstance:         -1, //get from storage
-		crtConfig:           -1,
+		crtConfig:           1,
 		Shutdown:            false,
 		counter:             0,
 		flush:               true,
@@ -360,19 +363,20 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac),
 		alwaysNoop:          alwaysNoop,
 		fastLearn:           false,
+		timeoutRetry:        make(chan TimeoutInfo, 1000),
 		whoCrash:            whoCrash,
 		whenCrash:           whenCrash,
 		howLongCrash:        howlongCrash,
+		initalProposalWait:  initalProposalWait,
 		emulatedSS:          emulatedSS,
 		emulatedWriteTime:   emulatedWriteTime,
-		goHeartbeat:         make(chan struct{}),
-		timeoutRetry:        make(chan TimeoutInfo, 1000),
-		timeout:             timeout,
-		catchupBatchSize:    catchupBatchSize,
-		lastSettleBatchInst: -1,
 		catchingUp:          false,
+		catchUpBatchSize:    catchupBatchSize,
+		timeout:             timeout,
 		flushCommit:         flushCommit,
+		cmpCommitAndExec:    cmpComitExec,
 	}
+	r.ringCommit = true
 
 	if group1Size <= r.N-r.F {
 		r.group1Size = r.N - r.F
@@ -389,6 +393,10 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	r.commitShortRPC = r.RegisterRPC(new(lwcproto.CommitShort), r.commitShortChan)
 	r.prepareReplyRPC = r.RegisterRPC(new(lwcproto.PrepareReply), r.prepareReplyChan)
 	r.acceptReplyRPC = r.RegisterRPC(new(lwcproto.AcceptReply), r.acceptReplyChan)
+
+	if cmpComitExec {
+		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(fmt.Sprintf("./r%d-cmd-lats.txt", r.Id))
+	}
 
 	go r.run()
 	return r
@@ -412,7 +420,7 @@ func (r *Replica) recordExecutedUpTo() {
 
 //append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
@@ -425,11 +433,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 
 //write a sequence of commands to stable storage
 func (r *Replica) recordCommands(cmds []state.Command) {
-	if !r.Durable {
-		return
-	}
-
-	if cmds == nil {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 	for i := 0; i < len(cmds); i++ {
@@ -442,7 +446,8 @@ func (r *Replica) sync() {
 	if !r.Durable {
 		return
 	}
-	//log.Println("synced")
+	dlog.Println("synced")
+
 	if r.emulatedSS {
 		time.Sleep(r.emulatedWriteTime)
 	} else {
@@ -459,13 +464,12 @@ func (r *Replica) replyAccept(replicaId int32, reply *lwcproto.AcceptReply) {
 }
 
 /* Clock goroutine */
-
 var fastClockChan chan bool
 
 func (r *Replica) fastClock() {
 	for !r.Shutdown {
 		time.Sleep(time.Duration(r.batchWait) * time.Millisecond) // ms
-		log.Println("sending fast clock")
+		dlog.Println("sending fast clock")
 		fastClockChan <- true
 	}
 }
@@ -475,8 +479,6 @@ func (r *Replica) BatchingEnabled() bool {
 }
 
 /* ============= */
-
-/* Main event processing loop */
 func (r *Replica) restart() {
 	for cont := true; cont; {
 		select {
@@ -514,14 +516,10 @@ func (r *Replica) sendNextRecoveryRequestBatch() {
 		if i == r.Id {
 			continue
 		}
-		log.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchupBatchSize, i)
+		log.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
 		r.sendRecoveryRequest(r.nextRecoveryBatchPoint, i)
-		r.nextRecoveryBatchPoint += r.catchupBatchSize
+		r.nextRecoveryBatchPoint += r.catchUpBatchSize
 	}
-}
-
-func (r *Replica) makeCatchupInstance(inst int32) {
-	r.instanceSpace[inst] = r.makeEmptyInstance()
 }
 
 func (r *Replica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
@@ -531,19 +529,19 @@ func (r *Replica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
 	//}
 }
 
-func (r *Replica) checkAndHandlecatchupRequest(prepare *lwcproto.Prepare) bool {
+func (r *Replica) checkAndHandleCatchUpRequest(prepare *lwcproto.Prepare) bool {
 	//config is ignored here and not acknowledged until new proposals are actually made
 	if prepare.IsZero() {
-		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance+r.catchupBatchSize)
-		r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.catchupBatchSize)
+		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance+r.catchUpBatchSize)
+		r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.catchUpBatchSize)
 		return true
 	} else {
 		return false
 	}
 }
 
-//func (r *Replica) setNextcatchupPoint()
-func (r *Replica) checkAndHandlecatchupResponse(commit *lwcproto.Commit) {
+//func (r *Replica) setNextCatchUpPoint()
+func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
 	if r.catchingUp {
 		//log.Printf("got catch up for %d", commit.Instance)
 		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
@@ -558,48 +556,28 @@ func (r *Replica) checkAndHandlecatchupResponse(commit *lwcproto.Commit) {
 			r.Mutex.Unlock()
 		} else {
 			//if commit.Instance == r.nextRecoveryBatchPoint {
-			if commit.Instance >= r.nextRecoveryBatchPoint-(r.catchupBatchSize/4) {
+			if commit.Instance >= r.nextRecoveryBatchPoint-(r.catchUpBatchSize/4) {
 				r.sendNextRecoveryRequestBatch()
 			}
 		}
 	}
 }
 
-func (r *Replica) doHeartbeat() {
-	heartBeat := lwcproto.Prepare{
-		LeaderId: r.Id,
-		Instance: -1,
-		ConfigBal: lwcproto.ConfigBal{
-			Config: -1,
-			Ballot: lwcproto.Ballot{-1, -1},
-		},
-	}
-	for i := 0; i < r.N-1; i++ {
-		if r.PreferredPeerOrder[i] == r.Id {
-			continue
-		}
-		r.SendMsg(r.PreferredPeerOrder[i], r.prepareRPC, &heartBeat)
-	}
-
-	go func() {
-		timer := time.NewTimer(100 * time.Millisecond)
-		<-timer.C
-		r.goHeartbeat <- struct{}{}
-	}()
-}
-
 func (r *Replica) run() {
 	r.ConnectToPeers()
 	r.RandomisePeerOrder()
 
-	fastClockChan = make(chan bool, 1)
+	//	fastClockChan = make(chan bool, 1)
 	//Enabled fast clock when batching
-	if r.BatchingEnabled() {
-		go r.fastClock()
-	}
+	//	if r.BatchingEnabled() {
+	//		go r.fastClock()
+	//	}
 	//	onOffProposeChan := r.ProposeChan
 
 	go r.WaitForClientConnections()
+	for i := 0; i < int(r.maxOpenInstances); i++ {
+		r.beginNextInstance()
+	}
 
 	doner := make(chan struct{})
 	if r.Id == r.whoCrash {
@@ -610,36 +588,33 @@ func (r *Replica) run() {
 		}()
 	}
 
-	r.doHeartbeat()
-
 	for !r.Shutdown {
-
 		select {
-		case <-r.goHeartbeat:
-			r.doHeartbeat()
-			break
-		case maybeTimedout := <-r.timeoutRetry:
-			r.retryConfigBal(maybeTimedout)
-			break
 		case <-doner:
 			log.Println("Crahsing")
 			time.Sleep(r.howLongCrash)
 			r.restart()
 			log.Println("Done crashing")
 			break
+		case maybeTimedout := <-r.timeoutRetry:
+			r.retryConfigBal(maybeTimedout)
+			break
 		case next := <-r.retryInstance:
 			dlog.Println("Checking whether to retry a proposal")
 			r.tryNextAttempt(next)
 			break
+		case retry := <-r.proposableInstances:
+			r.recheckForValueToPropose(retry)
+			break
+			//	case <-fastClockChan:
+			//activate new proposals channel
+			//		onOffProposeChan = r.ProposeChan
+			//	break
 		case prepareS := <-r.prepareChan:
 			prepare := prepareS.(*lwcproto.Prepare)
 			//got a Prepare message
-			if prepare.Instance == -1 {
-				break
-			}
 			dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
-
-			if !r.checkAndHandlecatchupRequest(prepare) {
+			if !r.checkAndHandleCatchUpRequest(prepare) {
 				r.handlePrepare(prepare)
 			}
 			break
@@ -654,7 +629,7 @@ func (r *Replica) run() {
 			//got a Commit message
 			dlog.Printf("Received Commit from replica %d, for instance %d\n", commit.LeaderId, commit.Instance)
 			r.handleCommit(commit)
-			r.checkAndHandlecatchupResponse(commit)
+			r.checkAndHandleCatchUpResponse(commit)
 			break
 		case commitS := <-r.commitShortChan:
 			commit := commitS.(*lwcproto.CommitShort)
@@ -674,27 +649,8 @@ func (r *Replica) run() {
 			dlog.Printf("Received AcceptReply for instance %d\n", acceptReply.Instance)
 			r.handleAcceptReply(acceptReply)
 			break
-		default:
-			break
-		}
-
-		switch cliProp := r.clientValueQueue.TryDequeue(); {
-		case cliProp != nil:
-			numEnqueued := r.clientValueQueue.Len() + 1
-			batchSize := numEnqueued
-			clientProposals := make([]*genericsmr.Propose, batchSize)
-			clientProposals[0] = cliProp
-
-			for i := 1; i < batchSize; i++ {
-				cliProp = r.clientValueQueue.TryDequeue()
-				if cliProp == nil {
-					clientProposals = clientProposals[:i]
-					break
-				}
-				clientProposals[i] = cliProp
-			}
-			log.Println("Client value(s) received beginning new instance")
-			r.beginNextInstance(clientProposals)
+			//default:
+			//	break
 		}
 	}
 }
@@ -712,6 +668,67 @@ func (r *Replica) retryConfigBal(maybeTimedout TimeoutInfo) {
 	}
 }
 
+func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
+	inst := r.instanceSpace[proposalInfo.inst]
+	pbk := inst.pbk
+	// note that 4 things can happen
+	// is chosen or preemped (conf bal no longer relevant
+	// 1 recieve value
+	// 2 no val received
+	// received extra promises and now there is a previously chosen value (don't need to propose again but prolly should (if not a no op) --- could make this optimsation
+	if pbk == nil {
+		return
+	}
+	if pbk.propCurConfBal.Equal(proposalInfo.proposingConfBal) && pbk.status == READY_TO_PROPOSE {
+		whoseCmds := int32(-1)
+		if pbk.maxAcceptedConfBal.IsZero() {
+			whoseCmds = r.Id
+			switch cliProp := r.clientValueQueue.TryDequeue(); {
+			case cliProp != nil:
+				numEnqueued := r.clientValueQueue.Len() + 1
+				batchSize := numEnqueued
+				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
+				pbk.cmds = make([]state.Command, batchSize)
+				pbk.clientProposals[0] = cliProp
+				pbk.cmds[0] = cliProp.Command
+
+				for i := 1; i < batchSize; i++ {
+					cliProp = r.clientValueQueue.TryDequeue()
+					if cliProp == nil {
+						pbk.clientProposals = pbk.clientProposals[:i]
+						pbk.cmds = pbk.cmds[:i]
+						break
+					}
+					pbk.clientProposals[i] = cliProp
+					pbk.cmds[i] = cliProp.Command
+				}
+				dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
+				break
+			default:
+				pbk.cmds = state.NOOP()
+				dlog.Println("Proposing noop")
+				break
+			}
+		} else {
+			whoseCmds = pbk.whoseCmds
+		}
+
+		pbk.status = PROPOSING
+		// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
+		if r.fastLearn {
+			r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.propCurConfBal, pbk.cmds)
+			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.propCurConfBal, pbk.cmds, whoseCmds)
+
+			r.bcastAccept(proposalInfo.inst)
+		} else {
+			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.propCurConfBal, pbk.cmds, whoseCmds)
+
+			r.bcastAccept(proposalInfo.inst)
+			r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.propCurConfBal, pbk.cmds)
+		}
+	}
+}
+
 func (r *Replica) tryNextAttempt(next RetryInfo) {
 	inst := r.instanceSpace[next.InstToPrep]
 	if !next.backedoff {
@@ -721,10 +738,9 @@ func (r *Replica) tryNextAttempt(next RetryInfo) {
 		}
 	}
 
-	if (r.BackoffManager.NoHigherBackoff(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
+	if (r.BackoffManager.NoHigherBackoff(next) && inst.pbk.status == BACKING_OFF) || !next.backedoff {
 		r.proposerBeginNextConfBal(next.InstToPrep)
 		nextConfBal := r.instanceSpace[next.InstToPrep].pbk.propCurConfBal
-
 		r.acceptorPrepareOnConfBal(next.InstToPrep, nextConfBal)
 		r.bcastPrepare(next.InstToPrep)
 		dlog.Printf("Proposing next conf-bal %d.%d.%d to instance %d\n", nextConfBal.Config, nextConfBal.Number, nextConfBal.PropID, next.InstToPrep)
@@ -782,8 +798,9 @@ func (r *Replica) bcastPrepare(instance int32) {
 	n := r.N - 1
 
 	if r.Thrifty {
-		n = int(r.group1Size)
+		n = r.group1Size
 	}
+
 	r.CalculateAlive()
 	r.RandomisePeerOrder()
 	sent := 0
@@ -875,6 +892,7 @@ func (r *Replica) bcastAccept(instance int32) {
 	n := r.N - 1
 	if r.Thrifty {
 		n = r.WriteQuorumSize() - 1
+		//	dlog.Printf( "accept: %d" , n)
 	}
 
 	r.CalculateAlive()
@@ -909,6 +927,7 @@ func (r *Replica) bcastCommitToAll(instance int32, confBal lwcproto.ConfigBal, c
 	pc.Instance = instance
 	pc.ConfigBal = confBal
 	pc.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
+	pc.MoreToCome = 0
 	pc.Command = command
 
 	pcs.LeaderId = r.Id
@@ -941,18 +960,24 @@ func (r *Replica) bcastCommitToAll(instance int32, confBal lwcproto.ConfigBal, c
 
 func (r *Replica) getNextProposingConfigBal(instance int32) lwcproto.ConfigBal {
 	pbk := r.instanceSpace[instance].pbk
-	//abk := r.instanceSpace[instance].abk
 	min := ((pbk.maxKnownBal.Number/r.maxBalInc)+1)*r.maxBalInc + int32(r.N)
-	//zero := time.Time{}
 	var max int32
-	//	if r.timeSinceLastProposedInstance != zero {
-	//	timeDif := time.Now().Sub(r.timeSinceLastProposedInstance)
-	//	max = min + (r.maxBalInc) + int32(timeDif.Milliseconds()*10)
-	//	} else {
-	max = min + (r.maxBalInc)
-	//	}
+	zero := time.Time{}
+	if r.timeSinceValueLastSelected != zero {
+		timeDif := time.Now().Sub(r.timeSinceValueLastSelected)
+		max = min + (r.maxBalInc) + int32(timeDif.Microseconds()/10)
+	} else {
+		max = min + (r.maxBalInc)
+	}
+	/*if max < 0 { // overflow
+		max = math.MaxInt32
+		panic("too many conf-bals")
+	}*/
 
 	next := int32(math.Floor(rand.Float64()*float64(max-min+1) + float64(min)))
+	/*if next < abk.curBal.Number {
+		panic("Trying outdated conf-bal?")
+	}*/
 
 	//if (instance % int32(r.N)) == r.Id {
 	//		next += max
@@ -969,7 +994,6 @@ func (r *Replica) getNextProposingConfigBal(instance int32) lwcproto.ConfigBal {
 
 func (r *Replica) incToNextOpenInstance() {
 	r.crtInstance++
-
 }
 
 func (r *Replica) makeEmptyInstance() *Instance {
@@ -1003,68 +1027,40 @@ func (r *Replica) makeEmptyInstance() *Instance {
 	}
 }
 
+func (r *Replica) makeCatchupInstance(inst int32) {
+	r.instanceSpace[inst] = r.makeEmptyInstance()
+}
+
 func (r *Replica) proposerBeginNextConfBal(inst int32) {
 	pbk := r.instanceSpace[inst].pbk
-
 	pbk.status = PREPARING
 	nextConfBal := r.getNextProposingConfigBal(inst)
 	pbk.proposalInfos[nextConfBal] = new(QuorumInfo)
-
 	pbk.propCurConfBal = nextConfBal
 	pbk.maxKnownBal = nextConfBal.Ballot
-
 	pbk.proposalInfos[nextConfBal] = NewQuorumInfo(PROMISE)
 }
 
-func (r *Replica) beginNextInstance(valsToPropose []*genericsmr.Propose) {
+func (r *Replica) beginNextInstance() {
 	r.incToNextOpenInstance()
 	r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
 	curInst := r.instanceSpace[r.crtInstance]
+
 	r.proposerBeginNextConfBal(r.crtInstance)
-	r.instanceSpace[r.crtInstance].pbk.clientProposals = valsToPropose
 	r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.propCurConfBal)
 	r.bcastPrepare(r.crtInstance)
-	log.Printf("Opened new instance %d\n", r.crtInstance)
-}
-
-func (r *Replica) handlePropose(propose *genericsmr.Propose) {
-	dlog.Printf("Received new client value\n")
-	r.clientValueQueue.TryEnqueue(propose)
-	//check if any open instances
+	dlog.Printf("Opened new instance %d\n", r.crtInstance)
 }
 
 func (r *Replica) acceptorPrepareOnConfBal(inst int32, confBal lwcproto.ConfigBal) {
-
-	instance := r.instanceSpace[inst]
-	abk := instance.abk
-	//	if r.instanceSpace[inst].pbk.status == CLOSED || r.instanceSpace[inst].abk.status == COMMITTED {
-	//		panic("oh nnooooooooo")
-	//	}
-	//	cur := lwcproto.ConfigBal{
-	//		Config: r.crtConfig,
-	//		Ballot: abk.curBal,
-	//	}
-	//if cur.GreaterThan(confBal) && !cur.Equal(confBal) {
-	//		panic("preparing on out of date conf bal")
-	//	}
-	abk.status = PREPARED
+	r.instanceSpace[inst].abk.status = PREPARED
 	dlog.Printf("Acceptor Preparing Config-Ballot %d.%d.%d ", confBal.Config, confBal.Number, confBal.PropID)
-	abk.curBal = confBal.Ballot
+	r.instanceSpace[inst].abk.curBal = confBal.Ballot
 }
 
 func (r *Replica) acceptorAcceptOnConfBal(inst int32, confBal lwcproto.ConfigBal, cmds []state.Command) {
-
 	abk := r.instanceSpace[inst].abk
-
 	abk.status = ACCEPTED
-
-	//cur := lwcproto.ConfigBal{
-	//	Config: r.crtConfig,
-	//	Ballot: abk.curBal,
-	//}
-	//if cur.GreaterThan(confBal) {
-	//	panic("accepted outof date conf bal")
-	//}
 
 	dlog.Printf("Acceptor Accepting Config-Ballot %d.%d.%d ", confBal.Config, confBal.Number, confBal.PropID)
 	abk.curBal = confBal.Ballot
@@ -1073,6 +1069,7 @@ func (r *Replica) acceptorAcceptOnConfBal(inst int32, confBal lwcproto.ConfigBal
 
 	r.recordInstanceMetadata(r.instanceSpace[inst])
 	r.recordCommands(cmds)
+	dlog.Printf("accept sync instance %d", inst)
 	r.sync()
 }
 
@@ -1083,18 +1080,13 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 	if pbk.status != CLOSED && preemptingConfigBal.GreaterThan(pbk.propCurConfBal) {
 		//if pbk.status != BACKING_OFF { // option for add multiple preempts if backing off already?
 		r.BackoffManager.CheckAndHandleBackoff(inst, pbk.propCurConfBal, preemptingConfigBal, preemterPhase)
+		//	}
 
-		// if we are preparing for a new instance to propose in but are preempted
-		if pbk.status == PREPARING && pbk.clientProposals != nil {
-			r.requeueClientProposals(inst)
-			pbk.clientProposals = nil
-		}
-
+		//	r.checkAndOpenNewInstances()
+		pbk.status = BACKING_OFF
 		if preemptingConfigBal.Ballot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingConfigBal.Ballot
 		}
-
-		pbk.status = BACKING_OFF
 		return true
 	} else {
 		return false
@@ -1102,17 +1094,15 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 }
 
 func (r *Replica) checkAndHandleConfigPreempt(inst int32, preemptingConfigBal lwcproto.ConfigBal, preemterPhase QuorumType) bool {
-	// in this function there is an error where if we start up a process and other processes are at a higher config, we will go into this function
-	// if
 	if r.crtConfig < preemptingConfigBal.Config {
 		dlog.Printf("Current config %d preempted by config %d (instance %d)\n", r.crtConfig, preemptingConfigBal.Config, inst)
 		r.recordNewConfig(preemptingConfigBal.Config)
+		dlog.Printf("config sync instance %d", inst)
 		r.sync()
 		r.crtConfig = preemptingConfigBal.Config
-
 		for i := r.executedUpTo; i <= r.crtInstance; i++ {
-			pbk := r.instanceSpace[i].pbk
 			if r.instanceSpace[i] != nil {
+				pbk := r.instanceSpace[i].pbk
 				if r.instanceSpace[i].abk.status != COMMITTED {
 					if i != inst {
 						pbk.status = PREPARING
@@ -1136,32 +1126,60 @@ func (r *Replica) checkAndHandleConfigPreempt(inst int32, preemptingConfigBal lw
 	}
 }
 
+func (r *Replica) isMoreCommitsToComeAfter(inst int32) bool {
+	for i := inst + 1; i <= r.crtInstance; i++ {
+		instance := r.instanceSpace[i]
+		if instance != nil {
+			if instance.abk.status == COMMITTED {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
+	if inst == nil {
+		return false
+	}
+
 	if inst.abk.status == COMMITTED {
+		//	if instance+(int32(r.N)*r.maxOpenInstances) < r.crtInstance {
 		count := int32(0)
-		for i := instance; i < r.crtInstance; i++ {
+		for i := instance; i <= r.crtInstance; i++ {
 			returingInst := r.instanceSpace[i]
 			if returingInst != nil {
 				if returingInst.abk.status == COMMITTED {
-					dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
+					dlog.Printf("Already committed instance %d, returning commit to %d \n", i, whoRespondTo)
 					pc.LeaderId = int32(returingInst.abk.vConfBal.PropID) //prepare.LeaderId
 					pc.Instance = i
 					pc.ConfigBal = returingInst.abk.vConfBal
 					pc.Command = returingInst.abk.cmds
 					pc.WhoseCmd = returingInst.pbk.whoseCmds
-					args := &pc
-					if count < maxExtraInstances {
+					if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
+						pc.MoreToCome = 1
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
 						count++
-						pc.MoreToCome = 0
-						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, args)
 					} else {
+						pc.MoreToCome = 0
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
 						break
 					}
 				}
 			}
 		}
 		_ = r.PeerWriters[whoRespondTo].Flush()
+		/*	} else {
+			dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
+			pc.LeaderId = int32(inst.abk.vConfBal.PropID) //prepare.LeaderId
+			pc.Instance = instance
+			pc.ConfigBal = inst.abk.vConfBal
+			pc.Command = inst.abk.cmds
+			pc.WhoseCmd = inst.pbk.whoseCmds
+			pc.MoreToCome = 0
+			r.SendMsg(whoRespondTo, r.commitRPC, &pc)
+		}*/
 		return true
 	} else {
 		return false
@@ -1171,11 +1189,9 @@ func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxEx
 func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
-
-	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.crtInstance-prepare.Instance) {
+	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, 0) {
 		return
 	}
-
 	if configPreempted {
 		return
 	}
@@ -1193,7 +1209,6 @@ func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 		r.acceptorPrepareOnConfBal(prepare.Instance, prepare.ConfigBal)
 		r.proposerCheckAndHandlePreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
 		r.checkAndHandleOldPreempted(prepare.ConfigBal, minSafe, inst.abk.vConfBal, inst.abk.cmds, prepare.Instance)
-
 	} else {
 		dlog.Printf("Config-Ballot %d.%d.%d already joined, returning same promise", prepare.Config, prepare.Number, prepare.PropID)
 	}
@@ -1242,13 +1257,12 @@ func (pbk *ProposingBookkeeping) isProposingClientValue() bool {
 	return pbk.status == PROPOSING && pbk.clientProposals != nil
 }
 
-func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, accepted lwcproto.ConfigBal, val []state.Command, whoseCmds int32) ProposerAccValHandler {
+func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, accepted lwcproto.ConfigBal, val []state.Command, whoseCmd int32) ProposerAccValHandler {
 	if accepted.IsZero() {
 		return IGNORED
 	}
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
-	newVal := false
 
 	if pbk.status == CLOSED {
 		return CHOSEN
@@ -1256,15 +1270,22 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	if accepted.Ballot.GreaterThan(pbk.maxKnownBal) {
 		pbk.maxKnownBal = accepted.Ballot
 	}
+
+	newVal := false
 	if accepted.GreaterThan(pbk.maxAcceptedConfBal) {
 		newVal = true
-		pbk.whoseCmds = whoseCmds
+		// who proposed original command - used for next proposal
+		pbk.whoseCmds = whoseCmd
 		pbk.maxAcceptedConfBal = accepted
 		pbk.cmds = val
 
+		//	if int32(accepted.PropID) != r.Id {
+		//		r.checkAndOpenNewInstances()
+		//	}
 		if r.whatHappenedToClientProposals(inst) == ProposedButNotChosen {
 			r.requeueClientProposals(inst)
 			pbk.clientProposals = nil
+			dlog.Printf("requeing")
 		}
 	}
 
@@ -1275,15 +1296,21 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	pbk.proposalInfos[accepted].quorumAdd(aid)
 	// not assumed local acceptor has accepted it
 	if int(pbk.proposalInfos[accepted].quorumCount()) >= r.WriteQuorumSize() {
-		//	if pbk.maxAcceptedConfBal.GreaterThan(accepted) && pbk.whoseCmds != whoseCmds && pbk.proposalInfos[pbk.propCurConfBal].qrmType == ACCEPTANCE {
-		//		panic("break in safety!!!")
-		//	}
+
+		//if r.ringCommit {
+		//	pc.LeaderId = r.Id
+		//	pc.Instance = inst
+		//	pc.ConfigBal = accepted
+		//	pc.WhoseCmd = r.instanceSpace[inst].pbk.whoseCmds
+		//	pc.MoreToCome = 0
+		//	pc.Command = val
+		//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, &pc )
+		//} else {
+
 		r.bcastCommitToAll(inst, accepted, val)
+		//}
 		r.acceptorCommit(inst, accepted, val)
-		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmds)
-		//		if pbk.status != CLOSED || instance.abk.status != COMMITTED {
-		//		panic("not set agents to closed")
-		//	}
+		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmd, false)
 		return CHOSEN
 	} else if newVal {
 		return NEW_VAL
@@ -1294,8 +1321,10 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 
 func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 	inst := r.instanceSpace[preply.Instance]
-	pbk := inst.pbk
+	pbk := r.instanceSpace[preply.Instance].pbk
+
 	configPreempt := r.checkAndHandleConfigPreempt(preply.Instance, preply.ConfigBal, PROMISE)
+
 	// todo should do check and handle commit instead???
 	if inst.abk.status == COMMITTED {
 		dlog.Println("Inst already known to be chosen")
@@ -1309,49 +1338,49 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 	if valWhatDone == NEW_VAL {
 		dlog.Printf("Promise from %d in instance %d has new value at Config-Ballot %d.%d.%d", preply.AcceptorId,
 			preply.Instance, preply.VConfigBal.Config, preply.VConfigBal.Number, preply.VConfigBal.PropID)
-	} else if valWhatDone == CHOSEN {
-		dlog.Printf("Preparing instance recognised as chosen (instance %d), returning commit \n", preply.Instance)
-
-		return
 	}
-
-	if configPreempt {
+	// early learning
+	if valWhatDone == CHOSEN {
+		dlog.Printf("Preparing instance recognised as chosen (instance %d), returning commit \n", preply.Instance)
+		return
+	} else if configPreempt {
 		return
 	}
 
 	if pbk.propCurConfBal.GreaterThan(preply.ConfigBal) || pbk.status != PREPARING {
 		dlog.Printf("Message in late \n")
 		return
-	}
-
-	if r.proposerCheckAndHandlePreempt(preply.Instance, preply.ConfigBal, PROMISE) {
+	} else if r.proposerCheckAndHandlePreempt(preply.Instance, preply.ConfigBal, PROMISE) {
 		dlog.Printf("Another active proposer using config-ballot %d.%d.%d greater than mine\n", preply.ConfigBal)
 		r.acceptorPrepareOnConfBal(preply.Instance, preply.ConfigBal)
+		minSafe := lwcproto.ConfigBal{
+			Config: r.crtConfig,
+			Ballot: inst.abk.curBal,
+		}
+		r.checkAndHandleOldPreempted(preply.ConfigBal, minSafe, inst.abk.vConfBal, inst.abk.cmds, preply.Instance)
 		myReply := lwcproto.PrepareReply{
 			Instance:   preply.Instance,
 			ConfigBal:  preply.ConfigBal,
 			VConfigBal: inst.abk.vConfBal,
-			AcceptorId: r.Id,
 			WhoseCmd:   pbk.whoseCmds,
+			AcceptorId: r.Id,
 			Command:    inst.abk.cmds,
 		}
 		r.SendMsg(int32(preply.ConfigBal.PropID), r.prepareReplyRPC, &myReply)
 		return
-	}
-
-	qrm := pbk.proposalInfos[pbk.propCurConfBal]
-	qrm.quorumAdd(preply.AcceptorId)
-	dlog.Printf("Added replica's %d promise to qrm", preply.AcceptorId)
-
-	if int(qrm.quorumCount()+1) >= r.Replica.ReadQuorumSize() {
-		r.propose(preply.Instance)
+	} else {
+		qrm := pbk.proposalInfos[pbk.propCurConfBal]
+		qrm.quorumAdd(preply.AcceptorId)
+		dlog.Printf("Added replica's %d promise to qrm", preply.AcceptorId)
+		if int(qrm.quorumCount()+1) >= r.Replica.ReadQuorumSize() {
+			r.propose(preply.Instance)
+		}
 	}
 }
 
 func (r *Replica) propose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
-
 	pbk.status = READY_TO_PROPOSE
 	dlog.Println("Can now propose in instance", inst)
 	qrm := pbk.proposalInfos[pbk.propCurConfBal]
@@ -1361,52 +1390,61 @@ func (r *Replica) propose(inst int32) {
 	whoseCmds := int32(-1)
 	if pbk.maxAcceptedConfBal.IsZero() {
 		whoseCmds = r.Id
-		if pbk.clientProposals != nil {
-			pbk.cmds = make([]state.Command, len(pbk.clientProposals))
-			for i, prop := range pbk.clientProposals {
-				pbk.cmds[i] = prop.Command
-			}
-		} else {
-			switch cliProp := r.clientValueQueue.TryDequeue(); {
-			case cliProp != nil:
-				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := numEnqueued
-				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
-				pbk.cmds = make([]state.Command, batchSize)
-				pbk.clientProposals[0] = cliProp
-				pbk.cmds[0] = cliProp.Command
+		if r.initalProposalWait > 0 {
+			time.Sleep(r.initalProposalWait)
+		}
 
-				for i := 1; i < batchSize; i++ {
-					//	cliProp = <- r.ProposeChan
-					cliProp = r.clientValueQueue.TryDequeue()
-					if cliProp == nil {
-						pbk.clientProposals = pbk.clientProposals[:i]
-						pbk.cmds = pbk.cmds[:i]
-						break
-					}
-					pbk.clientProposals[i] = cliProp
-					pbk.cmds[i] = cliProp.Command
+		switch cliProp := r.clientValueQueue.TryDequeue(); {
+		case cliProp != nil:
+			numEnqueued := r.clientValueQueue.Len() + 1
+			batchSize := numEnqueued
+			pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
+			pbk.cmds = make([]state.Command, batchSize)
+			pbk.clientProposals[0] = cliProp
+			pbk.cmds[0] = cliProp.Command
+
+			for i := 1; i < batchSize; i++ {
+				cliProp = r.clientValueQueue.TryDequeue()
+				if cliProp == nil {
+					pbk.clientProposals = pbk.clientProposals[:i]
+					pbk.cmds = pbk.cmds[:i]
+					break
 				}
-
-				log.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals), inst)
-				break
-			default:
+				pbk.clientProposals[i] = cliProp
+				pbk.cmds[i] = cliProp.Command
+			}
+			dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
+			break
+		default:
+			if r.noopWaitUs > 0 {
+				go func(inst int32, confBal lwcproto.ConfigBal) {
+					timer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
+					<-timer.C
+					r.proposableInstances <- ProposalInfo{
+						inst:             inst,
+						proposingConfBal: confBal,
+					}
+				}(inst, pbk.propCurConfBal)
+				return
+			} else {
 				pbk.cmds = state.NOOP()
-				log.Println("Proposing noop in recovered instance")
+				dlog.Println("Proposing noop")
 			}
 		}
 	} else {
 
 		whoseCmds = pbk.whoseCmds
 	}
-
 	pbk.status = PROPOSING
-	r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.propCurConfBal, pbk.cmds, whoseCmds)
 	// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
 	if r.fastLearn {
+		r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.propCurConfBal, pbk.cmds, whoseCmds)
 		r.acceptorAcceptOnConfBal(inst, pbk.propCurConfBal, pbk.cmds)
+
 		r.bcastAccept(inst)
 	} else {
+		r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.propCurConfBal, pbk.cmds, whoseCmds)
+
 		r.bcastAccept(inst)
 		r.acceptorAcceptOnConfBal(inst, pbk.propCurConfBal, pbk.cmds)
 	}
@@ -1425,8 +1463,7 @@ func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {
 func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(accept.Instance, accept.ConfigBal, ACCEPTANCE)
-
-	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, r.crtInstance-accept.Instance) {
+	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, 0) {
 		return
 	} else if configPreempted {
 		return
@@ -1442,8 +1479,6 @@ func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	if accept.ConfigBal.GreaterThan(minAcceptableConfBal) || accept.ConfigBal.Equal(minAcceptableConfBal) {
 		dlog.Printf("Accepted instance %d on conf-ball %d.%d.%d", accept.Instance, accept.Config, accept.Number, accept.PropID)
 		r.acceptorAcceptOnConfBal(accept.Instance, accept.ConfigBal, accept.Command)
-
-		//check proposer qrm
 		// here is where we can add fast learning bit - also add acceptance by config-bal's owner
 		if r.fastLearn {
 			r.proposerCheckAndHandleAcceptedValue(accept.Instance, int32(accept.PropID), accept.ConfigBal, accept.Command, accept.WhoseCmd) // must go first as acceptor might have already learnt of value
@@ -1453,6 +1488,7 @@ func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 			return
 		}
 		r.proposerCheckAndHandlePreempt(accept.Instance, accept.ConfigBal, ACCEPTANCE)
+		r.checkAndHandleOldPreempted(accept.ConfigBal, minAcceptableConfBal, inst.abk.vConfBal, inst.abk.cmds, accept.Instance)
 	} else if minAcceptableConfBal.GreaterThan(accept.ConfigBal) {
 		dlog.Printf("Returning preempt for config-ballot %d.%d.%d < %d.%d.%d in Instance %d\n", accept.Config, accept.Number, accept.PropID, minAcceptableConfBal.Config, minAcceptableConfBal.Number, minAcceptableConfBal.PropID, accept.Instance)
 	} else {
@@ -1468,13 +1504,26 @@ func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	r.replyAccept(accept.LeaderId, areply)
 }
 
+func (r *Replica) checkAndOpenNewInstances() {
+	// was instance opened by us
+	//	if r.executedUpTo+r.maxOpenInstances*int32(r.N) > r.crtInstance {
+	//for i := 0; i < len(r.crtOpenedInstances); i++ {
+	//	if r.crtOpenedInstances[i] == inst || r.instanceSpace[r.crtOpenedInstances[i]].abk.status == COMMITTED {
+	//	r.crtOpenedInstances[i] = -1
+	for r.crtInstance-r.executedUpTo < r.maxOpenInstances {
+		r.beginNextInstance()
+	}
+	//	}
+	//}
+}
+
 func (r *Replica) handleAcceptReply(areply *lwcproto.AcceptReply) {
-	// could modify to have record of all ballots
-	inst := r.instanceSpace[areply.Instance]
-	pbk := inst.pbk
 	if r.checkAndHandleConfigPreempt(areply.Instance, areply.Cur, ACCEPTANCE) {
 		return
-	} else if inst.abk.status == COMMITTED {
+	}
+	inst := r.instanceSpace[areply.Instance]
+	pbk := r.instanceSpace[areply.Instance].pbk
+	if inst.abk.status == COMMITTED {
 		dlog.Printf("Already committed ")
 		return
 	}
@@ -1482,14 +1531,22 @@ func (r *Replica) handleAcceptReply(areply *lwcproto.AcceptReply) {
 	accepted := areply.Cur.Equal(areply.Req)
 	preempted := areply.Cur.GreaterThan(areply.Req)
 	if accepted {
-		dlog.Printf("Acceptance of instance %d at %d.%d.%d by Acceptor %d received\n", areply.Instance, areply.Cur.Config, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId)
+		dlog.Printf("Acceptance of instance %d at %d.%d.%d (cur %d.%d.%d) by Acceptor %d received\n", areply.Instance, areply.Req.Config, areply.Req.Number, areply.Req.PropID, areply.Cur.Config, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId)
+		dlog.Printf("Acceptance of instance %d, whose cmd %d", areply.Instance, areply.WhoseCmd)
+		// pbk.cmds should be correct value - proposer only gets to this
+		// stage if they learn of any previously chosen value and propose it again themselves
 		r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
-		// we can count proposer of value too because they durably accept before sending accept request - only if fast learn is on
+		// we can count proposer of value too because they durably accept before sending accept request
 		if r.fastLearn {
 			r.proposerCheckAndHandleAcceptedValue(areply.Instance, int32(areply.Req.PropID), areply.Cur, pbk.cmds, areply.WhoseCmd)
 		}
 	} else if preempted {
 		r.proposerCheckAndHandlePreempt(areply.Instance, areply.Cur, ACCEPTANCE)
+		minSafe := lwcproto.ConfigBal{
+			Config: r.crtConfig,
+			Ballot: inst.abk.curBal,
+		}
+		r.checkAndHandleOldPreempted(areply.Cur, minSafe, inst.abk.vConfBal, inst.abk.cmds, areply.Instance)
 	} else {
 		msg := fmt.Sprintf("Somehow cur Conf-Bal of %d is %d.%d.%d when we requested %d.%d.%d for acceptance",
 			areply.AcceptorId, areply.Cur.Config, areply.Cur.Number, areply.Cur.PropID,
@@ -1500,9 +1557,8 @@ func (r *Replica) handleAcceptReply(areply *lwcproto.AcceptReply) {
 
 func (r *Replica) requeueClientProposals(instance int32) {
 	inst := r.instanceSpace[instance]
-	log.Printf("Requeing client values in instance %d", instance)
+	dlog.Println("Requeing client value")
 	for i := 0; i < len(inst.pbk.clientProposals); i++ {
-		//r.ProposeChan <- inst.pbk.clientProposals[i]
 		r.clientValueQueue.TryRequeue(inst.pbk.clientProposals[i])
 	}
 }
@@ -1533,12 +1589,11 @@ func (r *Replica) whatHappenedToClientProposals(instance int32) ClientProposalSt
 func (r *Replica) howManyAttemptsToChoose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
-
 	attempts := pbk.maxAcceptedConfBal.Number / r.maxBalInc
 	dlog.Printf("Attempts to chose instance %d: %d", inst, attempts)
 }
 
-func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, chosenVal []state.Command, whoseCmd int32) {
+func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, chosenVal []state.Command, whoseCmd int32, moreToCome bool) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 
@@ -1547,33 +1602,32 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 
 	r.BackoffManager.ClearBackoff(inst)
 
-	if int32(chosenAt.PropID) == r.Id {
-		r.timeSinceLastProposedInstance = time.Now()
-	}
-
+	dlog.Printf("chosen whose cmd %d", whoseCmd)
 	pbk.maxAcceptedConfBal = chosenAt
-	pbk.cmds = chosenVal
 	pbk.whoseCmds = whoseCmd
+	pbk.cmds = chosenVal
 
 	switch r.whatHappenedToClientProposals(inst) {
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		log.Printf("%d client value(s) proposed in instance %d\n not chosen", len(pbk.clientProposals), inst)
 		r.requeueClientProposals(inst)
+		dlog.Printf("%d client value(s) proposed in instance %d\n not chosen", len(pbk.clientProposals), inst)
 		pbk.clientProposals = nil
 		break
 	case ProposedAndChosen:
-		log.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals), inst)
-		//		for i := 0; i < len(pbk.clientProposals); i++ {
+		r.timeSinceValueLastSelected = time.Now()
+		dlog.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals), inst)
+		//	for i := 0; i < len(pbk.clientProposals); i++ {
 		//		r.clientValueQueue.CloseValue(pbk.clientProposals[i])
 		//	}
 		break
 	}
 
-	//if r.instanceSpace[inst].pbk.status != CLOSED && r.instanceSpace[inst].abk.status != COMMITTED {
-	//	panic("not commited somehow")
-	//}
+	//	if !moreToCome {
+	//		r.checkAndOpenNewInstances()
+	//	}
+
 	if pbk.clientProposals != nil && !r.Dreply {
 		// give client the all clear
 		for i := 0; i < len(pbk.cmds); i++ {
@@ -1584,43 +1638,87 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 				pbk.clientProposals[i].Timestamp}
 			r.ReplyProposeTS(propreply, pbk.clientProposals[i].Reply, pbk.clientProposals[i].Mutex)
 		}
+		//	id := CommitExecutionComparator.InstanceID{pbk.clientProposals[i].CliID}
 	}
+
+	if r.cmpCommitAndExec {
+		id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
+		r.commitExecComp.RecordCommit(id, time.Now())
+	}
+
 	//r.howManyAttemptsToChoose(inst)
-
-	if r.Exec {
-		oldExecutedUpTo := r.executedUpTo
-		for i := r.executedUpTo + 1; i <= r.crtInstance; i++ {
-			returnInst := r.instanceSpace[i]
-			if returnInst != nil && returnInst.abk.status == COMMITTED { //&& returnInst.abk.cmds != nil {
-				dlog.Printf("Executing instance %d\n", i)
-				for j := 0; j < len(returnInst.abk.cmds); j++ {
-					dlog.Printf("Executing " + returnInst.abk.cmds[j].String())
-					if r.Dreply && returnInst.pbk != nil && returnInst.pbk.clientProposals != nil {
-						val := returnInst.abk.cmds[j].Execute(r.State)
-
-						propreply := &genericsmrproto.ProposeReplyTS{
-							TRUE,
-							returnInst.pbk.clientProposals[j].CommandId,
-							val,
-							returnInst.pbk.clientProposals[j].Timestamp}
-						r.ReplyProposeTS(propreply, returnInst.pbk.clientProposals[j].Reply, returnInst.pbk.clientProposals[j].Mutex)
-						dlog.Printf("Returning executed client value")
-					} else if returnInst.abk.cmds[j].Op == state.PUT {
-						returnInst.abk.cmds[j].Execute(r.State)
-					}
-
+	//if r.Exec {
+	for i := r.executedUpTo + 1; i <= r.crtInstance; i++ {
+		returnInst := r.instanceSpace[i]
+		if returnInst != nil && returnInst.abk.status == COMMITTED {
+			dlog.Printf("Executing instance %d\n", i)
+			for j := 0; j < len(returnInst.abk.cmds); j++ {
+				dlog.Printf("Executing " + returnInst.abk.cmds[j].String())
+				if r.Dreply && returnInst.pbk != nil && returnInst.pbk.clientProposals != nil {
+					val := returnInst.abk.cmds[j].Execute(r.State)
+					propreply := &genericsmrproto.ProposeReplyTS{
+						TRUE,
+						returnInst.pbk.clientProposals[j].CommandId,
+						val,
+						returnInst.pbk.clientProposals[j].Timestamp}
+					r.ReplyProposeTS(propreply, returnInst.pbk.clientProposals[j].Reply, returnInst.pbk.clientProposals[j].Mutex)
+					dlog.Printf("Returning executed client value")
+				} else if returnInst.abk.cmds[j].Op == state.PUT {
+					returnInst.abk.cmds[j].Execute(r.State)
 				}
-				//	returnInst.pbk = nil
-				r.executedUpTo += 1
-				dlog.Printf("Executed up to %d (crtInstance=%d)", r.executedUpTo, r.crtInstance)
-			} else {
-				if r.executedUpTo > oldExecutedUpTo {
-					r.recordExecutedUpTo()
-				}
-				break
+
 			}
+			//	returnInst.pbk = nil
+
+			if r.cmpCommitAndExec {
+				id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
+				r.commitExecComp.RecordExecution(id, time.Now())
+				//r.commitExecComp.Output(id)
+			}
+
+			r.executedUpTo += 1
+			dlog.Printf("Executed up to %d (crtInstance=%d)", r.executedUpTo, r.crtInstance)
+
+			//	if !moreToCome {
+			r.checkAndOpenNewInstances()
+			//	}
+
+			//	r.beginNextInstance()
+			//	r.checkAndOpenNewInstances()
+			//r.instanceSpace[i] = nil
+		} else {
+			/*	if i == r.problemInstance {
+					r.timeout += SLEEP_TIME_NS
+					if r.timeout >= COMMIT_GRACE_PERIOD {
+						for k := r.problemInstance; k <= r.crtInstance; k++ {
+							dlog.Printf("Recovering instance %d \n", k)
+							r.retryInstance <- RetryInfo{
+								backedoff:        false,
+								InstToPrep:       k,
+								attemptedConfBal: r.instanceSpace[k].pbk.propCurConfBal,
+								preempterConfBal: lwcproto.ConfigBal{-1, lwcproto.Ballot{-1, -1}},
+								preempterAt:      0,
+								backoffus:        0,
+								timesPreempted:   0,
+							}
+						}
+						r.problemInstance = 0
+						r.timeout = 0
+					}
+				} else {
+					r.problemInstance = i
+					r.timeout = 0
+				}
+				break*/
+			//			if r.executedUpTo > oldExecutedUpTo {
+			//				r.recordExecutedUpTo()
+			//			}
+			break
 		}
 	}
+	//}
+	//r.Mutex.Lock()
+	//r.Mutex.Unlock()
 }
 
 func (r *Replica) acceptorCommit(instance int32, chosenAt lwcproto.ConfigBal, cmds []state.Command) {
@@ -1645,6 +1743,7 @@ func (r *Replica) acceptorCommit(instance int32, chosenAt lwcproto.ConfigBal, cm
 		r.recordInstanceMetadata(inst)
 		r.recordCommands(cmds)
 		if shouldSync {
+			dlog.Printf("commit sync instance %d", instance)
 			r.sync()
 		}
 	}
@@ -1659,8 +1758,16 @@ func (r *Replica) handleCommit(commit *lwcproto.Commit) {
 		return
 	}
 
+	//if r.ringCommit {
+	//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, commit)
+	//}
+
 	r.acceptorCommit(commit.Instance, commit.ConfigBal, commit.Command)
-	r.proposerCloseCommit(commit.Instance, commit.ConfigBal, commit.Command, commit.WhoseCmd)
+	if commit.MoreToCome > 0 {
+		r.proposerCloseCommit(commit.Instance, commit.ConfigBal, commit.Command, commit.WhoseCmd, true)
+	} else {
+		r.proposerCloseCommit(commit.Instance, commit.ConfigBal, commit.Command, commit.WhoseCmd, false)
+	}
 }
 
 func (r *Replica) handleCommitShort(commit *lwcproto.CommitShort) {
@@ -1673,5 +1780,5 @@ func (r *Replica) handleCommitShort(commit *lwcproto.CommitShort) {
 	}
 
 	r.acceptorCommit(commit.Instance, commit.ConfigBal, inst.abk.cmds)
-	r.proposerCloseCommit(commit.Instance, commit.ConfigBal, inst.abk.cmds, commit.WhoseCmd)
+	r.proposerCloseCommit(commit.Instance, commit.ConfigBal, inst.abk.cmds, commit.WhoseCmd, false)
 }

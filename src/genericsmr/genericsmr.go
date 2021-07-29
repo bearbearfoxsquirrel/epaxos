@@ -241,13 +241,18 @@ func (r *Replica) waitForPeerConnections(done chan bool) {
 /* Client connections dispatcher */
 func (r *Replica) WaitForClientConnections() {
 	log.Println("Waiting for client connections")
-
+	//numClis := 0
 	for !r.Shutdown {
 		conn, err := r.Listener.Accept()
 		if err != nil {
 			log.Println("Accept error:", err)
 			continue
 		}
+		r.Mutex.Lock()
+		r.Clients = append(r.Clients, conn)
+		r.Mutex.Unlock()
+		//	numClis++
+		//	r.Clients =
 		go r.clientListener(conn)
 
 	}
@@ -320,6 +325,7 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 	r.Mutex.Unlock()
 }
 
+/*
 func (r *Replica) recover(rid int) {
 	r.Alive[rid] = false
 	if rid < int(r.Id) {
@@ -333,6 +339,7 @@ func (r *Replica) recover(rid int) {
 	}
 	r.Alive[rid] = true
 }
+*/
 
 func (r *Replica) clientListener(conn net.Conn) {
 	reader := bufio.NewReader(conn)

@@ -9,6 +9,9 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
+	"log"
+	"net"
+
 	//"log"
 	"lwcproto"
 	"math"
@@ -85,6 +88,8 @@ type Replica struct {
 	group1Size                 int
 	flushCommit                bool
 	ringCommit                 bool
+	nextRecoveryBatchPoint     int32
+	recoveringFrom             int32
 }
 
 type TimeoutInfo struct {
@@ -180,7 +185,7 @@ type RetryInfo struct {
 	attemptedConfBal lwcproto.ConfigBal
 	preempterConfBal lwcproto.ConfigBal
 	preempterAt      QuorumType
-	backoffus        int32
+	prevSoftExp      float64
 	timesPreempted   int32
 }
 
@@ -196,9 +201,14 @@ type BackoffManager struct {
 	sig      *chan RetryInfo
 	factor   float64
 	mapMutex sync.RWMutex
+	softFac  bool
 }
 
-func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64) BackoffManager {
+func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64, softFac bool) BackoffManager {
+	if minBO > maxInitBO {
+		panic(fmt.Sprintf("minbackoff %d, maxinitbackoff %d, incorrectly set up", minBO, maxInitBO))
+	}
+
 	return BackoffManager{
 		currentBackoffs: make(map[int32]RetryInfo),
 		BackoffInfo: BackoffInfo{
@@ -206,8 +216,9 @@ func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo
 			maxInitBackoff: maxInitBO,
 			maxBackoff:     maxBO,
 		},
-		sig:    signalChan,
-		factor: factor,
+		sig:     signalChan,
+		factor:  factor,
+		softFac: softFac,
 	}
 }
 
@@ -241,47 +252,54 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal lwc
 	}
 
 	var preemptNum int32
-	var prevBackoff int32
+	var prev float64
 	if exists {
 		preemptNum = curBackoffInfo.timesPreempted + 1
-		prevBackoff = curBackoffInfo.backoffus
+		prev = curBackoffInfo.prevSoftExp
 	} else {
 		preemptNum = 0
-		prevBackoff = (rand.Int31() % bm.maxInitBackoff) + bm.minBackoff
+		//prev = 0.
+		prev = 0 //rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff//random//float64((rand.Int31() % bm.maxInitBackoff) + bm.minBackoff)
 	}
 
 	t := float64(preemptNum) + rand.Float64()
 	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(bm.factor*t))
-	tmp *= 1000
-	next := int32(tmp) - prevBackoff + bm.minBackoff
-	if next > bm.maxBackoff {
-		next = bm.maxBackoff - prevBackoff
+	tmp = tmp - prev
+	if !bm.softFac {
+		tmp = math.Max(tmp, 1)
 	}
-	if next < bm.minBackoff {
-		next += bm.minBackoff
+	next := int32(tmp * float64(rand.Int31n(bm.maxInitBackoff-bm.minBackoff+1)+bm.minBackoff)) //+ rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff// bm.minBackoff
+	//if next > bm.maxBackoff {
+	//	next = bm.maxBackoff - prev
+	//}
+	//if next < bm.minBackoff {
+	//	next += bm.minBackoff
+	//}
+	if next < 0 {
+		panic("can't have negative backoff")
 	}
-
-	dlog.Printf("Beginning backoff of %dus for instance %d on conf-bal %d.%d.%d", next, inst, attemptedConfBal.Config, attemptedConfBal.Number, attemptedConfBal.PropID)
+	dlog.Printf("Beginning backoff of %d us for instance %d on conf-bal %d.%d (attempt %d)", next, inst, attemptedConfBal.Number, attemptedConfBal.PropID, preemptNum)
 	bm.currentBackoffs[inst] = RetryInfo{
 		backedoff:        true,
 		InstToPrep:       inst,
 		attemptedConfBal: attemptedConfBal,
 		preempterConfBal: preempter,
 		preempterAt:      prempterPhase,
-		backoffus:        next,
+		prevSoftExp:      tmp - prev,
 		timesPreempted:   preemptNum,
 	}
 
 	go func(instance int32, attempted lwcproto.ConfigBal, preempterConfBal lwcproto.ConfigBal, preempterP QuorumType, backoff int32, numTimesBackedOff int32) {
+
 		timer := time.NewTimer(time.Duration(next) * time.Microsecond)
 		<-timer.C
 		*bm.sig <- RetryInfo{
 			backedoff:        true,
-			InstToPrep:       inst,
+			InstToPrep:       instance,
 			attemptedConfBal: attempted,
 			preempterConfBal: preempterConfBal,
 			preempterAt:      preempterP,
-			backoffus:        backoff,
+			prevSoftExp:      tmp - prev,
 			timesPreempted:   numTimesBackedOff,
 		}
 	}(inst, attemptedConfBal, preempter, prempterPhase, next, preemptNum)
@@ -291,6 +309,7 @@ func (bm *BackoffManager) NoHigherBackoff(backoff RetryInfo) bool {
 	curBackoff, exists := bm.currentBackoffs[backoff.InstToPrep]
 
 	if !exists {
+		dlog.Printf("backoff has no record")
 		return false
 	} else {
 		stillRelevant := backoff == curBackoff //should update so that inst also has bal backed off
@@ -309,7 +328,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -340,7 +359,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		proposableInstances: make(chan ProposalInfo, MAXPROPOSABLEINST),
 		noopWaitUs:          noopwait,
 		retryInstance:       retryInstances,
-		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor),
+		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac),
 		alwaysNoop:          alwaysNoop,
 		fastLearn:           false,
 		timeoutRetry:        make(chan TimeoutInfo, 1000),
@@ -475,23 +494,36 @@ func (r *Replica) restart() {
 		}
 	}
 
-	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor)
+	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac)
 	r.crtConfig++
 	r.recordNewConfig(r.crtConfig)
 	r.catchingUp = true
-	toRecover := r.executedUpTo + 1
-	inst := r.instanceSpace[toRecover]
-	if inst != nil {
 
-		dlog.Printf("Beginning instance %d", toRecover)
-		r.makeCatchupInstance(toRecover)
-		r.sendSinglePrepare(toRecover)
-		r.lastSettleBatchInst = toRecover
+	r.recoveringFrom = r.executedUpTo + 1
+	r.nextRecoveryBatchPoint = r.recoveringFrom
+	r.sendNextRecoveryRequestBatch()
+}
+
+func (r *Replica) sendNextRecoveryRequestBatch() {
+	// assumes r.nextRecoveryBatchPoint is initialised correctly
+	for i := int32(0); i < int32(r.N); i++ {
+		if i == r.Id {
+			continue
+		}
+		log.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
+		r.sendRecoveryRequest(r.nextRecoveryBatchPoint, i)
+		r.nextRecoveryBatchPoint += r.catchUpBatchSize
 	}
 }
 
+func (r *Replica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
+	r.makeCatchupInstance(fromInst)
+	r.sendSinglePrepare(fromInst, toAccptor)
+}
+
 func (r *Replica) checkAndHandleCatchUpRequest(prepare *lwcproto.Prepare) bool {
-	if prepare.IsZeroVal() {
+	//config is ignored here and not acknowledged until new proposals are actually made
+	if prepare.IsZero() {
 		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance+r.catchUpBatchSize)
 		r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.catchUpBatchSize)
 		return true
@@ -500,25 +532,24 @@ func (r *Replica) checkAndHandleCatchUpRequest(prepare *lwcproto.Prepare) bool {
 	}
 }
 
+//func (r *Replica) setNextCatchUpPoint()
 func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
-	//	dlog.Printf("next batch at %d",  r.lastSettleBatchInst + r.catchUpBatchSize)
-	if r.catchingUp && r.lastSettleBatchInst+r.catchUpBatchSize-1 == commit.Instance {
-		dlog.Printf("sending next catch up batch from %d to %d", commit.Instance, commit.Instance+r.catchUpBatchSize)
-		r.makeCatchupInstance(commit.Instance)
-		r.sendSinglePrepare(commit.Instance)
-		r.lastSettleBatchInst = commit.Instance
-	} else if r.catchingUp {
-		for i := 0; i < len(r.crtOpenedInstances); i++ {
-			if r.crtOpenedInstances[i] == r.executedUpTo {
-				dlog.Printf("stopped catching up at %d", r.executedUpTo)
-				r.catchingUp = false
-			}
-		}
-		if !r.catchingUp {
+	if r.catchingUp {
+		//log.Printf("got catch up for %d", commit.Instance)
+		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
+			r.catchingUp = false
+			log.Printf("Caught up with consensus group")
+			//reset client connections so that we can begin benchmarking again
+			r.Mutex.Lock()
 			for i := 0; i < len(r.Clients); i++ {
 				_ = r.Clients[i].Close()
-				r.ClientsReaders[i] = nil
-				r.ClientsWriters[i] = nil
+			}
+			r.Clients = make([]net.Conn, 0)
+			r.Mutex.Unlock()
+		} else {
+			//if commit.Instance == r.nextRecoveryBatchPoint {
+			if commit.Instance >= r.nextRecoveryBatchPoint-(r.catchUpBatchSize/4) {
+				r.sendNextRecoveryRequestBatch()
 			}
 		}
 	}
@@ -611,8 +642,8 @@ func (r *Replica) run() {
 			dlog.Printf("Received AcceptReply for instance %d\n", acceptReply.Instance)
 			r.handleAcceptReply(acceptReply)
 			break
-		default:
-			break
+			//default:
+			//	break
 		}
 	}
 }
@@ -643,7 +674,7 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 	}
 	if pbk.propCurConfBal.Equal(proposalInfo.proposingConfBal) && pbk.status == READY_TO_PROPOSE {
 		whoseCmds := int32(-1)
-		if pbk.maxAcceptedConfBal.IsZeroVal() {
+		if pbk.maxAcceptedConfBal.IsZero() {
 			whoseCmds = r.Id
 			switch cliProp := r.clientValueQueue.TryDequeue(); {
 			case cliProp != nil:
@@ -711,29 +742,17 @@ func (r *Replica) tryNextAttempt(next RetryInfo) {
 	}
 }
 
-func (r *Replica) sendSinglePrepare(instance int32) {
+func (r *Replica) sendSinglePrepare(instance int32, to int32) {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("Prepare bcast failed:", err)
 		}
 	}()
-
 	args := &lwcproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.propCurConfBal}
-	n := 1
-	r.RandomisePeerOrder()
-	sent := 0
-	whoSent := make([]int32, n)
-	for q := 0; q < r.N-1; q++ {
-		dlog.Printf("send prepare to %d\n", r.PreferredPeerOrder[q])
-		r.SendMsg(r.PreferredPeerOrder[q], r.prepareRPC, args)
-		whoSent[sent] = r.PreferredPeerOrder[q]
-		sent++
-		if sent >= n {
-			break
-		}
-	}
-
-	r.beginTimeout(args.Instance, args.ConfigBal, whoSent, PREPARING, r.timeout*5)
+	dlog.Printf("send prepare to %d\n", to)
+	r.SendMsg(to, r.prepareRPC, args)
+	whoSent := []int32{0}
+	r.beginTimeout(args.Instance, args.ConfigBal, whoSent, PREPARING, r.timeout*10)
 }
 
 func (r *Replica) bcastPrepareToAll(instance int32) {
@@ -866,7 +885,7 @@ func (r *Replica) bcastAccept(instance int32) {
 	n := r.N - 1
 	if r.Thrifty {
 		n = r.WriteQuorumSize() - 1
-		//	log.Printf( "accept: %d" , n)
+		//	dlog.Printf( "accept: %d" , n)
 	}
 
 	r.CalculateAlive()
@@ -1168,7 +1187,7 @@ func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxEx
 func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
-	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.crtInstance-prepare.Instance) {
+	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, 0) {
 		return
 	}
 	if configPreempted {
@@ -1237,7 +1256,7 @@ func (pbk *ProposingBookkeeping) isProposingClientValue() bool {
 }
 
 func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, accepted lwcproto.ConfigBal, val []state.Command, whoseCmd int32) ProposerAccValHandler {
-	if accepted.IsZeroVal() {
+	if accepted.IsZero() {
 		return IGNORED
 	}
 	instance := r.instanceSpace[inst]
@@ -1367,7 +1386,7 @@ func (r *Replica) propose(inst int32) {
 	qrm.qrmType = ACCEPTANCE
 
 	whoseCmds := int32(-1)
-	if pbk.maxAcceptedConfBal.IsZeroVal() {
+	if pbk.maxAcceptedConfBal.IsZero() {
 		whoseCmds = r.Id
 		if r.initalProposalWait > 0 {
 			time.Sleep(r.initalProposalWait)
@@ -1442,7 +1461,7 @@ func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {
 func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(accept.Instance, accept.ConfigBal, ACCEPTANCE)
-	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, r.crtInstance-r.executedUpTo) {
+	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, 0) {
 		return
 	} else if configPreempted {
 		return

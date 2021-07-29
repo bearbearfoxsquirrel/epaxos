@@ -18,6 +18,7 @@ const (
 
 type Propose struct {
 	CommandId int32
+	//	CliID     int32
 	Command   state.Command
 	Timestamp int64
 }
@@ -28,7 +29,8 @@ type ProposeReply struct {
 }
 
 type ProposeReplyTS struct {
-	OK        uint8
+	OK uint8
+	//	CliID     int32
 	CommandId int32
 	Value     state.Value
 	Timestamp int64
@@ -82,4 +84,3 @@ type BeTheLeaderReply struct {
 type Stats struct {
 	M map[string]int `json:"stats"`
 }
-

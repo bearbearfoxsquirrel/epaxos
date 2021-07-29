@@ -1,11 +1,13 @@
 package epaxos
 
 import (
+	"CommitExecutionComparator"
 	"bloomfilter"
 	"dlog"
 	"encoding/binary"
 	"epaxosproto"
 	"fastrpc"
+	"fmt"
 	"genericsmr"
 	"genericsmrproto"
 	"io"
@@ -39,6 +41,11 @@ const HT_INIT_SIZE = 200000
 
 var cpMarker []state.Command
 var cpcounter = 0
+
+type ToRecord struct {
+	CommitExecutionComparator.InstanceID
+	time.Time
+}
 
 type Replica struct {
 	*genericsmr.Replica
@@ -80,6 +87,10 @@ type Replica struct {
 	fastLearn             bool
 	emulatedSS            bool
 	emulatedWriteTime     time.Duration
+	cmpCommitAndExec      bool
+	commitExecComp        *CommitExecutionComparator.CommitExecutionComparator
+	commitExecMutex       *sync.Mutex
+	sepExecThread         bool
 }
 
 type Instance struct {
@@ -123,7 +134,7 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, sepExecThread bool) *Replica {
 	r := &Replica{
 		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -155,7 +166,11 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		transconf,
 		fastLearn,
 		emulatedSS,
-		emulatedWriteTime}
+		emulatedWriteTime,
+		cmpCommitExec,
+		nil,
+		new(sync.Mutex),
+		sepExecThread}
 
 	r.Beacon = beacon
 	r.Durable = durable
@@ -188,6 +203,10 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	r.tryPreAcceptReplyRPC = r.RegisterRPC(new(epaxosproto.TryPreAcceptReply), r.tryPreAcceptReplyChan)
 
 	r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"], r.Stats.M["totalCommitTime"], r.Stats.M["totalBatching"], r.Stats.M["totalBatchingSize"] = 0, 0, 0, 0, 0, 0, 0
+
+	if cmpCommitExec {
+		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(fmt.Sprintf("./r%d-cmd-lats.txt", r.Id))
+	}
 
 	go r.run()
 
@@ -407,7 +426,7 @@ func (r *Replica) run() {
 
 	r.RandomisePeerOrder()
 
-	if r.Exec {
+	if r.Exec && r.sepExecThread {
 		go r.executeCommands()
 	}
 
@@ -472,6 +491,7 @@ func (r *Replica) executeCommands() {
 					executed = true
 					if inst == r.ExecedUpTo[q]+1 {
 						r.ExecedUpTo[q] = inst
+
 					}
 				}
 			}
@@ -704,7 +724,9 @@ func (r *Replica) updateCommitted(replica int32) {
 	for r.InstanceSpace[replica][r.CommittedUpTo[replica]+1] != nil &&
 		(r.InstanceSpace[replica][r.CommittedUpTo[replica]+1].Status == epaxosproto.COMMITTED ||
 			r.InstanceSpace[replica][r.CommittedUpTo[replica]+1].Status == epaxosproto.EXECUTED) {
+
 		r.CommittedUpTo[replica] = r.CommittedUpTo[replica] + 1
+
 	}
 	r.Mutex.Unlock()
 }
@@ -1051,9 +1073,9 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 	precondition := inst.lb.allEqual && allCommitted && isInitialBallot
 
 	if inst.lb.preAcceptOKs >= (r.Replica.FastQuorumSize()-1) && precondition {
+		r.checkAndRecordCommit(pareply.Replica, pareply.Instance)
 		dlog.Printf("Fast path %d.%d, w. deps %d\n", pareply.Replica, pareply.Instance, pareply.Deps)
 		lb.status = epaxosproto.COMMITTED
-
 		inst.Status = lb.status
 		inst.bal = lb.ballot
 		inst.Cmds = lb.cmds
@@ -1088,6 +1110,9 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 			r.Stats.M["totalCommitTime"] += int(time.Now().UnixNano() - inst.proposeTime)
 		}
 		r.Mutex.Unlock()
+		if r.Exec && !r.sepExecThread {
+			r.executeCommands()
+		}
 	} else if inst.lb.preAcceptOKs >= r.Replica.FastQuorumSize()-1 {
 		// } else if inst.lb.preAcceptOKs >= r.N/2 && !precondition {
 		dlog.Printf("Slow path %d.%d (inst.lb.allEqual=%t, allCommitted=%t, isInitialBallot=%t)\n", pareply.Replica, pareply.Instance, allEqual, allCommitted, isInitialBallot)
@@ -1195,6 +1220,7 @@ func (r *Replica) handleAcceptReply(areply *epaxosproto.AcceptReply) {
 	inst.lb.acceptOKs++
 
 	if inst.lb.acceptOKs+1 > r.N/2 {
+		r.checkAndRecordCommit(areply.Replica, areply.Instance)
 		lb.status = epaxosproto.COMMITTED
 		inst.Status = epaxosproto.COMMITTED
 		r.updateCommitted(areply.Replica)
@@ -1224,6 +1250,9 @@ func (r *Replica) handleAcceptReply(areply *epaxosproto.AcceptReply) {
 			r.Stats.M["totalCommitTime"] += int(time.Now().UnixNano() - inst.proposeTime)
 		}
 		r.Mutex.Unlock()
+		if r.Exec && !r.sepExecThread {
+			r.executeCommands()
+		}
 	} else {
 		dlog.Println("Not enough")
 	}
@@ -1280,13 +1309,32 @@ func (r *Replica) handleCommit(commit *epaxosproto.Commit) {
 	inst.Cmds = commit.Command
 	inst.Seq = commit.Seq
 	inst.Deps = commit.Deps
+	r.checkAndRecordCommit(commit.Replica, commit.Instance)
 	inst.Status = epaxosproto.COMMITTED
 
 	r.updateConflicts(commit.Command, commit.Replica, commit.Instance, commit.Seq)
 	r.updateCommitted(commit.Replica)
 	r.recordInstanceMetadata(r.InstanceSpace[commit.Replica][commit.Instance])
 	r.recordCommands(commit.Command)
+	if r.Exec && !r.sepExecThread {
+		r.executeCommands()
+	}
+}
 
+func (r *Replica) checkAndRecordCommit(log int32, inst int32) {
+	if r.cmpCommitAndExec {
+		id := CommitExecutionComparator.InstanceID{Log: log, Seq: inst}
+		now := time.Now()
+
+		if !r.sepExecThread {
+			r.commitExecComp.RecordCommit(id, now)
+		} else {
+			r.commitExecMutex.Lock()
+			r.commitExecComp.RecordCommit(id, now)
+			r.commitExecMutex.Unlock()
+		}
+
+	}
 }
 
 /**********************************************************************
