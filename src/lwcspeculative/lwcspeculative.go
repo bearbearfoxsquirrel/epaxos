@@ -9,13 +9,10 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
-	"log"
-	"net"
-
-	//"log"
 	"lwcproto"
 	"math"
 	"math/rand"
+	"net"
 	"state"
 	"sync"
 	"time"
@@ -510,7 +507,7 @@ func (r *Replica) sendNextRecoveryRequestBatch() {
 		if i == r.Id {
 			continue
 		}
-		log.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
+		dlog.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
 		r.sendRecoveryRequest(r.nextRecoveryBatchPoint, i)
 		r.nextRecoveryBatchPoint += r.catchUpBatchSize
 	}
@@ -535,10 +532,10 @@ func (r *Replica) checkAndHandleCatchUpRequest(prepare *lwcproto.Prepare) bool {
 //func (r *Replica) setNextCatchUpPoint()
 func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
 	if r.catchingUp {
-		//log.Printf("got catch up for %d", commit.Instance)
+		//dlog.Printf("got catch up for %d", commit.Instance)
 		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
 			r.catchingUp = false
-			log.Printf("Caught up with consensus group")
+			dlog.Printf("Caught up with consensus group")
 			//reset client connections so that we can begin benchmarking again
 			r.Mutex.Lock()
 			for i := 0; i < len(r.Clients); i++ {

@@ -9,7 +9,6 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -277,7 +276,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal std
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
-	log.Printf("Beginning backoff of %d us for instance %d on conf-curBal %d.%d (attempt %d)", next, inst, attemptedConfBal.Number, attemptedConfBal.PropID, preemptNum)
+	dlog.Printf("Beginning backoff of %d us for instance %d on conf-curBal %d.%d (attempt %d)", next, inst, attemptedConfBal.Number, attemptedConfBal.PropID, preemptNum)
 	bm.currentBackoffs[inst] = RetryInfo{
 		backedoff:        true,
 		InstToPrep:       inst,
@@ -491,7 +490,7 @@ func (r *Replica) sendNextRecoveryRequestBatch() {
 		if i == r.Id {
 			continue
 		}
-		log.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
+		dlog.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
 		r.sendRecoveryRequest(r.nextRecoveryBatchPoint, i)
 		r.nextRecoveryBatchPoint += r.catchUpBatchSize
 	}
@@ -518,10 +517,10 @@ func (r *Replica) checkAndHandleCatchUpRequest(prepare *stdpaxosproto.Prepare) b
 //func (r *Replica) setNextCatchUpPoint()
 func (r *Replica) checkAndHandleCatchUpResponse(commit *stdpaxosproto.Commit) {
 	if r.catchingUp {
-		//log.Printf("got catch up for %d", commit.Instance)
+		//dlog.Printf("got catch up for %d", commit.Instance)
 		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
 			r.catchingUp = false
-			log.Printf("Caught up with consensus group")
+			dlog.Printf("Caught up with consensus group")
 			//reset client connections so that we can begin benchmarking again
 			r.Mutex.Lock()
 			for i := 0; i < len(r.Clients); i++ {
