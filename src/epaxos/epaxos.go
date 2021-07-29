@@ -249,7 +249,7 @@ func (r *Replica) sync() {
 	if !r.Durable {
 		return
 	}
-	//dlog.Println("synced")
+	//log.Println("synced")
 	if r.emulatedSS {
 		time.Sleep(r.emulatedWriteTime)
 	} else {
@@ -292,7 +292,7 @@ func (r *Replica) stopAdapting() {
 		r.PreferredPeerOrder[min] = aux
 	}
 
-	dlog.Println(r.PreferredPeerOrder)
+	log.Println(r.PreferredPeerOrder)
 }
 
 func (r *Replica) BatchingEnabled() bool {
@@ -319,8 +319,8 @@ func (r Replica) replicaLoop() {
 
 		select {
 		//case <-doner:
-		//	dlog.Println("Crahsing")
-		//	dlog.Println("Done crashing")
+		//	log.Println("Crahsing")
+		//	log.Println("Done crashing")
 		case propose := <-onOffProposeChan:
 			//got a Propose from a client
 			dlog.Println("Handle propose from client now")
@@ -405,7 +405,7 @@ func (r Replica) replicaLoop() {
 
 		case <-slowClockChan:
 			if r.Beacon {
-				dlog.Printf("weird %d; conflicted %d; slow %d; fast %d\n", r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"])
+				log.Printf("weird %d; conflicted %d; slow %d; fast %d\n", r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"])
 				for q := int32(0); q < int32(r.N); q++ {
 					if q == r.Id {
 						continue

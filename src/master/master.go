@@ -37,8 +37,8 @@ func main() {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	dlog.Printf("Master starting on port %d\n", *portnum)
-	dlog.Printf("...waiting for %d replicas\n", *numNodes)
+	log.Printf("Master starting on port %d\n", *portnum)
+	log.Printf("...waiting for %d replicas\n", *numNodes)
 
 	master := &Master{*numNodes,
 		make([]string, 0, *numNodes),
@@ -56,7 +56,7 @@ func main() {
 		log.Fatal("Master listen error:", err)
 	}
 
-	dlog.Printf("Listening on %s:%d\n", l.Addr().String(), *portnum)
+	log.Printf("Listening on %s:%d\n", l.Addr().String(), *portnum)
 
 	go master.run()
 
@@ -81,7 +81,7 @@ func (master *Master) run() {
 		addr := fmt.Sprintf("%s:%d", master.addrList[i], master.portList[i]+1000)
 		master.nodes[i], err = rpc.DialHTTP("tcp", addr)
 		if err != nil {
-			dlog.Printf("Error connecting to replica %d (%v), retrying .. \n", i, addr)
+			log.Printf("Error connecting to replica %d (%v), retrying .. \n", i, addr)
 			time.Sleep(1000000000) // retry
 		} else {
 			i++
@@ -95,7 +95,7 @@ func (master *Master) run() {
 			err := node.Call("Replica.Ping", new(genericsmrproto.PingArgs), new(genericsmrproto.PingReply))
 			master.lock.Lock()
 			if err != nil {
-				// dlog.Printf("Replica %d has failed to reply\n", i)
+				// log.Printf("Replica %d has failed to reply\n", i)
 				master.alive[i] = false
 				if master.leader[i] {
 					// need to choose a new leader
@@ -117,7 +117,7 @@ func (master *Master) run() {
 					master.lock.Lock()
 					master.leader[i] = true
 					master.lock.Unlock()
-					dlog.Printf("Replica %d is the new leader.", i)
+					log.Printf("Replica %d is the new leader.", i)
 					break
 				}
 			}
@@ -160,7 +160,7 @@ func (master *Master) Register(args *masterproto.RegisterArgs, reply *masterprot
 		//	out, err := exec.Command("ping", addr, "-c 2", "-q").output()
 		//if err == nil {
 		//	master.latencies[index], _ = strconv.ParseFloat(strings.Split(string(out), "/")[4], 64)
-		//		dlog.Printf(" node %v [%v] -> %v", index, master.nodeList[index],master.latencies[index])
+		//		log.Printf(" node %v [%v] -> %v", index, master.nodeList[index],master.latencies[index])
 		//	}else{
 		//		log.Fatal("cannot connect to "+addr)
 		//	}
@@ -182,7 +182,7 @@ func (master *Master) Register(args *masterproto.RegisterArgs, reply *masterprot
 		//	}//
 
 		if leader == index {
-			dlog.Printf("Replica %d is the new leader.", index)
+			log.Printf("Replica %d is the new leader.", index)
 			master.leader[index] = true
 			reply.IsLeader = true
 		}
@@ -224,6 +224,6 @@ func (master *Master) GetReplicaList(args *masterproto.GetReplicaListArgs, reply
 		reply.AliveList = append(reply.AliveList, master.alive[i])
 	}
 
-	dlog.Printf("nodes list %v", reply.ReplicaList)
+	log.Printf("nodes list %v", reply.ReplicaList)
 	return nil
 }

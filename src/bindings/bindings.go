@@ -70,11 +70,11 @@ func NewParameters(masterAddr string, masterPort int, verbose bool, leaderless b
 func (b *Parameters) Connect() error {
 	var err error
 
-	dlog.Printf("Dialing master...\n")
+	log.Printf("Dialing master...\n")
 	var master *rpc.Client
 	master = b.MasterDial()
 
-	dlog.Printf("Getting replica list from master...\n")
+	log.Printf("Getting replica list from master...\n")
 	var replyRL *masterproto.GetReplicaListReply
 
 	// loop until the call succeeds
@@ -99,7 +99,7 @@ func (b *Parameters) Connect() error {
 	//		return err
 	//}
 	//b.closestReplica =
-	dlog.Printf("node list %v, closest (alive) = %v", b.replicaLists, b.closestReplica)
+	log.Printf("node list %v, closest (alive) = %v", b.replicaLists, b.closestReplica)
 
 	// init some parameters
 	b.n = len(b.replicaLists)
@@ -112,7 +112,7 @@ func (b *Parameters) Connect() error {
 	toConnect = append(toConnect, b.closestReplica)
 
 	if !b.leaderless {
-		dlog.Printf("Getting leader from master...\n")
+		log.Printf("Getting leader from master...\n")
 		var replyL *masterproto.GetLeaderReply
 
 		for i, done := 0, false; !done; i++ {
@@ -131,17 +131,17 @@ func (b *Parameters) Connect() error {
 		if b.closestReplica != b.Leader {
 			toConnect = append(toConnect, b.Leader)
 		}
-		dlog.Printf("The Leader is replica %d\n", b.Leader)
+		log.Printf("The Leader is replica %d\n", b.Leader)
 	}
 
 	for _, i := range toConnect {
-		dlog.Println("Connection to ", i, " -> ", b.replicaLists[i])
+		log.Println("Connection to ", i, " -> ", b.replicaLists[i])
 		b.servers[i] = Dial(b.replicaLists[i], false)
 		b.readers[i] = bufio.NewReader(b.servers[i])
 		b.writers[i] = bufio.NewWriter(b.servers[i])
 	}
 
-	dlog.Println("Connected")
+	log.Println("Connected")
 
 	return nil
 }
@@ -170,7 +170,7 @@ func Dial(addr string, connect bool) net.Conn {
 
 		if !done {
 			// if not done yet, try again
-			dlog.Println("Connection error with ", addr, ": ", err)
+			log.Println("Connection error with ", addr, ": ", err)
 			if conn != nil {
 				conn.Close()
 			}
@@ -198,12 +198,12 @@ func Call(cli *rpc.Client, method string, args interface{}, reply interface{}) e
 	select {
 	case err := <-c:
 		if err != nil {
-			dlog.Printf("Error in RPC: " + method)
+			log.Printf("Error in RPC: " + method)
 		}
 		return err
 
 	case <-time.After(TIMEOUT):
-		dlog.Printf("RPC timeout: " + method)
+		log.Printf("RPC timeout: " + method)
 		return errors.New("RPC timeout")
 	}
 }
@@ -212,7 +212,7 @@ func (b *Parameters) FindClosestReplica(replyRL *masterproto.GetReplicaListReply
 	// save replica list and closest
 	b.replicaLists = replyRL.ReplicaList
 
-	dlog.Printf("Pinging all replicas...\n")
+	log.Printf("Pinging all replicas...\n")
 
 	minLatency := math.MaxFloat64
 	for i := 0; i < len(b.replicaLists); i++ {
@@ -227,7 +227,7 @@ func (b *Parameters) FindClosestReplica(replyRL *masterproto.GetReplicaListReply
 		if err == nil {
 			// parse ping output
 			latency, _ := strconv.ParseFloat(strings.Split(string(out), "/")[4], 64)
-			dlog.Printf("%v -> %v", i, latency)
+			log.Printf("%v -> %v", i, latency)
 
 			// save if closest replica
 			if minLatency > latency {
@@ -235,7 +235,7 @@ func (b *Parameters) FindClosestReplica(replyRL *masterproto.GetReplicaListReply
 				minLatency = latency
 			}
 		} else {
-			dlog.Printf("cannot ping " + b.replicaLists[i])
+			log.Printf("cannot ping " + b.replicaLists[i])
 			return err
 		}
 	}
@@ -249,7 +249,7 @@ func (b *Parameters) Disconnect() {
 			server.Close()
 		}
 	}
-	dlog.Printf("Disconnected")
+	log.Printf("Disconnected")
 }
 
 // not idempotent in case of a failure
@@ -259,7 +259,7 @@ func (b *Parameters) Write(id int32, key int64, value []byte) {
 	//args.CommandId = id //b.id
 
 	if b.verbose {
-		dlog.Println(args.Command.String())
+		log.Println(args.Command.String())
 	}
 
 	b.execute(args)
@@ -273,7 +273,7 @@ func (b *Parameters) Read(id int32, key int64) {
 	args.Command.Op = state.GET
 
 	if b.verbose {
-		dlog.Println(args.Command.String())
+		log.Println(args.Command.String())
 	}
 
 	b.execute(args)
@@ -289,7 +289,7 @@ func (b *Parameters) Scan(key int64, count int64, id int32) {
 	args.Command.Op = state.SCAN
 
 	if b.verbose {
-		dlog.Println(args.Command.String())
+		log.Println(args.Command.String())
 	}
 
 	b.execute(args)
@@ -338,7 +338,7 @@ func (b *Parameters) Submit(args genericsmrproto.Propose) {
 		}
 
 		if b.verbose {
-			dlog.Println("Sent to ", submitter)
+			log.Println("Sent to ", submitter)
 		}
 	}
 }
@@ -350,12 +350,12 @@ func (b *Parameters) ListenForResponses() state.Value {
 			value, err := b.waitReplies(i)
 			if err != nil {
 
-				dlog.Println("Error: ", err)
+				log.Println("Error: ", err)
 
 				for err != nil && b.retries > 0 {
 					b.retries--
 					b.Disconnect()
-					dlog.Println("Reconnecting ...")
+					log.Println("Reconnecting ...")
 					time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
 					err = b.Connect()
 				}
@@ -403,18 +403,18 @@ func (b *Parameters) execute(args genericsmrproto.Propose) {
 	}
 
 	if b.verbose {
-		dlog.Println("Sent to ", submitter)
+		log.Println("Sent to ", submitter)
 	}
 	//	}
 	/*	value, err = b.waitReplies(submitter)
 			if err != nil {
 
-				dlog.Println("Error: ", err)
+				log.Println("Error: ", err)
 
 					for err != nil && b.retries > 0 {
 						b.retries--
 						b.Disconnect()
-						dlog.Println("Reconnecting ...")
+						log.Println("Reconnecting ...")
 						time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
 						err = b.Connect()
 					}
@@ -428,7 +428,7 @@ func (b *Parameters) execute(args genericsmrproto.Propose) {
 		}
 
 		if b.verbose {
-			dlog.Println("Returning: ", value.String())
+			log.Println("Returning: ", value.String())
 		}
 
 		return value*/
@@ -441,8 +441,8 @@ func (b *Parameters) waitReplies(submitter int) (state.Value, error) {
 	//b.receiveMutex.Lock()
 	if err = rep.Unmarshal(b.readers[submitter]); err == nil {
 		if rep.OK == TRUE {
-			//	dlog.Println("Got response OK")
-			//	dlog.Print(rep.CommandId, rep.Value)
+			//	log.Println("Got response OK")
+			//	log.Print(rep.CommandId, rep.Value)
 			ret = rep.Value
 		} else {
 			err = errors.New("Failed to receive a response.")
