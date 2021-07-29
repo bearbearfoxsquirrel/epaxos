@@ -8,12 +8,12 @@ func Printf(format string, v ...interface{}) {
 	if !DLOG {
 		return
 	}
-	log.Printf(format, v...)
+	dlog.Printf(format, v...)
 }
 
 func Println(v ...interface{}) {
 	if !DLOG {
 		return
 	}
-	log.Println(v...)
+	dlog.Println(v...)
 }

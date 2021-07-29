@@ -204,7 +204,7 @@ func (r *Replica) handleReplicaConnection(rid int, reader *bufio.Reader) error {
 		}
 	}
 	if err != nil {
-		log.Println("Error when reading from the connection with replica", rid, err)
+		dlog.Println("Error when reading from the connection with replica", rid, err)
 		r.Alive[rid] = false
 		return err
 	}
@@ -289,7 +289,7 @@ func (r *Replica) run() {
 	r.RandomisePeerOrder()
 
 	if r.isLeader {
-		log.Println("I am the leader")
+		dlog.Println("I am the leader")
 	}
 
 	go r.WaitForClientConnections()
@@ -563,12 +563,12 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	//TODO!! Handle client retries
 
 	/*    if _, duplicate := r.commands[propose.CommandId]; duplicate {
-	      log.Println("Duplicate command from client")
+	      dlog.Println("Duplicate command from client")
 	      return
 	  }*/
 
 	if !r.isLeader && r.crtBalnum < 0 {
-		log.Println("Received request before leader 1a message")
+		dlog.Println("Received request before leader 1a message")
 		r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{FALSE, -1, state.NIL(), propose.Timestamp}, propose.Reply, propose.Mutex)
 		return
 	}
@@ -625,7 +625,7 @@ func (r *Replica) handlePrepare(prep *gpaxosproto.Prepare) {
 
 func (r *Replica) handle1a(msg *gpaxosproto.M_1a) {
 	if msg.LeaderId != r.leaderId {
-		log.Println("Incorrect leader")
+		dlog.Println("Incorrect leader")
 		return
 	}
 
@@ -650,7 +650,7 @@ func (r *Replica) handle1a(msg *gpaxosproto.M_1a) {
 
 func (r *Replica) handle1b(msg *gpaxosproto.M_1b) {
 	if msg.Balnum != r.crtBalnum {
-		log.Println("1b from a different ballot")
+		dlog.Println("1b from a different ballot")
 		return
 	}
 
@@ -681,17 +681,17 @@ func (r *Replica) handle1b(msg *gpaxosproto.M_1b) {
 
 func (r *Replica) handle2a(msg *gpaxosproto.M_2a) {
 	if r.isLeader {
-		log.Println("Received 2a even though I am the leader")
+		dlog.Println("Received 2a even though I am the leader")
 		return
 	}
 
 	if r.leaderId != msg.LeaderId {
-		log.Println("Received 2a from unrecognized leader")
+		dlog.Println("Received 2a from unrecognized leader")
 		return
 	}
 
 	if r.crtBalnum != msg.Balnum {
-		log.Println("Received 2a for different ballot: ", msg.Balnum)
+		dlog.Println("Received 2a for different ballot: ", msg.Balnum)
 		return
 	}
 
@@ -739,7 +739,7 @@ func (r *Replica) handle2b(msg *gpaxosproto.M_2b) {
 	crtbal := r.ballotArray[r.crtBalnum]
 
 	if r.isLeader && crtbal.status != PHASE2 {
-		log.Println("2b before its time")
+		dlog.Println("2b before its time")
 		return
 	}
 
@@ -759,7 +759,7 @@ func (r *Replica) tryToLearn() {
 	crtbal := r.ballotArray[r.crtBalnum]
 
 	if conflict, glb, _ = r.learn(false); conflict {
-		log.Println("Conflict")
+		dlog.Println("Conflict")
 		if r.isLeader {
 			r.startHigherBallot()
 		}
@@ -837,11 +837,11 @@ func (r *Replica) learn(getLub bool) (conflict bool, glb []int32, lub []int32) {
 					continue
 				}
 				if crtCmd == nil {
-					log.Println("crtCmd is nil")
+					dlog.Println("crtCmd is nil")
 					return false, nil, nil
 				}
 				if r.commands[cs[j]] == nil {
-					log.Println("cs[j] is nil")
+					dlog.Println("cs[j] is nil")
 					return false, nil, nil
 				}
 				if !state.Conflict(crtCmd, r.commands[cs[j]]) {

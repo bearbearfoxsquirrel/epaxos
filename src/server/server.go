@@ -78,7 +78,7 @@ var emulatedWriteTimeNs *int = flag.Int("emulatedwritetimens", 0, "emulated stab
 
 var group1Size *int = flag.Int("group1size", -1, "group 1 size (-1 = thrify)")
 var flushCommit *bool = flag.Bool("flushcommit", true, "flush commits to buffer")
-var softExp *bool = flag.Bool("softExp", false, "flush commits to buffer")
+var softExp *bool = flag.Bool("softExp", false, "use a soften limit on backoffs")
 
 var cmpCmtExec *bool = flag.Bool("cmtexeccmp", false, "record comparision of commit instances vs executed instances")
 var nothreadexec *bool = flag.Bool("nothreadexec", false, "optional turning off of execution in a separate thread of epaxos")
@@ -112,7 +112,7 @@ func main() {
 		go catchKill(interrupt)
 	}
 
-	log.Printf("Server starting on port %d\n", *portnum)
+	dlog.Printf("Server starting on port %d\n", *portnum)
 
 	replicaId, nodeList, isLeader := registerWithMaster(fmt.Sprintf("%s:%d", *masterAddr, *masterPort))
 
@@ -120,7 +120,7 @@ func main() {
 		*maxfailures = (len(nodeList) - 1) / 2
 	}
 
-	log.Printf("Tolerating %d max. failures\n", *maxfailures)
+	dlog.Printf("Tolerating %d max. failures\n", *maxfailures)
 
 	whenCrash := time.Duration(*whenCrashSeconds) * time.Second
 	howLongCrash := time.Duration(*howLongCrashSeconds) * time.Second
@@ -130,44 +130,44 @@ func main() {
 	emulatedWriteTime := time.Nanosecond * time.Duration(*emulatedWriteTimeNs)
 	timeout := time.Microsecond * time.Duration(*timeoutus)
 	if *doEpaxos {
-		log.Println("Starting Egalitarian Paxos replica...")
+		dlog.Println("Starting Egalitarian Paxos replica...")
 		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *cmpCmtExec, !*nothreadexec)
 		rpc.Register(rep)
 	} else if *doMencius {
-		log.Println("Starting Mencius replica...")
+		dlog.Println("Starting Mencius replica...")
 		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures)
 		rpc.Register(rep)
 	} else if *doGpaxos {
-		log.Println("Starting Generalized Paxos replica...")
+		dlog.Println("Starting Generalized Paxos replica...")
 		rep := gpaxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *maxfailures)
 		rpc.Register(rep)
 
 	} else if *doLWCSpec {
-		log.Println("Starting LWC replica...")
+		dlog.Println("Starting LWC replica...")
 		rep := lwcspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp)
 		rpc.Register(rep)
 	} else if *doLWCGlobalSpec {
-		log.Println("Starting LWC replica...")
+		dlog.Println("Starting LWC replica...")
 		rep := lwcglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec)
 		rpc.Register(rep)
 	} else if *doLWCPatient {
-		log.Println("Starting LWC replica...")
+		dlog.Println("Starting LWC replica...")
 		rep := lwcpatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp)
 		rpc.Register(rep)
 	} else if *doSTDSpec {
-		log.Println("Starting Standard Paxos (speculative) replica...")
+		dlog.Println("Starting Standard Paxos (speculative) replica...")
 		rep := stdpaxosspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp)
 		rpc.Register(rep)
 	} else if *doSTDGlobalSpec {
-		log.Println("Starting Standard Paxos (speculative) replica...")
+		dlog.Println("Starting Standard Paxos (speculative) replica...")
 		rep := stdpaxosglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp)
 		rpc.Register(rep)
 	} else if *doSTDPatient {
-		log.Println("Starting LWC replica...")
+		dlog.Println("Starting LWC replica...")
 		rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp)
 		rpc.Register(rep)
 	} else {
-		log.Println("Starting classic Paxos replica...")
+		dlog.Println("Starting classic Paxos replica...")
 		rep := paxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir)
 		rpc.Register(rep)
 	}
@@ -188,7 +188,7 @@ func registerWithMaster(masterAddr string) (int, []string, bool) {
 	var reply masterproto.RegisterReply
 
 	for done := false; !done; {
-		log.Printf("connecting to: %v", masterAddr)
+		dlog.Printf("connecting to: %v", masterAddr)
 		mcli, err := rpc.DialHTTP("tcp", masterAddr)
 		if err == nil {
 			err = mcli.Call("Master.Register", args, &reply)
@@ -198,7 +198,7 @@ func registerWithMaster(masterAddr string) (int, []string, bool) {
 			}
 		}
 		if err != nil {
-			log.Printf("%v", err)
+			dlog.Printf("%v", err)
 		}
 		time.Sleep(1e9)
 	}

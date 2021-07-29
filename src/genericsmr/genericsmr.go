@@ -139,7 +139,7 @@ func (r *Replica) connectToPeer(i int) bool {
 	r.PeerReaders[i] = bufio.NewReader(r.Peers[i])
 	r.PeerWriters[i] = bufio.NewWriter(r.Peers[i])
 
-	log.Printf("OUT Connected to %d", i)
+	dlog.Printf("OUT Connected to %d", i)
 	return true
 }
 
@@ -154,8 +154,8 @@ func (r *Replica) ConnectToPeers() {
 		r.connectToPeer(i)
 	}
 	<-done
-	log.Printf("Replica id: %d. Done connecting to peers\n", r.Id)
-	log.Printf("Node list %v", r.PeerAddrList)
+	dlog.Printf("Replica id: %d. Done connecting to peers\n", r.Id)
+	dlog.Printf("Node list %v", r.PeerAddrList)
 
 	for rid, reader := range r.PeerReaders {
 		if int32(rid) == r.Id {
@@ -196,7 +196,7 @@ func (r *Replica) ConnectToPeersNoListeners() {
 		r.PeerWriters[i] = bufio.NewWriter(r.Peers[i])
 	}
 	<-done
-	log.Printf("Replica id: %d. Done connecting to peers\n", r.Id)
+	dlog.Printf("Replica id: %d. Done connecting to peers\n", r.Id)
 }
 
 func (r *Replica) waitForPeerConnection(i int) bool {
@@ -223,7 +223,7 @@ func (r *Replica) waitForPeerConnection(i int) bool {
 	r.PeerWriters[id] = bufio.NewWriter(conn)
 	r.Alive[id] = true
 
-	log.Printf("IN Connected to %d", id)
+	dlog.Printf("IN Connected to %d", id)
 	return true
 }
 
@@ -240,12 +240,12 @@ func (r *Replica) waitForPeerConnections(done chan bool) {
 
 /* Client connections dispatcher */
 func (r *Replica) WaitForClientConnections() {
-	log.Println("Waiting for client connections")
+	dlog.Println("Waiting for client connections")
 	//numClis := 0
 	for !r.Shutdown {
 		conn, err := r.Listener.Accept()
 		if err != nil {
-			log.Println("Accept error:", err)
+			dlog.Println("Accept error:", err)
 			continue
 		}
 		r.Mutex.Lock()
@@ -313,7 +313,7 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 				//	for _, v := range r.rpcTable{
 				//		obj := v.Obj.New()
 				//		obj.Unmarshal(reader)
-				//log.Println(obj)
+				//dlog.Println(obj)
 
 				//	}
 			}
@@ -348,7 +348,7 @@ func (r *Replica) clientListener(conn net.Conn) {
 	var err error
 
 	r.Mutex.Lock()
-	log.Println("Client up ", conn.RemoteAddr(), "(", r.LRead, ")")
+	dlog.Println("Client up ", conn.RemoteAddr(), "(", r.LRead, ")")
 	r.Mutex.Unlock()
 
 	mutex := &sync.Mutex{}
@@ -404,7 +404,7 @@ func (r *Replica) clientListener(conn net.Conn) {
 		}
 	}
 	conn.Close()
-	log.Println("Client down ", conn.RemoteAddr())
+	dlog.Println("Client down ", conn.RemoteAddr())
 }
 
 func (r *Replica) RegisterRPC(msgObj fastrpc.Serializable, notify chan fastrpc.Serializable) uint8 {
@@ -436,7 +436,7 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 
 	w := r.PeerWriters[peerId]
 	if w == nil {
-		log.Printf("Connection to %d lost!\n", peerId)
+		dlog.Printf("Connection to %d lost!\n", peerId)
 		return
 	}
 
@@ -451,7 +451,7 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 func (r *Replica) SendMsgNoFlush(peerId int32, code uint8, msg fastrpc.Serializable) {
 	w := r.PeerWriters[peerId]
 	if w == nil {
-		log.Printf("Connection to %d lost!\n", peerId)
+		dlog.Printf("Connection to %d lost!\n", peerId)
 		return
 	}
 	w.WriteByte(code)
@@ -470,7 +470,7 @@ func (r *Replica) SendBeacon(peerId int32) {
 	defer r.Mutex.Unlock()
 	w := r.PeerWriters[peerId]
 	if w == nil {
-		log.Printf("Connection to %d lost!\n", peerId)
+		dlog.Printf("Connection to %d lost!\n", peerId)
 		return
 	}
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON)
@@ -486,7 +486,7 @@ func (r *Replica) ReplyBeacon(beacon *Beacon) {
 	defer r.Mutex.Unlock()
 	w := r.PeerWriters[beacon.Rid]
 	if w == nil {
-		log.Printf("Connection to %d lost!\n", beacon.Rid)
+		dlog.Printf("Connection to %d lost!\n", beacon.Rid)
 		return
 	}
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON_REPLY)
@@ -546,7 +546,7 @@ func (r *Replica) ComputeClosestPeers() {
 	for i := 0; i < r.N-1; i++ {
 		node := r.PreferredPeerOrder[i]
 		lat := float64(r.Latencies[node]) / float64(npings*1000000)
-		log.Println(node, " -> ", lat, "ms")
+		dlog.Println(node, " -> ", lat, "ms")
 	}
 
 }
@@ -738,7 +738,7 @@ func (r *Replica) RandomisePeerOrder() {
 	for i := 0; i < r.N-1; i++ {
 		node := r.PreferredPeerOrder[i]
 		lat := float64(r.Latencies[node]) / float64(npings*1000000)
-		log.Println(node, " -> ", lat, "ms")
+		dlog.Println(node, " -> ", lat, "ms")
 	}
 	*/
 }

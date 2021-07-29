@@ -887,7 +887,7 @@ func (r *Replica) forceCommit() {
 
 	//try to take over the problem instance
 	if int(problemInstance)%r.N == int(r.Id+1)%r.N {
-		log.Println("Replica", r.Id, "Trying to take over instance", problemInstance)
+		dlog.Println("Replica", r.Id, "Trying to take over instance", problemInstance)
 		if r.instanceSpace[problemInstance] == nil {
 			r.instanceSpace[problemInstance] = &Instance{true,
 				NB_INST_TO_SKIP,
@@ -897,7 +897,7 @@ func (r *Replica) forceCommit() {
 				&LeaderBookkeeping{nil, 0, 0, 0, 0}}
 			r.bcastPrepare(problemInstance, r.instanceSpace[problemInstance].ballot)
 		} else {
-			log.Println("Not nil")
+			dlog.Println("Not nil")
 		}
 	}
 }

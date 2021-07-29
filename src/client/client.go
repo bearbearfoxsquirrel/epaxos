@@ -200,7 +200,7 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 }
 
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
-	log.Println(benchmarker.timeseriesStates.String())
+	dlog.Println(benchmarker.timeseriesStates.String())
 	benchmarker.timeseriesStates.reset()
 }
 

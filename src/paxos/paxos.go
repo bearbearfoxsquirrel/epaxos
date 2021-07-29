@@ -168,7 +168,7 @@ func (r *Replica) sync() {
 
 func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *genericsmrproto.BeTheLeaderReply) error {
 	r.IsLeader = true
-	log.Println("I am the leader")
+	dlog.Println("I am the leader")
 	return nil
 }
 
@@ -304,7 +304,7 @@ func (r *Replica) makeBallot(instance int32) {
 func (r *Replica) bcastPrepare(instance int32) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println("Prepare bcast failed:", err)
+			dlog.Println("Prepare bcast failed:", err)
 		}
 	}()
 
@@ -331,7 +331,7 @@ var pa paxosproto.Accept
 func (r *Replica) bcastAccept(instance int32) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println("Accept bcast failed:", err)
+			dlog.Println("Accept bcast failed:", err)
 		}
 	}()
 	pa.LeaderId = r.Id
@@ -362,7 +362,7 @@ var pcs paxosproto.CommitShort
 func (r *Replica) bcastCommit(instance int32, ballot int32, command []state.Command) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println("Commit bcast failed:", err)
+			dlog.Println("Commit bcast failed:", err)
 		}
 	}()
 	pc.LeaderId = r.Id

@@ -442,7 +442,7 @@ func (r *Replica) sync() {
 	if !r.Durable {
 		return
 	}
-	//log.Println("synced")
+	//dlog.Println("synced")
 	if r.emulatedSS {
 		time.Sleep(r.emulatedWriteTime)
 	} else {
@@ -465,7 +465,7 @@ var fastClockChan chan bool
 func (r *Replica) fastClock() {
 	for !r.Shutdown {
 		time.Sleep(time.Duration(r.batchWait) * time.Millisecond) // ms
-		log.Println("sending fast clock")
+		dlog.Println("sending fast clock")
 		fastClockChan <- true
 	}
 }
@@ -514,7 +514,7 @@ func (r *Replica) sendNextRecoveryRequestBatch() {
 		if i == r.Id {
 			continue
 		}
-		log.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchupBatchSize, i)
+		dlog.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchupBatchSize, i)
 		r.sendRecoveryRequest(r.nextRecoveryBatchPoint, i)
 		r.nextRecoveryBatchPoint += r.catchupBatchSize
 	}
@@ -545,10 +545,10 @@ func (r *Replica) checkAndHandlecatchupRequest(prepare *lwcproto.Prepare) bool {
 //func (r *Replica) setNextcatchupPoint()
 func (r *Replica) checkAndHandlecatchupResponse(commit *lwcproto.Commit) {
 	if r.catchingUp {
-		//log.Printf("got catch up for %d", commit.Instance)
+		//dlog.Printf("got catch up for %d", commit.Instance)
 		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
 			r.catchingUp = false
-			log.Printf("Caught up with consensus group")
+			dlog.Printf("Caught up with consensus group")
 			//reset client connections so that we can begin benchmarking again
 			r.Mutex.Lock()
 			for i := 0; i < len(r.Clients); i++ {
@@ -622,10 +622,10 @@ func (r *Replica) run() {
 			r.retryConfigBal(maybeTimedout)
 			break
 		case <-doner:
-			log.Println("Crahsing")
+			dlog.Println("Crahsing")
 			time.Sleep(r.howLongCrash)
 			r.restart()
-			log.Println("Done crashing")
+			dlog.Println("Done crashing")
 			break
 		case next := <-r.retryInstance:
 			dlog.Println("Checking whether to retry a proposal")
@@ -693,7 +693,7 @@ func (r *Replica) run() {
 				}
 				clientProposals[i] = cliProp
 			}
-			log.Println("Client value(s) received beginning new instance")
+			dlog.Println("Client value(s) received beginning new instance")
 			r.beginNextInstance(clientProposals)
 		}
 	}
@@ -1024,7 +1024,7 @@ func (r *Replica) beginNextInstance(valsToPropose []*genericsmr.Propose) {
 	r.instanceSpace[r.crtInstance].pbk.clientProposals = valsToPropose
 	r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.propCurConfBal)
 	r.bcastPrepare(r.crtInstance)
-	log.Printf("Opened new instance %d\n", r.crtInstance)
+	dlog.Printf("Opened new instance %d\n", r.crtInstance)
 }
 
 func (r *Replica) handlePropose(propose *genericsmr.Propose) {
@@ -1388,11 +1388,11 @@ func (r *Replica) propose(inst int32) {
 					pbk.cmds[i] = cliProp.Command
 				}
 
-				log.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals), inst)
+				dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals), inst)
 				break
 			default:
 				pbk.cmds = state.NOOP()
-				log.Println("Proposing noop in recovered instance")
+				dlog.Println("Proposing noop in recovered instance")
 			}
 		}
 	} else {
@@ -1500,7 +1500,7 @@ func (r *Replica) handleAcceptReply(areply *lwcproto.AcceptReply) {
 
 func (r *Replica) requeueClientProposals(instance int32) {
 	inst := r.instanceSpace[instance]
-	log.Printf("Requeing client values in instance %d", instance)
+	dlog.Printf("Requeing client values in instance %d", instance)
 	for i := 0; i < len(inst.pbk.clientProposals); i++ {
 		//r.ProposeChan <- inst.pbk.clientProposals[i]
 		r.clientValueQueue.TryRequeue(inst.pbk.clientProposals[i])
@@ -1559,12 +1559,12 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		log.Printf("%d client value(s) proposed in instance %d\n not chosen", len(pbk.clientProposals), inst)
+		dlog.Printf("%d client value(s) proposed in instance %d\n not chosen", len(pbk.clientProposals), inst)
 		r.requeueClientProposals(inst)
 		pbk.clientProposals = nil
 		break
 	case ProposedAndChosen:
-		log.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals), inst)
+		dlog.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals), inst)
 		//		for i := 0; i < len(pbk.clientProposals); i++ {
 		//		r.clientValueQueue.CloseValue(pbk.clientProposals[i])
 		//	}
