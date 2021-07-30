@@ -668,24 +668,52 @@ func (r *Replica) run() {
 			break
 		}
 
-		switch cliProp := r.clientValueQueue.TryDequeue(); {
-		case cliProp != nil:
-			numEnqueued := r.clientValueQueue.Len() + 1
-			batchSize := numEnqueued
-			clientProposals := make([]*genericsmr.Propose, batchSize)
-			clientProposals[0] = cliProp
+		if r.BatchingEnabled() {
+			select {
+			case <-fastClockChan:
+				switch cliProp := r.clientValueQueue.TryDequeue(); {
+				case cliProp != nil:
+					numEnqueued := r.clientValueQueue.Len() + 1
+					batchSize := numEnqueued
+					clientProposals := make([]*genericsmr.Propose, batchSize)
+					clientProposals[0] = cliProp
 
-			for i := 1; i < batchSize; i++ {
-				cliProp = r.clientValueQueue.TryDequeue()
-				if cliProp == nil {
-					clientProposals = clientProposals[:i]
-					break
+					for i := 1; i < batchSize; i++ {
+						cliProp = r.clientValueQueue.TryDequeue()
+						if cliProp == nil {
+							clientProposals = clientProposals[:i]
+							break
+						}
+						clientProposals[i] = cliProp
+					}
+					dlog.Println("Client value(s) received beginning new instance")
+					r.beginNextInstance(clientProposals)
 				}
-				clientProposals[i] = cliProp
+				break
+			default:
+				break
 			}
-			dlog.Println("Client value(s) received beginning new instance")
-			r.beginNextInstance(clientProposals)
+		} else {
+			switch cliProp := r.clientValueQueue.TryDequeue(); {
+			case cliProp != nil:
+				numEnqueued := r.clientValueQueue.Len() + 1
+				batchSize := numEnqueued
+				clientProposals := make([]*genericsmr.Propose, batchSize)
+				clientProposals[0] = cliProp
+
+				for i := 1; i < batchSize; i++ {
+					cliProp = r.clientValueQueue.TryDequeue()
+					if cliProp == nil {
+						clientProposals = clientProposals[:i]
+						break
+					}
+					clientProposals[i] = cliProp
+				}
+				dlog.Println("Client value(s) received beginning new instance")
+				r.beginNextInstance(clientProposals)
+			}
 		}
+
 	}
 }
 
