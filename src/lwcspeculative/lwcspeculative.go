@@ -87,6 +87,7 @@ type Replica struct {
 	ringCommit                 bool
 	nextRecoveryBatchPoint     int32
 	recoveringFrom             int32
+	commitCatchUp              bool
 }
 
 type TimeoutInfo struct {
@@ -325,7 +326,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchUp bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -370,6 +371,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		catchUpBatchSize:    catchupBatchSize,
 		timeout:             timeout,
 		flushCommit:         flushCommit,
+		commitCatchUp:       commitCatchUp,
 	}
 	r.ringCommit = true
 
@@ -1140,51 +1142,59 @@ func (r *Replica) isMoreCommitsToComeAfter(inst int32) bool {
 func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
 	if inst.abk.status == COMMITTED {
-		if instance+(int32(r.N)*r.maxOpenInstances) < r.crtInstance {
-			count := int32(0)
-			for i := instance; i < r.crtInstance; i++ {
-				returingInst := r.instanceSpace[i]
-				if returingInst != nil {
-					if returingInst.abk.status == COMMITTED {
-						dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
-						pc.LeaderId = int32(returingInst.abk.vConfBal.PropID) //prepare.LeaderId
-						pc.Instance = i
-						pc.ConfigBal = returingInst.abk.vConfBal
-						pc.Command = returingInst.abk.cmds
-						pc.WhoseCmd = returingInst.pbk.whoseCmds
-						if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
-							pc.MoreToCome = 1
-							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-							count++
-						} else {
-							pc.MoreToCome = 0
-							r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
-							break
-						}
+		//	if instance+(int32(r.N)*r.maxOpenInstances) < r.crtInstance {
+		count := int32(0)
+		for i := instance; i < r.crtInstance; i++ {
+			returingInst := r.instanceSpace[i]
+			if returingInst != nil {
+				if returingInst.abk.status == COMMITTED {
+					dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
+					pc.LeaderId = int32(returingInst.abk.vConfBal.PropID) //prepare.LeaderId
+					pc.Instance = i
+					pc.ConfigBal = returingInst.abk.vConfBal
+					pc.Command = returingInst.abk.cmds
+					pc.WhoseCmd = returingInst.pbk.whoseCmds
+					if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
+						pc.MoreToCome = 1
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+						count++
+					} else {
+						pc.MoreToCome = 0
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
+						break
 					}
 				}
 			}
-			_ = r.PeerWriters[whoRespondTo].Flush()
-		} else {
-			dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
-			pc.LeaderId = int32(inst.abk.vConfBal.PropID) //prepare.LeaderId
-			pc.Instance = instance
-			pc.ConfigBal = inst.abk.vConfBal
-			pc.Command = inst.abk.cmds
-			pc.WhoseCmd = inst.pbk.whoseCmds
-			pc.MoreToCome = 0
-			r.SendMsg(whoRespondTo, r.commitRPC, &pc)
 		}
+		_ = r.PeerWriters[whoRespondTo].Flush()
+		//	} else {
+		//		dlog.Printf("Already committed instance %d, returning commit to %d \n", instance, whoRespondTo)
+		//		pc.LeaderId = int32(inst.abk.vConfBal.PropID) //prepare.LeaderId
+		//		pc.Instance = instance
+		//		pc.ConfigBal = inst.abk.vConfBal
+		//		pc.Command = inst.abk.cmds
+		//		pc.WhoseCmd = inst.pbk.whoseCmds
+		//		pc.MoreToCome = 0
+		//		r.SendMsg(whoRespondTo, r.commitRPC, &pc)
+		//	}
 		return true
 	} else {
 		return false
 	}
 }
 
+func (r *Replica) howManyExtraCommitsToSend(inst int32) int32 {
+	if r.commitCatchUp {
+		return r.crtInstance - inst
+	} else {
+		return 0
+	}
+}
+
 func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
-	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, 0) {
+	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.howManyExtraCommitsToSend(prepare.Instance)) {
 		return
 	}
 	if configPreempted {
@@ -1458,7 +1468,7 @@ func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {
 func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(accept.Instance, accept.ConfigBal, ACCEPTANCE)
-	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, 0) {
+	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, r.howManyExtraCommitsToSend(accept.Instance)) {
 		return
 	} else if configPreempted {
 		return
