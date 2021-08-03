@@ -137,7 +137,7 @@ func main() {
 		rpc.Register(rep)
 	} else if *doMencius {
 		log.Println("Starting Mencius replica...")
-		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures)
+		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir)
 		rpc.Register(rep)
 	} else if *doGpaxos {
 		log.Println("Starting Generalized Paxos replica...")
