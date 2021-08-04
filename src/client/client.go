@@ -209,7 +209,7 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
 	if benchmarker.timeseriesStates.file != nil {
-		benchmarker.timeseriesStates.file.WriteString(benchmarker.timeseriesStates.String() + "\n")
+		benchmarker.timeseriesStates.file.WriteString(time.Now().Format("2006/01/02/ 15:04:05") + " " + benchmarker.timeseriesStates.String() + "\n")
 	} else {
 		log.Println(benchmarker.timeseriesStates.String())
 	}
