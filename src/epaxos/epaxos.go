@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"epaxosproto"
 	"fastrpc"
-	"fmt"
 	"genericsmr"
 	"genericsmrproto"
 	"io"
@@ -134,7 +133,7 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, sepExecThread bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool) *Replica {
 	r := &Replica{
 		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -205,7 +204,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"], r.Stats.M["totalCommitTime"], r.Stats.M["totalBatching"], r.Stats.M["totalBatchingSize"] = 0, 0, 0, 0, 0, 0, 0
 
 	if cmpCommitExec {
-		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(fmt.Sprintf("./r%d-cmd-lats.txt", r.Id))
+		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(cmpCommitExecLoc)
 	}
 
 	go r.run()

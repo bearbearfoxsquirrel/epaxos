@@ -35,6 +35,9 @@ var settleInTime = flag.Int("settletime", 60, "Number of seconds to allow before
 var numLatenciesRecording = flag.Int("numlatencies", -1, "Number of latencies to record")
 var timeLatenciesRecording = flag.Int("timerecordlatsecs", -1, "How long to record latencies for")
 
+var outputTimeseriesToFile *bool = flag.Bool("timeseriestofile", false, "output the timeseries benchmark to a file")
+var timeseriesFile *string = flag.String("timeseriesfile", "", "where to store timeseries file")
+
 type ClientValue struct {
 	uid   int32 //not great but its only for testing. Only need uid for local client
 	key   int64
@@ -47,16 +50,21 @@ type TimeseriesStats struct {
 	avgLatency        int64
 	deliveredRequests int64
 	deliveredBytes    int64
+	file              *os.File
 }
 
-func NewTimeseriesStates() TimeseriesStats {
-	return TimeseriesStats{
+func NewTimeseriesStates(storeToFile bool, loc string) TimeseriesStats {
+	timeseriesStat := TimeseriesStats{
 		minLatency:        math.MaxInt64,
 		maxLatency:        0,
 		avgLatency:        0,
 		deliveredRequests: 0,
 		deliveredBytes:    0,
 	}
+	if storeToFile {
+		timeseriesStat.file, _ = os.Create(loc)
+	}
+	return timeseriesStat
 }
 
 func (timeseriesStats TimeseriesStats) String() string {
@@ -161,9 +169,9 @@ type ClientBenchmarker struct {
 	clientID             int64
 }
 
-func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string, timeLatenciesRecording time.Duration) ClientBenchmarker {
+func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string, timeLatenciesRecording time.Duration, storeTimeseriesToFile bool, timeSeriesFileLoc string) ClientBenchmarker {
 	benchmarker := ClientBenchmarker{
-		timeseriesStates:     NewTimeseriesStates(),
+		timeseriesStates:     NewTimeseriesStates(storeTimeseriesToFile, timeSeriesFileLoc),
 		valueSubmissionTimes: make(map[int32]time.Time),
 		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord, timeLatenciesRecording),
 		clientID:             clientID,
@@ -200,7 +208,11 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 }
 
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
-	log.Println(benchmarker.timeseriesStates.String())
+	if benchmarker.timeseriesStates.file != nil {
+		benchmarker.timeseriesStates.file.WriteString(benchmarker.timeseriesStates.String() + "\n")
+	} else {
+		log.Println(benchmarker.timeseriesStates.String())
+	}
 	benchmarker.timeseriesStates.reset()
 }
 
@@ -252,7 +264,7 @@ func main() {
 		proxy.Disconnect()
 	}
 
-	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput, time.Second*time.Duration(*timeLatenciesRecording))
+	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput, time.Second*time.Duration(*timeLatenciesRecording), *outputTimeseriesToFile, *timeseriesFile)
 
 	valueDone := make(chan ClientValue, *outstanding)
 
