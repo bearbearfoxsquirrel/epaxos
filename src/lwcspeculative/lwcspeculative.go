@@ -1,6 +1,7 @@
 package lwcspeculative
 
 import (
+	"CommitExecutionComparator"
 	"clientproposalqueue"
 	"dlog"
 	"encoding/binary"
@@ -88,6 +89,8 @@ type Replica struct {
 	nextRecoveryBatchPoint     int32
 	recoveringFrom             int32
 	commitCatchUp              bool
+	commitExecComp             *CommitExecutionComparator.CommitExecutionComparator
+	cmpCommitExec              bool
 }
 
 type TimeoutInfo struct {
@@ -326,7 +329,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchUp bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool, commitCatchUp bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -372,6 +375,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		timeout:             timeout,
 		flushCommit:         flushCommit,
 		commitCatchUp:       commitCatchUp,
+		cmpCommitExec:       cmpCmtExec,
 	}
 	r.ringCommit = true
 
@@ -379,6 +383,10 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		r.group1Size = r.N - r.F
 	} else {
 		r.group1Size = group1Size
+	}
+
+	if cmpCmtExec {
+		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(fmt.Sprintf("./r%d-cmd-lats.txt", r.Id))
 	}
 
 	r.Durable = durable
@@ -1626,6 +1634,10 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 		//	}
 		break
 	}
+	if r.cmpCommitExec {
+		id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
+		r.commitExecComp.RecordCommit(id, time.Now())
+	}
 
 	if !moreToCome {
 		r.checkAndOpenNewInstances(inst)
@@ -1663,6 +1675,12 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 						returnInst.abk.cmds[j].Execute(r.State)
 					}
 
+				}
+
+				if r.cmpCommitExec {
+					id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
+					r.commitExecComp.RecordExecution(id, time.Now())
+					//r.commitExecComp.Output(id)
 				}
 				//	returnInst.pbk = nil
 				r.executedUpTo += 1

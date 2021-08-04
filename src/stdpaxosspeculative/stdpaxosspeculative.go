@@ -86,6 +86,7 @@ type Replica struct {
 	group1Size                 int
 	nextRecoveryBatchPoint     int32
 	recoveringFrom             int32
+	commitCatchUp              bool
 }
 
 type TimeoutInfo struct {
@@ -326,7 +327,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -369,6 +370,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		catchUpBatchSize:    catchupBatchSize,
 		timeout:             timeout,
 		flushCommit:         flushCommit,
+		commitCatchUp:       catchupCommit,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -1076,6 +1078,14 @@ func (r *Replica) isMoreCommitsToComeAfter(inst int32) bool {
 	return false
 }
 
+func (r *Replica) howManyExtraCommitsToSend(inst int32) int32 {
+	if r.commitCatchUp {
+		return r.crtInstance - inst
+	} else {
+		return 0
+	}
+}
+
 func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
 	if inst.abk.status == COMMITTED {
@@ -1111,7 +1121,7 @@ func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxEx
 
 func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
-	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, 0) {
+	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.howManyExtraCommitsToSend(prepare.Instance)) {
 		return
 	}
 
@@ -1357,7 +1367,7 @@ func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {
 
 func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
-	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, 0) {
+	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, accept.Instance) {
 		return
 	}
 

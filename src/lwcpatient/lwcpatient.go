@@ -93,6 +93,7 @@ type Replica struct {
 	group1Size                    int
 	nextRecoveryBatchPoint        int32
 	recoveringFrom                int32
+	commitCatchUp                 bool
 }
 
 type ProposerStatus int
@@ -325,7 +326,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchup bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
@@ -371,6 +372,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		lastSettleBatchInst: -1,
 		catchingUp:          false,
 		flushCommit:         flushCommit,
+		commitCatchUp:       commitCatchup,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -1163,9 +1165,30 @@ func (r *Replica) checkAndHandleConfigPreempt(inst int32, preemptingConfigBal lw
 	}
 }
 
+func (r *Replica) isMoreCommitsToComeAfter(inst int32) bool {
+	for i := inst + 1; i <= r.crtInstance; i++ {
+		instance := r.instanceSpace[i]
+		if instance != nil {
+			if instance.abk.status == COMMITTED {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *Replica) howManyExtraCommitsToSend(inst int32) int32 {
+	if r.commitCatchUp {
+		return r.crtInstance - inst
+	} else {
+		return 0
+	}
+}
+
 func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
 	if inst.abk.status == COMMITTED {
+		//	if instance+(int32(r.N)*r.maxOpenInstances) < r.crtInstance {
 		count := int32(0)
 		for i := instance; i < r.crtInstance; i++ {
 			returingInst := r.instanceSpace[i]
@@ -1177,12 +1200,13 @@ func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxEx
 					pc.ConfigBal = returingInst.abk.vConfBal
 					pc.Command = returingInst.abk.cmds
 					pc.WhoseCmd = returingInst.pbk.whoseCmds
-					args := &pc
-					if count < maxExtraInstances {
+					if r.isMoreCommitsToComeAfter(i) && count < maxExtraInstances {
+						pc.MoreToCome = 1
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
 						count++
-						pc.MoreToCome = 0
-						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, args)
 					} else {
+						pc.MoreToCome = 0
+						r.SendMsgNoFlush(whoRespondTo, r.commitRPC, &pc)
 						break
 					}
 				}
@@ -1199,7 +1223,7 @@ func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
 
-	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.crtInstance-prepare.Instance) {
+	if r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.howManyExtraCommitsToSend(prepare.Instance)) {
 		return
 	}
 
@@ -1453,7 +1477,7 @@ func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(accept.Instance, accept.ConfigBal, ACCEPTANCE)
 
-	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, r.crtInstance-accept.Instance) {
+	if r.checkAndHandleCommit(accept.Instance, accept.LeaderId, accept.Instance) {
 		return
 	} else if configPreempted {
 		return
