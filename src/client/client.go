@@ -34,6 +34,7 @@ var latencyOutput = flag.String("lato", "", "Must state where resultant latencie
 var settleInTime = flag.Int("settletime", 60, "Number of seconds to allow before recording latency")
 var numLatenciesRecording = flag.Int("numlatencies", -1, "Number of latencies to record")
 var timeLatenciesRecording = flag.Int("timerecordlatsecs", -1, "How long to record latencies for")
+var sampleRateMs = flag.Int("samerate", 1000, "how often to sample timeseries data (ms)")
 
 var outputTimeseriesToFile *bool = flag.Bool("timeseriestofile", false, "output the timeseries benchmark to a file")
 var timeseriesFile *string = flag.String("timeseriesfile", "", "where to store timeseries file")
@@ -294,7 +295,7 @@ func main() {
 	beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 
 	shouldStats := make(chan bool)
-	statsTimer := time.NewTimer(time.Duration(1) * time.Second)
+	statsTimer := time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
 	go func() {
 		<-statsTimer.C
 		shouldStats <- true
@@ -307,7 +308,7 @@ func main() {
 		select {
 		case <-shouldStats:
 			benchmarker.timeseriesStep()
-			statsTimer = time.NewTimer(time.Second)
+			statsTimer = time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
 			go func() {
 				<-statsTimer.C
 				shouldStats <- true
