@@ -2,7 +2,6 @@ package paxos
 
 import (
 	"dlog"
-	"encoding/binary"
 	"fastrpc"
 	"genericsmr"
 	"genericsmrproto"
@@ -47,6 +46,8 @@ type Replica struct {
 	flush                 bool
 	executedUpTo          int32
 	batchWait             int
+	emulatedSS            bool
+	emulatedWriteTime     time.Duration
 }
 
 type InstanceStatus int
@@ -76,7 +77,7 @@ type LeaderBookkeeping struct {
 	lastTriedBallot int32           // highest ballot tried so far
 }
 
-func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string) *Replica {
+func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration) *Replica {
 	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -96,7 +97,9 @@ func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec
 		0,
 		true,
 		-1,
-		batchWait}
+		batchWait,
+		emulatedSS,
+		emulatedWriteTime}
 
 	r.Durable = durable
 
@@ -122,7 +125,7 @@ func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec
 
 //append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
@@ -131,19 +134,9 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	r.StableStore.Write(b[:])
 }
 
-func (r *Replica) recordConfig(config int32) {
-	if !r.Durable {
-		return
-	}
-
-	var b [4]byte
-	binary.LittleEndian.PutUint32(b[0:4], uint32(config))
-	r.StableStore.Write(b[:])
-}
-
 //write a sequence of commands to stable storage
 func (r *Replica) recordCommands(cmds []state.Command) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
@@ -160,8 +153,13 @@ func (r *Replica) sync() {
 	if !r.Durable {
 		return
 	}
+	dlog.Println("synced")
 
-	r.StableStore.Sync()
+	if r.emulatedSS {
+		time.Sleep(r.emulatedWriteTime)
+	} else {
+		_ = r.StableStore.Sync()
+	}
 }
 
 /* RPC to be called by master */

@@ -47,6 +47,8 @@ type Replica struct {
 	skipsWaiting             int
 	counter                  int
 	skippedTo                []int32
+	emulatedWriteTime        time.Duration
+	emulatedSS               bool
 }
 
 type DelayedSkip struct {
@@ -80,7 +82,7 @@ type LeaderBookkeeping struct {
 	nacks          int
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration) *Replica {
 	skippedTo := make([]int32, len(peerAddrList))
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
@@ -105,7 +107,10 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		false,
 		0,
 		0,
-		skippedTo}
+		skippedTo,
+		emulatedWriteTime,
+		emulatedSS,
+	}
 
 	r.Durable = durable
 
@@ -123,7 +128,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 
 //append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
@@ -141,7 +146,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 
 //write a sequence of commands to stable storage
 func (r *Replica) recordCommand(cmd []state.Command) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
@@ -154,12 +159,19 @@ func (r *Replica) recordCommand(cmd []state.Command) {
 }
 
 //sync with the stable store
+
+//sync with the stable store
 func (r *Replica) sync() {
 	if !r.Durable {
 		return
 	}
+	dlog.Println("synced")
 
-	r.StableStore.Sync()
+	if r.emulatedSS {
+		time.Sleep(r.emulatedWriteTime)
+	} else {
+		_ = r.StableStore.Sync()
+	}
 }
 
 func (r *Replica) replyPrepare(replicaId int32, reply *menciusproto.PrepareReply) {

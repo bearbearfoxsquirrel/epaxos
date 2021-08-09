@@ -214,7 +214,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 
 //append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
@@ -233,7 +233,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 
 //write a sequence of commands to stable storage
 func (r *Replica) recordCommands(cmds []state.Command) {
-	if !r.Durable {
+	if !r.Durable || r.emulatedSS {
 		return
 	}
 
