@@ -85,6 +85,7 @@ type Replica struct {
 	Stats *genericsmrproto.Stats
 
 	lastHeardFrom []time.Time
+	deadTime      int32
 }
 
 /* Client API */
@@ -422,7 +423,7 @@ func (r *Replica) CalculateAlive() {
 			continue
 		} else {
 			timeSinceLastMsg := time.Now().Sub(r.lastHeardFrom[i])
-			if timeSinceLastMsg > time.Millisecond*1000 {
+			if timeSinceLastMsg > time.Millisecond*time.Duration(r.deadTime) {
 				r.Alive[i] = false
 			}
 		}
@@ -551,7 +552,7 @@ func (r *Replica) ComputeClosestPeers() {
 
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string, deadTime int32) *Replica {
 	r := &Replica{
 		len(peerAddrList),
 		int32(id),
@@ -583,7 +584,8 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		make([]int64, len(peerAddrList)),
 		sync.Mutex{},
 		&genericsmrproto.Stats{make(map[string]int)},
-		make([]time.Time, len(peerAddrList))}
+		make([]time.Time, len(peerAddrList)),
+		deadTime}
 
 	storage = storageParentDir
 

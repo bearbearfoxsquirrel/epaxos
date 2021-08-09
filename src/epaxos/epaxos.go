@@ -133,9 +133,9 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool, deadTime int32) *Replica {
 	r := &Replica{
-		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir),
+		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir, deadTime),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
