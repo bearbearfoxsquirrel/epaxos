@@ -203,8 +203,6 @@ func (r *Replica) run() {
 
 	r.ConnectToPeers()
 
-	r.RandomisePeerOrder()
-
 	if r.Exec {
 		go r.executeCommands()
 	}
@@ -312,6 +310,9 @@ func (r *Replica) bcastPrepare(instance int32) {
 
 	n := r.N - 1
 
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
+
 	sent := 0
 	for q := 0; q < r.N-1; q++ {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
@@ -341,6 +342,9 @@ func (r *Replica) bcastAccept(instance int32) {
 	args := &pa
 
 	n := r.N - 1
+
+	r.CalculateAlive()
+	r.RandomisePeerOrder()
 
 	sent := 0
 	for q := 0; q < r.N-1; q++ {
