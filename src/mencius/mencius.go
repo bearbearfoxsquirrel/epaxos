@@ -66,14 +66,14 @@ const (
 type Instance struct {
 	skipped       bool
 	nbInstSkipped int
-	command       *state.Command
+	command       []state.Command
 	ballot        int32
 	status        InstanceStatus
 	lb            *LeaderBookkeeping
 }
 
 type LeaderBookkeeping struct {
-	clientProposal *genericsmr.Propose
+	clientProposal []*genericsmr.Propose
 	maxRecvBallot  int32
 	prepareOKs     int
 	acceptOKs      int
@@ -140,7 +140,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 }
 
 //write a sequence of commands to stable storage
-func (r *Replica) recordCommand(cmd *state.Command) {
+func (r *Replica) recordCommand(cmd []state.Command) {
 	if !r.Durable {
 		return
 	}
@@ -148,7 +148,9 @@ func (r *Replica) recordCommand(cmd *state.Command) {
 	if cmd == nil {
 		return
 	}
-	cmd.Marshal(io.Writer(r.StableStore))
+	for i := 0; i < len(cmd); i++ {
+		cmd[i].Marshal(io.Writer(r.StableStore))
+	}
 }
 
 //sync with the stable store
@@ -333,7 +335,7 @@ func (r *Replica) bcastPrepare(instance int32, ballot int32) {
 
 var ma menciusproto.Accept
 
-func (r *Replica) bcastAccept(instance int32, ballot int32, skip uint8, nbInstToSkip int32, command state.Command) {
+func (r *Replica) bcastAccept(instance int32, ballot int32, skip uint8, nbInstToSkip int32, command []state.Command) {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("Accept bcast failed:", err)
@@ -397,7 +399,7 @@ func (r *Replica) bcastAccept(instance int32, ballot int32, skip uint8, nbInstTo
 
 var mc menciusproto.Commit
 
-func (r *Replica) bcastCommit(instance int32, skip uint8, nbInstToSkip int32, command state.Command) {
+func (r *Replica) bcastCommit(instance int32, skip uint8, nbInstToSkip int32, command []state.Command) {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("Commit bcast failed:", err)
@@ -432,18 +434,30 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	instNo := r.crtInstance
 	r.crtInstance += int32(r.N)
 
+	batchSize := len(r.ProposeChan) + 1
+
+	cmds := make([]state.Command, batchSize)
+	proposals := make([]*genericsmr.Propose, batchSize)
+	cmds[0] = propose.Command
+	proposals[0] = propose
+	for i := 1; i < batchSize; i++ {
+		prop := <-r.ProposeChan
+		cmds[i] = prop.Command
+		proposals[i] = prop
+	}
+
 	r.instanceSpace[instNo] = &Instance{false,
 		0,
-		&propose.Command,
+		cmds,
 		r.makeBallotLargerThan(0),
 		ACCEPTED,
-		&LeaderBookkeeping{propose, 0, 0, 0, 0}}
+		&LeaderBookkeeping{proposals, 0, 0, 0, 0}}
 
 	r.recordInstanceMetadata(r.instanceSpace[instNo])
-	r.recordCommand(&propose.Command)
+	r.recordCommand(cmds)
 	r.sync()
 
-	r.bcastAccept(instNo, r.instanceSpace[instNo].ballot, FALSE, 0, propose.Command)
+	r.bcastAccept(instNo, r.instanceSpace[instNo].ballot, FALSE, 0, cmds)
 	dlog.Printf("Choosing req. %d in instance %d\n", propose.CommandId, instNo)
 }
 
@@ -467,7 +481,7 @@ func (r *Replica) handlePrepare(prepare *menciusproto.Prepare) {
 			-1,
 			FALSE,
 			0,
-			state.Command{state.NONE, 0, state.NIL()}})
+			state.NOOP()})
 
 		r.instanceSpace[prepare.Instance] = &Instance{false,
 			0,
@@ -481,7 +495,7 @@ func (r *Replica) handlePrepare(prepare *menciusproto.Prepare) {
 			ok = FALSE
 		}
 		if inst.command == nil {
-			inst.command = &state.Command{state.NONE, 0, state.NIL()}
+			inst.command = state.NOOP() //&state.Command{state.NONE, 0, state.NIL()}
 		}
 		skipped := FALSE
 		if inst.skipped {
@@ -492,7 +506,7 @@ func (r *Replica) handlePrepare(prepare *menciusproto.Prepare) {
 			inst.ballot,
 			skipped,
 			int32(inst.nbInstSkipped),
-			*inst.command})
+			inst.command})
 	}
 }
 
@@ -544,23 +558,23 @@ func (r *Replica) handleAccept(accept *menciusproto.Accept) {
 		}
 		r.instanceSpace[accept.Instance] = &Instance{skip,
 			int(accept.NbInstancesToSkip),
-			&accept.Command,
+			accept.Command,
 			accept.Ballot,
 			ACCEPTED,
 			nil}
 		r.recordInstanceMetadata(r.instanceSpace[accept.Instance])
-		r.recordCommand(&accept.Command)
+		r.recordCommand(accept.Command)
 		r.sync()
 
 		r.replyAccept(accept.LeaderId, &menciusproto.AcceptReply{accept.Instance, TRUE, -1, skipStart, skipEnd})
 	} else {
 		if inst.status == COMMITTED || inst.status == EXECUTED {
 			if inst.command == nil {
-				inst.command = &accept.Command
+				inst.command = accept.Command
 			}
 			dlog.Printf("ATTENTION! Reordered Commit\n")
 		} else {
-			inst.command = &accept.Command
+			inst.command = accept.Command
 			inst.ballot = accept.Ballot
 			inst.status = ACCEPTED
 			inst.skipped = false
@@ -625,7 +639,9 @@ func (r *Replica) handleCommit(commit *menciusproto.Commit) {
 		inst.nbInstSkipped = int(commit.NbInstancesToSkip)
 		if inst.lb != nil && inst.lb.clientProposal != nil {
 			// try command in the next available instance
-			r.ProposeChan <- inst.lb.clientProposal
+			for i := 0; i < len(inst.lb.clientProposal); i++ {
+				r.ProposeChan <- inst.lb.clientProposal[i]
+			}
 			inst.lb.clientProposal = nil
 		}
 	}
@@ -656,7 +672,7 @@ func (r *Replica) handlePrepareReply(preply *menciusproto.PrepareReply) {
 		inst.lb.prepareOKs++
 
 		if preply.Ballot > inst.lb.maxRecvBallot {
-			inst.command = &preply.Command
+			inst.command = preply.Command
 			inst.skipped = false
 			if preply.Skip == TRUE {
 				inst.skipped = true
@@ -672,7 +688,7 @@ func (r *Replica) handlePrepareReply(preply *menciusproto.PrepareReply) {
 			if inst.skipped {
 				skip = TRUE
 			}
-			r.bcastAccept(preply.Instance, inst.ballot, skip, int32(inst.nbInstSkipped), *inst.command)
+			r.bcastAccept(preply.Instance, inst.ballot, skip, int32(inst.nbInstSkipped), inst.command)
 		}
 	} else {
 		// TODO: there is probably another active leader
@@ -770,9 +786,18 @@ func (r *Replica) updateBlocking(instance int32) {
 				inst.status = COMMITTED
 				if inst.lb.clientProposal != nil && !r.Dreply {
 					// give client the all clear
-					dlog.Printf("Sending ACK for req. %d\n", inst.lb.clientProposal.CommandId)
-					r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal.CommandId, state.NIL(), inst.lb.clientProposal.Timestamp},
-						inst.lb.clientProposal.Reply, inst.lb.clientProposal.Mutex)
+					for i := 0; i < len(inst.lb.clientProposal); i++ {
+						dlog.Printf("Sending ACK for req. %d\n", inst.lb.clientProposal[i].CommandId)
+						propreply := &genericsmrproto.ProposeReplyTS{
+							TRUE,
+							inst.lb.clientProposal[i].CommandId,
+							state.NIL(),
+							inst.lb.clientProposal[i].Timestamp}
+						r.ReplyProposeTS(propreply, inst.lb.clientProposal[i].Reply, inst.lb.clientProposal[i].Mutex)
+					}
+
+					//		r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal.CommandId, state.NIL(), inst.lb.clientProposal.Timestamp},
+					//		inst.lb.clientProposal.Reply, inst.lb.clientProposal.Mutex)
 				}
 				skip := FALSE
 				if inst.skipped {
@@ -782,7 +807,7 @@ func (r *Replica) updateBlocking(instance int32) {
 				r.recordInstanceMetadata(inst)
 				r.sync()
 
-				r.bcastCommit(r.blockingInstance, skip, int32(inst.nbInstSkipped), *inst.command)
+				r.bcastCommit(r.blockingInstance, skip, int32(inst.nbInstSkipped), inst.command)
 			} else if inst.status != COMMITTED && inst.status != EXECUTED {
 				return
 			}
@@ -829,13 +854,16 @@ func (r *Replica) executeCommands() {
 					if r.instanceSpace[i].command == nil {
 						break
 					}
-					confInst, present := conflicts[r.instanceSpace[i].command.K]
-					if present && r.instanceSpace[confInst].status != EXECUTED {
-						break
+					for j := 0; j < len(r.instanceSpace[i].command); j++ {
+						confInst, present := conflicts[r.instanceSpace[i].command[j].K]
+						if present && r.instanceSpace[confInst].status != EXECUTED {
+							break
+						}
+						conflicts[r.instanceSpace[i].command[j].K] = i
+						jump = true
+						continue
 					}
-					conflicts[r.instanceSpace[i].command.K] = i
-					jump = true
-					continue
+
 				} else {
 					break
 				}
@@ -853,20 +881,24 @@ func (r *Replica) executeCommands() {
 			for inst.command == nil {
 				time.Sleep(1000 * 1000)
 			}
-			confInst, present := conflicts[inst.command.K]
-			if present && confInst < i && r.instanceSpace[confInst].status != EXECUTED && state.Conflict(r.instanceSpace[confInst].command, inst.command) {
-				break
+
+			for j := 0; j < len(inst.command); j++ {
+				confInst, present := conflicts[inst.command[j].K]
+				if present && confInst < i && r.instanceSpace[confInst].status != EXECUTED && state.Conflict(&r.instanceSpace[confInst].command[j], &inst.command[j]) {
+					break
+				}
+
+				if r.Dreply && inst.lb != nil && inst.lb.clientProposal != nil {
+					val := inst.command[j].Execute(r.State)
+					dlog.Printf("Sending ACK for req. %d\n", inst.lb.clientProposal[j].CommandId)
+					r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal[j].CommandId, val, inst.lb.clientProposal[j].Timestamp},
+						inst.lb.clientProposal[j].Reply,
+						inst.lb.clientProposal[j].Mutex)
+				} else if inst.command[j].Op == state.PUT {
+					inst.command[j].Execute(r.State)
+				}
 			}
 
-			if r.Dreply && inst.lb != nil && inst.lb.clientProposal != nil {
-				val := inst.command.Execute(r.State)
-				dlog.Printf("Sending ACK for req. %d\n", inst.lb.clientProposal.CommandId)
-				r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal.CommandId, val, inst.lb.clientProposal.Timestamp},
-					inst.lb.clientProposal.Reply,
-					inst.lb.clientProposal.Mutex)
-			} else if inst.command.Op == state.PUT {
-				inst.command.Execute(r.State)
-			}
 			inst.status = EXECUTED
 
 			executed = true
@@ -891,7 +923,7 @@ func (r *Replica) forceCommit() {
 		if r.instanceSpace[problemInstance] == nil {
 			r.instanceSpace[problemInstance] = &Instance{true,
 				NB_INST_TO_SKIP,
-				&state.Command{state.NONE, 0, state.NIL()},
+				state.NOOP(), //&state.Command{state.NONE, 0, state.NIL()},
 				r.makeUniqueBallot(1),
 				PREPARING,
 				&LeaderBookkeeping{nil, 0, 0, 0, 0}}

@@ -22,7 +22,7 @@ type PrepareReply struct {
 	Ballot            int32
 	Skip              uint8
 	NbInstancesToSkip int32
-	Command           state.Command
+	Command           []state.Command
 }
 
 type Accept struct {
@@ -31,7 +31,7 @@ type Accept struct {
 	Ballot            int32
 	Skip              uint8
 	NbInstancesToSkip int32
-	Command           state.Command
+	Command           []state.Command
 }
 
 type AcceptReply struct {

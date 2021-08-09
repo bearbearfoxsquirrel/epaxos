@@ -1,8 +1,11 @@
 package menciusproto
 
 import (
+	"bufio"
+	"encoding/binary"
 	"fastrpc"
 	"io"
+	"state"
 	"sync"
 )
 
@@ -11,6 +14,11 @@ func (t *Skip) New() fastrpc.Serializable {
 }
 func (t *Skip) BinarySize() (nbytes int, sizeKnown bool) {
 	return 12, true
+}
+
+type byteReader interface {
+	io.Reader
+	ReadByte() (c byte, err error)
 }
 
 type SkipCache struct {
@@ -206,13 +214,30 @@ func (t *PrepareReply) Marshal(wire io.Writer) {
 	bs[12] = byte(tmp32 >> 16)
 	bs[13] = byte(tmp32 >> 24)
 	wire.Write(bs)
-	t.Command.Marshal(wire)
+	//	t.Command.Marshal(wire)
+
+	//	wire.Write(bs)
+	bs = b[:]
+	alen1 := int64(len(t.Command))
+	if wlen := binary.PutVarint(bs, alen1); wlen >= 0 {
+		wire.Write(b[0:wlen])
+	}
+	for i := int64(0); i < alen1; i++ {
+		t.Command[i].Marshal(wire)
+	}
 }
 
-func (t *PrepareReply) Unmarshal(wire io.Reader) error {
+func (t *PrepareReply) Unmarshal(rr io.Reader) error {
 	var b [14]byte
 	var bs []byte
 	bs = b[:14]
+
+	var wire byteReader
+	var ok bool
+	if wire, ok = rr.(byteReader); !ok {
+		wire = bufio.NewReader(rr)
+	}
+
 	if _, err := io.ReadAtLeast(wire, bs, 14); err != nil {
 		return err
 	}
@@ -221,7 +246,16 @@ func (t *PrepareReply) Unmarshal(wire io.Reader) error {
 	t.Ballot = int32((uint32(bs[5]) | (uint32(bs[6]) << 8) | (uint32(bs[7]) << 16) | (uint32(bs[8]) << 24)))
 	t.Skip = uint8(bs[9])
 	t.NbInstancesToSkip = int32((uint32(bs[10]) | (uint32(bs[11]) << 8) | (uint32(bs[12]) << 16) | (uint32(bs[13]) << 24)))
-	t.Command.Unmarshal(wire)
+	//t.Command.Unmarshal(wire)
+
+	alen1, err := binary.ReadVarint(wire)
+	if err != nil {
+		return err
+	}
+	t.Command = make([]state.Command, alen1)
+	for i := int64(0); i < alen1; i++ {
+		t.Command[i].Unmarshal(wire)
+	}
 	return nil
 }
 
@@ -287,13 +321,29 @@ func (t *Accept) Marshal(wire io.Writer) {
 	bs[15] = byte(tmp32 >> 16)
 	bs[16] = byte(tmp32 >> 24)
 	wire.Write(bs)
-	t.Command.Marshal(wire)
+	//	t.Command.Marshal(wire)
+	bs = b[:]
+
+	alen1 := int64(len(t.Command))
+	if wlen := binary.PutVarint(bs, alen1); wlen >= 0 {
+		wire.Write(b[0:wlen])
+	}
+	for i := int64(0); i < alen1; i++ {
+		t.Command[i].Marshal(wire)
+	}
 }
 
-func (t *Accept) Unmarshal(wire io.Reader) error {
+func (t *Accept) Unmarshal(rr io.Reader) error {
 	var b [17]byte
 	var bs []byte
 	bs = b[:17]
+
+	var wire byteReader
+	var ok bool
+	if wire, ok = rr.(byteReader); !ok {
+		wire = bufio.NewReader(rr)
+	}
+
 	if _, err := io.ReadAtLeast(wire, bs, 17); err != nil {
 		return err
 	}
@@ -302,7 +352,16 @@ func (t *Accept) Unmarshal(wire io.Reader) error {
 	t.Ballot = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
 	t.Skip = uint8(bs[12])
 	t.NbInstancesToSkip = int32((uint32(bs[13]) | (uint32(bs[14]) << 8) | (uint32(bs[15]) << 16) | (uint32(bs[16]) << 24)))
-	t.Command.Unmarshal(wire)
+	//	t.Command.Unmarshal(wire)
+
+	alen1, err := binary.ReadVarint(wire)
+	if err != nil {
+		return err
+	}
+	t.Command = make([]state.Command, alen1)
+	for i := int64(0); i < alen1; i++ {
+		t.Command[i].Unmarshal(wire)
+	}
 	return nil
 }
 
