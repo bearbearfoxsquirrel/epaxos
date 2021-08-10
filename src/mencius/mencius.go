@@ -49,6 +49,7 @@ type Replica struct {
 	skippedTo                []int32
 	emulatedWriteTime        time.Duration
 	emulatedSS               bool
+	batchWait                int
 }
 
 type DelayedSkip struct {
@@ -82,7 +83,7 @@ type LeaderBookkeeping struct {
 	nacks          int
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int) *Replica {
 	skippedTo := make([]int32, len(peerAddrList))
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
@@ -110,6 +111,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		skippedTo,
 		emulatedWriteTime,
 		emulatedSS,
+		batchwait,
 	}
 
 	r.Durable = durable
@@ -187,7 +189,21 @@ func (r *Replica) replyAccept(replicaId int32, reply *menciusproto.AcceptReply) 
 /* Main event processing loop */
 var lastSeenInstance int32
 
+var fastClockChan chan bool
+
+func (r *Replica) fastClock() {
+	for !r.Shutdown {
+		time.Sleep(time.Duration(r.batchWait) * time.Millisecond) // ms
+		fastClockChan <- true
+	}
+}
+
+func (r *Replica) BatchingEnabled() bool {
+	return r.batchWait > 0
+}
+
 func (r *Replica) run() {
+
 	r.ConnectToPeers()
 
 	r.RandomisePeerOrder()
@@ -199,6 +215,7 @@ func (r *Replica) run() {
 	go r.clock()
 
 	go r.WaitForClientConnections()
+	onOffProposeChan := r.ProposeChan
 
 	for !r.Shutdown {
 
@@ -263,10 +280,18 @@ func (r *Replica) run() {
 			}
 			break
 
-		case propose := <-r.ProposeChan:
+		case propose := <-onOffProposeChan:
 			//got a Propose from a client
 			dlog.Printf("Proposal with id %d\n", propose.CommandId)
 			r.handlePropose(propose)
+			if r.BatchingEnabled() {
+				onOffProposeChan = nil
+			}
+			break
+
+		case <-fastClockChan:
+			//activate new proposals channel
+			onOffProposeChan = r.ProposeChan
 			break
 
 		}

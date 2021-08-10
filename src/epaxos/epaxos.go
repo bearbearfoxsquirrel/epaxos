@@ -312,9 +312,9 @@ func (r Replica) replicaLoop() {
 				doner <- struct{}{}
 			}()
 		}*/
+	onOffProposeChan := r.ProposeChan
 
 	for !r.Shutdown {
-		onOffProposeChan := r.ProposeChan
 
 		select {
 		//case <-doner:
