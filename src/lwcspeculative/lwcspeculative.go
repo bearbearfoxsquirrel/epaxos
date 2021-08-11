@@ -91,6 +91,7 @@ type Replica struct {
 	commitCatchUp              bool
 	commitExecComp             *CommitExecutionComparator.CommitExecutionComparator
 	cmpCommitExec              bool
+	maxBatchedProposalVals     int
 }
 
 type TimeoutInfo struct {
@@ -329,53 +330,54 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool, cmpCmtExecLoc string, commitCatchUp bool, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool, cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
-		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
-		configChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		prepareChan:         make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		acceptChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		commitChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		commitShortChan:     make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		prepareReplyChan:    make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		acceptReplyChan:     make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
-		prepareRPC:          0,
-		acceptRPC:           0,
-		commitRPC:           0,
-		commitShortRPC:      0,
-		prepareReplyRPC:     0,
-		acceptReplyRPC:      0,
-		instanceSpace:       make([]*Instance, 15*1024*1024),
-		crtInstance:         -1, //get from storage
-		crtConfig:           1,
-		Shutdown:            false,
-		counter:             0,
-		flush:               true,
-		executedUpTo:        -1, //get from storage
-		batchWait:           batchWait,
-		maxBalInc:           10000,
-		maxOpenInstances:    maxOpenInstances,
-		crtOpenedInstances:  make([]int32, maxOpenInstances),
-		proposableInstances: make(chan ProposalInfo, MAXPROPOSABLEINST),
-		noopWaitUs:          noopwait,
-		retryInstance:       retryInstances,
-		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac),
-		alwaysNoop:          alwaysNoop,
-		fastLearn:           false,
-		timeoutRetry:        make(chan TimeoutInfo, 1000),
-		whoCrash:            whoCrash,
-		whenCrash:           whenCrash,
-		howLongCrash:        howlongCrash,
-		initalProposalWait:  initalProposalWait,
-		emulatedSS:          emulatedSS,
-		emulatedWriteTime:   emulatedWriteTime,
-		catchingUp:          false,
-		catchUpBatchSize:    catchupBatchSize,
-		timeout:             timeout,
-		flushCommit:         flushCommit,
-		commitCatchUp:       commitCatchUp,
-		cmpCommitExec:       cmpCmtExec,
+		Replica:                genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
+		configChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareChan:            make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitShortChan:        make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareReplyChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptReplyChan:        make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
+		prepareRPC:             0,
+		acceptRPC:              0,
+		commitRPC:              0,
+		commitShortRPC:         0,
+		prepareReplyRPC:        0,
+		acceptReplyRPC:         0,
+		instanceSpace:          make([]*Instance, 15*1024*1024),
+		crtInstance:            -1, //get from storage
+		crtConfig:              1,
+		Shutdown:               false,
+		counter:                0,
+		flush:                  true,
+		executedUpTo:           -1, //get from storage
+		batchWait:              batchWait,
+		maxBalInc:              10000,
+		maxOpenInstances:       maxOpenInstances,
+		crtOpenedInstances:     make([]int32, maxOpenInstances),
+		proposableInstances:    make(chan ProposalInfo, MAXPROPOSABLEINST),
+		noopWaitUs:             noopwait,
+		retryInstance:          retryInstances,
+		BackoffManager:         NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac),
+		alwaysNoop:             alwaysNoop,
+		fastLearn:              false,
+		timeoutRetry:           make(chan TimeoutInfo, 1000),
+		whoCrash:               whoCrash,
+		whenCrash:              whenCrash,
+		howLongCrash:           howlongCrash,
+		initalProposalWait:     initalProposalWait,
+		emulatedSS:             emulatedSS,
+		emulatedWriteTime:      emulatedWriteTime,
+		catchingUp:             false,
+		catchUpBatchSize:       catchupBatchSize,
+		timeout:                timeout,
+		flushCommit:            flushCommit,
+		commitCatchUp:          commitCatchUp,
+		cmpCommitExec:          cmpCmtExec,
+		maxBatchedProposalVals: maxProposalVals,
 	}
 	r.ringCommit = true
 
@@ -686,7 +688,8 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 			switch cliProp := r.clientValueQueue.TryDequeue(); {
 			case cliProp != nil:
 				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := numEnqueued
+				//batchSize := numEnqueued
+				batchSize := min(numEnqueued, r.maxBatchedProposalVals)
 				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
 				pbk.cmds = make([]state.Command, batchSize)
 				pbk.clientProposals[0] = cliProp
@@ -1401,6 +1404,14 @@ func (r *Replica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 	}
 }
 
+func min(x, y int) int {
+	if x <= y {
+		return x
+	} else {
+		return y
+	}
+}
+
 func (r *Replica) propose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
@@ -1420,12 +1431,12 @@ func (r *Replica) propose(inst int32) {
 		switch cliProp := r.clientValueQueue.TryDequeue(); {
 		case cliProp != nil:
 			numEnqueued := r.clientValueQueue.Len() + 1
-			batchSize := numEnqueued
+			batchSize := min(numEnqueued, r.maxBatchedProposalVals)
 			pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
 			pbk.cmds = make([]state.Command, batchSize)
 			pbk.clientProposals[0] = cliProp
 			pbk.cmds[0] = cliProp.Command
-
+			//batched := 0
 			for i := 1; i < batchSize; i++ {
 				cliProp = r.clientValueQueue.TryDequeue()
 				if cliProp == nil {
