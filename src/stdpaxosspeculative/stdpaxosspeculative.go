@@ -682,9 +682,16 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 				dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
 				break
 			default:
-				pbk.cmds = state.NOOP()
-				dlog.Println("Proposing noop")
-				break
+				if r.shouldNoop(proposalInfo.inst) {
+					pbk.cmds = state.NOOP()
+					dlog.Println("Proposing noop")
+					break
+				} else {
+					go func() {
+						r.proposableInstances <- proposalInfo
+					}()
+					return
+				}
 			}
 		} else {
 			whoseCmds = pbk.whoseCmds
@@ -1332,8 +1339,13 @@ func (r *Replica) propose(inst int32) {
 				}(inst, pbk.curBal)
 				return
 			} else {
-				pbk.cmds = state.NOOP()
-				dlog.Println("Proposing noop")
+				if r.shouldNoop(inst) {
+					pbk.cmds = state.NOOP()
+					dlog.Println("Proposing noop")
+				} else {
+					return
+				}
+
 			}
 		}
 	} else {
@@ -1353,6 +1365,19 @@ func (r *Replica) propose(inst int32) {
 		r.bcastAccept(inst)
 		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
 	}
+}
+
+func (r *Replica) shouldNoop(inst int32) bool {
+	if r.alwaysNoop {
+		return true
+	}
+
+	for i := inst + 1; i < r.crtInstance; i++ {
+		if r.instanceSpace[i].abk.status == COMMITTED {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {
