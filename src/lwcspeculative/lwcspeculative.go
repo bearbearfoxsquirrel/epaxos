@@ -711,6 +711,8 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 					break
 				} else {
 					go func() {
+						timer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
+						<-timer.C
 						r.proposableInstances <- proposalInfo
 					}()
 					return
