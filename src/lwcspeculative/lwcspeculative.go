@@ -1424,64 +1424,51 @@ func (r *Replica) propose(inst int32) {
 	whoseCmds := int32(-1)
 	if pbk.maxAcceptedConfBal.IsZero() {
 		whoseCmds = r.Id
-		//if r.initalProposalWait > 0 {
-		//	time.Sleep(r.initalProposalWait)
-		//}
-
 		if r.initalProposalWait > 0 {
-			go func(inst int32, confBal lwcproto.ConfigBal) {
-				timer := time.NewTimer(r.initalProposalWait)
-				<-timer.C
-				r.proposableInstances <- ProposalInfo{
-					inst:             inst,
-					proposingConfBal: confBal,
+			time.Sleep(r.initalProposalWait)
+		}
+
+		switch cliProp := r.clientValueQueue.TryDequeue(); {
+		case cliProp != nil:
+			numEnqueued := r.clientValueQueue.Len() + 1
+			batchSize := min(numEnqueued, r.maxBatchedProposalVals)
+			pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
+			pbk.cmds = make([]state.Command, batchSize)
+			pbk.clientProposals[0] = cliProp
+			pbk.cmds[0] = cliProp.Command
+			//batched := 0
+			for i := 1; i < batchSize; i++ {
+				cliProp = r.clientValueQueue.TryDequeue()
+				if cliProp == nil {
+					pbk.clientProposals = pbk.clientProposals[:i]
+					pbk.cmds = pbk.cmds[:i]
+					break
 				}
-			}(inst, pbk.propCurConfBal)
-			return
-		} else {
-			switch cliProp := r.clientValueQueue.TryDequeue(); {
-			case cliProp != nil:
-				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := min(numEnqueued, r.maxBatchedProposalVals)
-				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
-				pbk.cmds = make([]state.Command, batchSize)
-				pbk.clientProposals[0] = cliProp
-				pbk.cmds[0] = cliProp.Command
-				//batched := 0
-				for i := 1; i < batchSize; i++ {
-					cliProp = r.clientValueQueue.TryDequeue()
-					if cliProp == nil {
-						pbk.clientProposals = pbk.clientProposals[:i]
-						pbk.cmds = pbk.cmds[:i]
-						break
+				pbk.clientProposals[i] = cliProp
+				pbk.cmds[i] = cliProp.Command
+			}
+			dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
+			break
+		default:
+			if r.noopWaitUs > 0 {
+				go func(inst int32, confBal lwcproto.ConfigBal) {
+					timer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
+					<-timer.C
+					r.proposableInstances <- ProposalInfo{
+						inst:             inst,
+						proposingConfBal: confBal,
 					}
-					pbk.clientProposals[i] = cliProp
-					pbk.cmds[i] = cliProp.Command
-				}
-				dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
-				break
-			default:
-				if r.noopWaitUs > 0 {
-					go func(inst int32, confBal lwcproto.ConfigBal) {
-						timer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
-						<-timer.C
-						r.proposableInstances <- ProposalInfo{
-							inst:             inst,
-							proposingConfBal: confBal,
-						}
-					}(inst, pbk.propCurConfBal)
-					return
+				}(inst, pbk.propCurConfBal)
+				return
+			} else {
+				if r.shouldNoop(inst) {
+					pbk.cmds = state.NOOP()
+					dlog.Println("Proposing noop")
 				} else {
-					if r.shouldNoop(inst) {
-						pbk.cmds = state.NOOP()
-						dlog.Println("Proposing noop")
-					} else {
-						return
-					}
+					return
 				}
 			}
 		}
-
 	} else {
 
 		whoseCmds = pbk.whoseCmds
