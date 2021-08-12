@@ -213,6 +213,7 @@ func (r *Replica) run() {
 	}
 
 	go r.clock()
+	go r.fastClock()
 
 	go r.WaitForClientConnections()
 	onOffProposeChan := r.ProposeChan
