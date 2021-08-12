@@ -87,6 +87,7 @@ type Replica struct {
 	nextRecoveryBatchPoint     int32
 	recoveringFrom             int32
 	commitCatchUp              bool
+	batchSize                  int
 }
 
 type TimeoutInfo struct {
@@ -327,7 +328,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
@@ -371,6 +372,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		timeout:             timeout,
 		flushCommit:         flushCommit,
 		commitCatchUp:       catchupCommit,
+		batchSize:           batchSize,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -663,7 +665,7 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 			switch cliProp := r.clientValueQueue.TryDequeue(); {
 			case cliProp != nil:
 				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := numEnqueued
+				batchSize := min(numEnqueued, r.batchSize)
 				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
 				pbk.cmds = make([]state.Command, batchSize)
 				pbk.clientProposals[0] = cliProp
@@ -1292,6 +1294,14 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	}
 }
 
+func min(x, y int) int {
+	if x <= y {
+		return x
+	} else {
+		return y
+	}
+}
+
 func (r *Replica) propose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
@@ -1319,7 +1329,7 @@ func (r *Replica) propose(inst int32) {
 			switch cliProp := r.clientValueQueue.TryDequeue(); {
 			case cliProp != nil:
 				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := numEnqueued
+				batchSize := min(numEnqueued, r.batchSize)
 				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
 				pbk.cmds = make([]state.Command, batchSize)
 				pbk.clientProposals[0] = cliProp

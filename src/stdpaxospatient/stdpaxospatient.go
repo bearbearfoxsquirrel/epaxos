@@ -92,6 +92,7 @@ type Replica struct {
 	nextRecoveryBatchPoint        int32
 	recoveringFrom                int32
 	commitCatchUp                 bool
+	maxBatchSize                  int
 }
 
 type ProposerStatus int
@@ -326,7 +327,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchup bool, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchup bool, deadTime int32, maxBatchSize int) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
@@ -371,6 +372,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		catchingUp:          false,
 		flushCommit:         flushCommit,
 		commitCatchUp:       commitCatchup,
+		maxBatchSize:        maxBatchSize,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -676,7 +678,7 @@ func (r *Replica) run() {
 				switch cliProp := r.clientValueQueue.TryDequeue(); {
 				case cliProp != nil:
 					numEnqueued := r.clientValueQueue.Len() + 1
-					batchSize := numEnqueued
+					batchSize := min(numEnqueued, r.maxBatchSize)
 					clientProposals := make([]*genericsmr.Propose, batchSize)
 					clientProposals[0] = cliProp
 
@@ -699,7 +701,7 @@ func (r *Replica) run() {
 			switch cliProp := r.clientValueQueue.TryDequeue(); {
 			case cliProp != nil:
 				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := numEnqueued
+				batchSize := min(numEnqueued, r.maxBatchSize)
 				clientProposals := make([]*genericsmr.Propose, batchSize)
 				clientProposals[0] = cliProp
 
@@ -750,6 +752,14 @@ func (r *Replica) tryNextAttempt(next RetryInfo) {
 		dlog.Printf("Proposing next conf-curBal %d.%d to instance %d\n", nextConfBal.Number, nextConfBal.PropID, next.InstToPrep)
 	} else {
 		dlog.Printf("Skipping retry of instance %d due to preempted again or closed\n", next.InstToPrep)
+	}
+}
+
+func min(x, y int) int {
+	if x <= y {
+		return x
+	} else {
+		return y
 	}
 }
 
@@ -1333,7 +1343,7 @@ func (r *Replica) propose(inst int32) {
 			switch cliProp := r.clientValueQueue.TryDequeue(); {
 			case cliProp != nil:
 				numEnqueued := r.clientValueQueue.Len() + 1
-				batchSize := numEnqueued
+				batchSize := min(numEnqueued, r.maxBatchSize)
 				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
 				pbk.cmds = make([]state.Command, batchSize)
 				pbk.clientProposals[0] = cliProp
