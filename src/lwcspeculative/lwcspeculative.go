@@ -1430,7 +1430,7 @@ func (r *Replica) propose(inst int32) {
 
 		if r.initalProposalWait > 0 {
 			go func(inst int32, confBal lwcproto.ConfigBal) {
-				timer := time.NewTimer(time.Duration(r.initalProposalWait) * time.Microsecond)
+				timer := time.NewTimer(r.initalProposalWait)
 				<-timer.C
 				r.proposableInstances <- ProposalInfo{
 					inst:             inst,
