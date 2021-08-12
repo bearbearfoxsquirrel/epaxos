@@ -1316,7 +1316,7 @@ func (r *Replica) propose(inst int32) {
 		whoseCmds = r.Id
 		/*	if r.initalProposalWait > 0 {
 			go func(inst int32, confBal stdpaxosproto.Ballot) {
-				timer := time.NewTimer(r.initalProposalWait)
+				timer := time.NewTimer(time.Duration(r.noopWaitUs) * time.Microsecond)
 				<-timer.C
 				r.proposableInstances <- ProposalInfo{
 					inst:             inst,
