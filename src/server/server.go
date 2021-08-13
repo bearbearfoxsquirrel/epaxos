@@ -90,6 +90,9 @@ var catchUpFallenBehind *bool = flag.Bool("catchupfallenbehind", false, "catch u
 var deadTime *int = flag.Int("deadtime", 5000, "time to take replica out of quorum (default 5 second)")
 var batchsize *int = flag.Int("batchsize", 1024, "max vals held in a proposal")
 
+var skipwaitms *int = flag.Int("skipwaitms", 350, "ms to wait before mencius skips")
+var maxoutstandingskips *int = flag.Int("maxoskips", 300, "max outstanding skips")
+
 func main() {
 	flag.Parse()
 
@@ -142,7 +145,7 @@ func main() {
 		rpc.Register(rep)
 	} else if *doMencius {
 		log.Println("Starting Mencius replica...")
-		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *batchWait)
+		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *batchWait, *skipwaitms, *maxoutstandingskips)
 		rpc.Register(rep)
 	} else if *doGpaxos {
 		log.Println("Starting Generalized Paxos replica...")

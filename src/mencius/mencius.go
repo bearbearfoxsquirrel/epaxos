@@ -50,6 +50,8 @@ type Replica struct {
 	emulatedWriteTime        time.Duration
 	emulatedSS               bool
 	batchWait                int
+	skipwait_ms              int
+	max_skips_awaiting       int
 }
 
 type DelayedSkip struct {
@@ -83,7 +85,7 @@ type LeaderBookkeeping struct {
 	nacks          int
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int) *Replica {
 	skippedTo := make([]int32, len(peerAddrList))
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
@@ -112,6 +114,8 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		emulatedWriteTime,
 		emulatedSS,
 		batchwait,
+		skipwaitMs,
+		maxSkipsAwaiting,
 	}
 
 	r.Durable = durable
@@ -549,7 +553,7 @@ func (r *Replica) handlePrepare(prepare *menciusproto.Prepare) {
 }
 
 func (r *Replica) timerHelper(ds *DelayedSkip) {
-	time.Sleep(WAIT_BEFORE_SKIP_MS * 1000 * 1000)
+	time.Sleep(time.Duration(r.skipwait_ms) * 1000 * 1000)
 	r.delayedSkipChan <- ds
 }
 
@@ -570,7 +574,7 @@ func (r *Replica) handleAccept(accept *menciusproto.Accept) {
 		if skipEnd > accept.Instance {
 			skipEnd -= int32(r.N)
 		}
-		if r.skipsWaiting < MAX_SKIPS_WAITING {
+		if r.skipsWaiting < r.max_skips_awaiting {
 			//start a timer, waiting for a propose to arrive and fill this hole
 			go r.timerHelper(&DelayedSkip{skipEnd})
 			//r.delayedSkipChan <- &DelayedSkip{accept, skipStart}
