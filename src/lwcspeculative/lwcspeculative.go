@@ -14,7 +14,9 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"os"
 	"state"
+	"strings"
 	"sync"
 	"time"
 )
@@ -92,6 +94,63 @@ type Replica struct {
 	commitExecComp             *CommitExecutionComparator.CommitExecutionComparator
 	cmpCommitExec              bool
 	maxBatchedProposalVals     int
+	stats                      ServerStats
+}
+
+type ServerStats struct {
+	register    map[string]int32
+	orderedKeys []string
+	statsFile   *os.File
+	C           chan struct{}
+}
+
+func ServerStatsNew(initalRegisters []string, loc string) ServerStats {
+	statsFile, _ := os.Create(loc)
+	register := make(map[string]int32)
+	for i := 0; i < len(initalRegisters); i++ {
+		register[initalRegisters[i]] = 0
+	}
+
+	return ServerStats{
+		register:    register,
+		statsFile:   statsFile,
+		orderedKeys: initalRegisters,
+		C:           make(chan struct{}),
+	}
+}
+
+func (s *ServerStats) Reset() {
+	for k, _ := range s.register {
+		s.register[k] = 0
+	}
+}
+
+func (s *ServerStats) Update(stat string, count int32) {
+	s.register[stat] = s.register[stat] + count
+}
+
+func (s *ServerStats) Get(stat string) int32 {
+	return s.register[stat]
+}
+
+func (s *ServerStats) Print() {
+	str := strings.Builder{}
+	for i := 0; i < len(s.orderedKeys); i++ {
+		k := s.orderedKeys[i]
+		v := s.register[k]
+		str.WriteString(fmt.Sprintf("%s : %d ", k, v))
+	}
+	str.WriteString("\n")
+	s.statsFile.WriteString(time.Now().Format("2006/01/02 15:04:05 ") + str.String())
+}
+
+func (s *ServerStats) GoClock() {
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			s.C <- struct{}{}
+		}
+	}()
 }
 
 type TimeoutInfo struct {
@@ -187,7 +246,7 @@ type RetryInfo struct {
 	attemptedConfBal lwcproto.ConfigBal
 	preempterConfBal lwcproto.ConfigBal
 	preempterAt      QuorumType
-	prevSoftExp      float64
+	prev             int32
 	timesPreempted   int32
 }
 
@@ -195,6 +254,7 @@ type BackoffInfo struct {
 	minBackoff     int32
 	maxInitBackoff int32
 	maxBackoff     int32
+	constBackoff   bool
 }
 
 type BackoffManager struct {
@@ -206,7 +266,7 @@ type BackoffManager struct {
 	softFac  bool
 }
 
-func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64, softFac bool) BackoffManager {
+func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64, softFac bool, constBackoff bool) BackoffManager {
 	if minBO > maxInitBO {
 		panic(fmt.Sprintf("minbackoff %d, maxinitbackoff %d, incorrectly set up", minBO, maxInitBO))
 	}
@@ -217,6 +277,7 @@ func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo
 			minBackoff:     minBO,
 			maxInitBackoff: maxInitBO,
 			maxBackoff:     maxBO,
+			constBackoff:   constBackoff,
 		},
 		sig:     signalChan,
 		factor:  factor,
@@ -254,29 +315,32 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal lwc
 	}
 
 	var preemptNum int32
-	var prev float64
+	var prev int32
 	if exists {
 		preemptNum = curBackoffInfo.timesPreempted + 1
-		prev = curBackoffInfo.prevSoftExp
+		prev = curBackoffInfo.prev
 	} else {
 		preemptNum = 0
-		//prev = 0.
-		prev = 0 //rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff//random//float64((rand.Int31() % bm.maxInitBackoff) + bm.minBackoff)
+		prev = 0
 	}
 
-	t := float64(preemptNum) + rand.Float64()
-	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(bm.factor*t))
-	tmp = tmp - prev
-	if !bm.softFac {
-		tmp = math.Max(tmp, 1)
+	var next int32
+	var tmp float64
+	if !bm.constBackoff {
+		t := float64(preemptNum) + rand.Float64()
+		tmp = math.Pow(2, t) //
+		if bm.softFac {
+			next = int32(tmp * math.Tanh(math.Sqrt(float64(bm.minBackoff)*t)))
+		} else {
+			next = int32(tmp * float64(bm.minBackoff)) //float64(rand.Int31n(bm.maxInitBackoff-bm.minBackoff+1)+bm.minBackoff))
+		}
+		next = next - prev //int32(tmp * float64() //+ rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff// bm.minBackoff
 	}
-	next := int32(tmp * float64(rand.Int31n(bm.maxInitBackoff-bm.minBackoff+1)+bm.minBackoff)) //+ rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff// bm.minBackoff
-	//if next > bm.maxBackoff {
-	//	next = bm.maxBackoff - prev
-	//}
-	//if next < bm.minBackoff {
-	//	next += bm.minBackoff
-	//}
+
+	if bm.constBackoff {
+		next = bm.minBackoff
+	}
+
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
@@ -287,7 +351,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal lwc
 		attemptedConfBal: attemptedConfBal,
 		preempterConfBal: preempter,
 		preempterAt:      prempterPhase,
-		prevSoftExp:      tmp - prev,
+		prev:             next,
 		timesPreempted:   preemptNum,
 	}
 
@@ -301,7 +365,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal lwc
 			attemptedConfBal: attempted,
 			preempterConfBal: preempterConfBal,
 			preempterAt:      preempterP,
-			prevSoftExp:      tmp - prev,
+			prev:             next,
 			timesPreempted:   numTimesBackedOff,
 		}
 	}(inst, attemptedConfBal, preempter, prempterPhase, next, preemptNum)
@@ -330,8 +394,13 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool, cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32,
+	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
+	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
+	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
+	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
+
 	r := &Replica{
 		Replica:                genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
 		configChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -361,7 +430,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		proposableInstances:    make(chan ProposalInfo, MAXPROPOSABLEINST),
 		noopWaitUs:             noopwait,
 		retryInstance:          retryInstances,
-		BackoffManager:         NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac),
+		BackoffManager:         NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac, constBackoff),
 		alwaysNoop:             alwaysNoop,
 		fastLearn:              false,
 		timeoutRetry:           make(chan TimeoutInfo, 1000),
@@ -378,6 +447,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		commitCatchUp:          commitCatchUp,
 		cmpCommitExec:          cmpCmtExec,
 		maxBatchedProposalVals: maxProposalVals,
+		stats:                  ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions"}, fmt.Sprintf("./server-%d-stats.txt", id)),
 	}
 	r.ringCommit = true
 
@@ -503,7 +573,8 @@ func (r *Replica) restart() {
 		}
 	}
 
-	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac)
+	r.stats.Reset()
+	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac, r.BackoffManager.constBackoff)
 	r.crtConfig++
 	r.recordNewConfig(r.crtConfig)
 	r.catchingUp = true
@@ -590,8 +661,14 @@ func (r *Replica) run() {
 		}()
 	}
 
+	r.stats.GoClock()
+
 	for !r.Shutdown {
 		select {
+		case <-r.stats.C:
+			r.stats.Print()
+			r.stats.Reset()
+			break
 		case <-doner:
 			dlog.Println("Crahsing")
 			time.Sleep(r.howLongCrash)
@@ -706,11 +783,13 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 					pbk.cmds[i] = cliProp.Command
 				}
 				dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
+				r.stats.Update("Proposed Instances with Values", 1)
 				break
 			default:
 				if r.shouldNoop(proposalInfo.inst) {
 					pbk.cmds = state.NOOP()
 					dlog.Println("Proposing noop")
+					r.stats.Update("Proposed Noops", 1)
 					break
 				} else {
 					go func() {
@@ -1108,6 +1187,7 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 		pbk.status = BACKING_OFF
 		if preemptingConfigBal.Ballot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingConfigBal.Ballot
+			r.stats.Update("Preemptions", 1)
 		}
 		return true
 	} else {
@@ -1459,6 +1539,8 @@ func (r *Replica) propose(inst int32) {
 					pbk.cmds[i] = cliProp.Command
 				}
 				dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
+				r.stats.Update("Proposed Instances with Values", 1)
+
 				break
 			default:
 				if r.noopWaitUs > 0 {
@@ -1475,6 +1557,7 @@ func (r *Replica) propose(inst int32) {
 					if r.shouldNoop(inst) {
 						pbk.cmds = state.NOOP()
 						dlog.Println("Proposing noop")
+						r.stats.Update("Proposed Noops", 1)
 					} else {
 						return
 					}
@@ -1507,9 +1590,13 @@ func (r *Replica) shouldNoop(inst int32) bool {
 	}
 
 	for i := inst + 1; i < r.crtInstance; i++ {
+		if r.instanceSpace[i].abk == nil {
+			continue
+		}
 		if r.instanceSpace[i].abk.status == COMMITTED {
 			return true
 		}
+
 	}
 	return false
 }

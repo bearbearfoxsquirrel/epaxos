@@ -183,7 +183,7 @@ type RetryInfo struct {
 	attemptedConfBal stdpaxosproto.Ballot
 	preempterConfBal stdpaxosproto.Ballot
 	preempterAt      QuorumType
-	prevSoftExp      float64
+	prev             int32
 	timesPreempted   int32
 }
 
@@ -196,13 +196,14 @@ type BackoffInfo struct {
 type BackoffManager struct {
 	currentBackoffs map[int32]RetryInfo
 	BackoffInfo
-	sig      *chan RetryInfo
-	factor   float64
-	mapMutex sync.RWMutex
-	softFac  bool
+	sig          *chan RetryInfo
+	factor       float64
+	mapMutex     sync.RWMutex
+	softFac      bool
+	constBackoff bool
 }
 
-func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64, softFac bool) BackoffManager {
+func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo, factor float64, softFac bool, constBackoff bool) BackoffManager {
 	if minBO > maxInitBO {
 		panic(fmt.Sprintf("minbackoff %d, maxinitbackoff %d, incorrectly set up", minBO, maxInitBO))
 	}
@@ -214,9 +215,10 @@ func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan *chan RetryInfo
 			maxInitBackoff: maxInitBO,
 			maxBackoff:     maxBO,
 		},
-		sig:     signalChan,
-		factor:  factor,
-		softFac: softFac,
+		sig:          signalChan,
+		factor:       factor,
+		softFac:      softFac,
+		constBackoff: constBackoff,
 	}
 }
 
@@ -250,31 +252,34 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal std
 	}
 
 	var preemptNum int32
-	var prev float64
+	var prev int32
 	if exists {
 		preemptNum = curBackoffInfo.timesPreempted + 1
-		prev = curBackoffInfo.prevSoftExp
+		prev = curBackoffInfo.prev
 	} else {
 		preemptNum = 0
 		//prev = 0.
 		prev = 0 //rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff//random//float64((rand.Int31() % bm.maxInitBackoff) + bm.minBackoff)
 	}
 
-	t := float64(preemptNum) + rand.Float64()
-	tmp := math.Pow(2, t) * math.Tanh(math.Sqrt(bm.factor*t))
-
 	//tmp *= 1000
-	tmp = tmp - prev
-	if !bm.softFac {
-		tmp = math.Max(tmp, 1)
+	var next int32
+	var tmp float64
+	if !bm.constBackoff {
+		t := float64(preemptNum) + rand.Float64()
+		tmp = math.Pow(2, t) //
+		if bm.softFac {
+			next = int32(tmp * math.Tanh(math.Sqrt(float64(bm.minBackoff)*t)))
+		} else {
+			next = int32(tmp * float64(bm.minBackoff)) //float64(rand.Int31n(bm.maxInitBackoff-bm.minBackoff+1)+bm.minBackoff))
+		}
+		next = next - prev //int32(tmp * float64() //+ rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff// bm.minBackoff
 	}
-	next := int32(tmp * float64(rand.Int31n(bm.maxInitBackoff-bm.minBackoff+1)+bm.minBackoff)) //+ rand.Int31n(bm.maxInitBackoff - bm.minBackoff + 1) + bm.minBackoff// bm.minBackoff
-	//if next > bm.maxBackoff {
-	//	next = bm.maxBackoff - prev
-	//}
-	//if next < bm.minBackoff {
-	//	next += bm.minBackoff
-	//}
+
+	if bm.constBackoff {
+		next = bm.minBackoff
+	}
+
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
@@ -285,7 +290,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal std
 		attemptedConfBal: attemptedConfBal,
 		preempterConfBal: preempter,
 		preempterAt:      prempterPhase,
-		prevSoftExp:      tmp - prev,
+		prev:             next,
 		timesPreempted:   preemptNum,
 	}
 
@@ -299,7 +304,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal std
 			attemptedConfBal: attempted,
 			preempterConfBal: preempterConfBal,
 			preempterAt:      preempterP,
-			prevSoftExp:      tmp - prev,
+			prev:             next,
 			timesPreempted:   numTimesBackedOff,
 		}
 	}(inst, attemptedConfBal, preempter, prempterPhase, next, preemptNum)
@@ -328,7 +333,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int, constBackoff bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
@@ -357,7 +362,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		proposableInstances: make(chan ProposalInfo, MAXPROPOSABLEINST),
 		noopWaitUs:          noopwait,
 		retryInstance:       retryInstances,
-		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac),
+		BackoffManager:      NewBackoffManager(minBackoff, maxInitBackoff, maxBackoff, &retryInstances, factor, softFac, constBackoff),
 		alwaysNoop:          alwaysNoop,
 		fastLearn:           false,
 		timeoutRetry:        make(chan TimeoutInfo, 1000),
@@ -480,7 +485,7 @@ func (r *Replica) restart() {
 		}
 	}
 
-	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac)
+	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac, r.BackoffManager.constBackoff)
 	r.catchingUp = true
 
 	r.recoveringFrom = r.executedUpTo + 1
@@ -1397,6 +1402,10 @@ func (r *Replica) shouldNoop(inst int32) bool {
 	}
 
 	for i := inst + 1; i < r.crtInstance; i++ {
+
+		if r.instanceSpace[i].abk == nil {
+			continue
+		}
 		if r.instanceSpace[i].abk.status == COMMITTED {
 			return true
 		}
