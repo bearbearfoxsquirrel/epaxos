@@ -294,25 +294,27 @@ func main() {
 
 	beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 
-	shouldStats := make(chan bool)
+	//shouldStats := make(chan bool)
+	//rate := *sampleRateMs
 	statsTimer := time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
-	go func() {
-		<-statsTimer.C
-		shouldStats <- true
-	}()
+	//	go func() {
+	//	<-statsTimer.C
+	//	shouldStats <- true
+	//}()
 
 	// set up listener chan
 
 	shutdown := false
 	for !shutdown {
 		select {
-		case <-shouldStats:
+		case <-statsTimer.C:
 			benchmarker.timeseriesStep()
 			statsTimer = time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
-			go func() {
-				<-statsTimer.C
-				shouldStats <- true
-			}()
+
+			//	go func() {
+
+			//	shouldStats <- true
+			//	}()
 			break
 		case value := <-valueDone:
 			done := benchmarker.close(value)

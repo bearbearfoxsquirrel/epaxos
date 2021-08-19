@@ -1133,6 +1133,9 @@ func (r *Replica) howManyExtraCommitsToSend(inst int32) int32 {
 
 func (r *Replica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
+	if inst == nil {
+		return false
+	}
 	if inst.abk.status == COMMITTED {
 		count := int32(0)
 		for i := instance; i < r.crtInstance; i++ {
