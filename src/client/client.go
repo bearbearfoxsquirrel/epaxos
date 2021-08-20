@@ -224,9 +224,11 @@ func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize in
 	registered := false
 	wValue := make([]byte, valSize)
 	rand.Read(wValue)
-	key := int64(rand.Int31() % int32(*conflicts+1))
+	var key int64
 	if *conflicts <= 0 {
-		key = int64(clientId)
+		key = int64(*connectReplica)
+	} else {
+		key = int64(rand.Int31() % int32(*conflicts+1))
 	}
 	val := ClientValue{
 		uid:   rand.Int31(),
