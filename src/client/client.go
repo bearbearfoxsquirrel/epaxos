@@ -224,9 +224,13 @@ func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize in
 	registered := false
 	wValue := make([]byte, valSize)
 	rand.Read(wValue)
+	key := int64(rand.Int31() % int32(*conflicts+1))
+	if *conflicts <= 0 {
+		key = int64(clientId)
+	}
 	val := ClientValue{
 		uid:   rand.Int31(),
-		key:   rand.Int63() % int64(*conflicts+1),
+		key:   key,
 		value: wValue,
 	}
 	for !registered {
@@ -272,13 +276,13 @@ func main() {
 	go func() {
 		replicaReader := proxy.GetListener()
 		for {
-
 			rep := new(genericsmrproto.ProposeReplyTS)
 			if err := rep.Unmarshal(replicaReader); err == nil {
 				if rep.OK == uint8(1) {
+
 					valueDone <- ClientValue{
 						uid:   rep.CommandId,
-						key:   int64(rand.Int31() % int32(*conflicts+1)),
+						key:   int64(rep.CommandId),
 						value: rep.Value,
 					}
 				}

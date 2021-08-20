@@ -95,6 +95,7 @@ type Replica struct {
 	recoveringFrom                int32
 	commitCatchUp                 bool
 	batchSize                     int
+	requeueOnPreempt              bool
 }
 
 type ProposerStatus int
@@ -333,7 +334,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
@@ -381,6 +382,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		flushCommit:         flushCommit,
 		commitCatchUp:       commitCatchup,
 		batchSize:           batchSize,
+		requeueOnPreempt:    requeueOnPreempt,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -1135,6 +1137,10 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 			pbk.clientProposals = nil
 		}
 
+		if r.requeueOnPreempt {
+			r.requeueClientProposals(inst)
+		}
+
 		if preemptingConfigBal.Ballot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingConfigBal.Ballot
 		}
@@ -1262,6 +1268,7 @@ func (r *Replica) handlePrepare(prepare *lwcproto.Prepare) {
 		dlog.Printf("Preparing on prepared on new Config-Ballot %d.%d.%d", prepare.Config, prepare.Number, prepare.PropID)
 		r.acceptorPrepareOnConfBal(prepare.Instance, prepare.ConfigBal)
 		r.proposerCheckAndHandlePreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
+
 		r.checkAndHandleOldPreempted(prepare.ConfigBal, minSafe, inst.abk.vConfBal, inst.abk.cmds, prepare.Instance)
 
 	} else {

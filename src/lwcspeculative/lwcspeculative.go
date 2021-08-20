@@ -95,6 +95,7 @@ type Replica struct {
 	cmpCommitExec              bool
 	maxBatchedProposalVals     int
 	stats                      ServerStats
+	requeueOnPreempt           bool
 }
 
 type ServerStats struct {
@@ -398,7 +399,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
 	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
-	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool) *Replica {
+	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &Replica{
@@ -447,7 +448,8 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		commitCatchUp:          commitCatchUp,
 		cmpCommitExec:          cmpCmtExec,
 		maxBatchedProposalVals: maxProposalVals,
-		stats:                  ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions"}, fmt.Sprintf("./server-%d-stats.txt", id)),
+		stats:                  ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
+		requeueOnPreempt:       requeueOnPreempt,
 	}
 	r.ringCommit = true
 
@@ -1185,6 +1187,9 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal 
 
 		r.checkAndOpenNewInstances(inst)
 		pbk.status = BACKING_OFF
+		if r.requeueOnPreempt {
+			r.requeueClientProposals(inst)
+		}
 		if preemptingConfigBal.Ballot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingConfigBal.Ballot
 			r.stats.Update("Preemptions", 1)
@@ -1710,6 +1715,9 @@ func (r *Replica) handleAcceptReply(areply *lwcproto.AcceptReply) {
 func (r *Replica) requeueClientProposals(instance int32) {
 	inst := r.instanceSpace[instance]
 	dlog.Println("Requeing client value")
+	if len(inst.pbk.clientProposals) > 0 {
+		r.stats.Update("Requeued Proposals", 1)
+	}
 	for i := 0; i < len(inst.pbk.clientProposals); i++ {
 		r.clientValueQueue.TryRequeue(inst.pbk.clientProposals[i])
 	}

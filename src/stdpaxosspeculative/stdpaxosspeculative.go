@@ -88,6 +88,7 @@ type Replica struct {
 	recoveringFrom             int32
 	commitCatchUp              bool
 	batchSize                  int
+	requeueOnPreempt           bool
 }
 
 type TimeoutInfo struct {
@@ -333,7 +334,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int, constBackoff bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
@@ -378,6 +379,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		flushCommit:         flushCommit,
 		commitCatchUp:       catchupCommit,
 		batchSize:           batchSize,
+		requeueOnPreempt:    requeueOnPreempt,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -1075,6 +1077,10 @@ func (r *Replica) proposerCheckAndHandlePreempt(inst int32, preemptingBallot std
 		r.checkAndOpenNewInstances(inst)
 		if preemptingBallot.GreaterThan(pbk.maxKnownBal) {
 			pbk.maxKnownBal = preemptingBallot
+		}
+
+		if r.requeueOnPreempt {
+			r.requeueClientProposals(inst)
 		}
 		return true
 	} else {
