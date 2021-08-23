@@ -9,6 +9,7 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -89,6 +90,7 @@ type Replica struct {
 	commitCatchUp              bool
 	batchSize                  int
 	requeueOnPreempt           bool
+	reducePropConfs            bool
 }
 
 type TimeoutInfo struct {
@@ -334,7 +336,7 @@ func (r *Replica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, catchupCommit bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &Replica{
 		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
@@ -380,6 +382,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		commitCatchUp:       catchupCommit,
 		batchSize:           batchSize,
 		requeueOnPreempt:    requeueOnPreempt,
+		reducePropConfs:     reducePropConfs,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -1023,23 +1026,50 @@ func (r *Replica) proposerBeginNextConfBal(inst int32) {
 }
 
 func (r *Replica) beginNextInstance() {
-	r.incToNextOpenInstance()
-	for i := 0; i < len(r.crtOpenedInstances); i++ {
-		// allow for an openable instance
-		if r.crtOpenedInstances[i] == -1 {
-			r.crtOpenedInstances[i] = r.crtInstance
-			break
+	if r.reducePropConfs {
+		for i := r.crtInstance + 1; i < r.crtInstance+1+int32(r.N/(r.F+1)); i++ {
+			r.crtInstance = i
+			if r.crtInstance%int32(r.N/(r.F+1)) == r.Id%int32(r.N/(r.F+1)) {
+				for j := 0; j < len(r.crtOpenedInstances); j++ {
+					// allow for an openable instance
+					if r.crtOpenedInstances[j] == -1 {
+						r.crtOpenedInstances[j] = r.crtInstance
+						break
+					}
+				}
+				r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
+				curInst := r.instanceSpace[r.crtInstance]
+
+				r.proposerBeginNextConfBal(r.crtInstance)
+				r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.curBal)
+				r.bcastPrepare(r.crtInstance)
+				log.Printf("Opened new instance %d\n", r.crtInstance)
+			} else {
+				r.makeCatchupInstance(r.crtInstance)
+				r.BackoffManager.CheckAndHandleBackoff(r.crtInstance, stdpaxosproto.Ballot{}, stdpaxosproto.Ballot{}, PROMISE)
+				r.instanceSpace[r.crtInstance].pbk.status = BACKING_OFF
+				log.Printf("Not my instance so backing off %d\n", r.crtInstance)
+			}
+
 		}
+	} else {
+		r.incToNextOpenInstance()
+		for i := 0; i < len(r.crtOpenedInstances); i++ {
+			// allow for an openable instance
+			if r.crtOpenedInstances[i] == -1 {
+				r.crtOpenedInstances[i] = r.crtInstance
+				break
+			}
+		}
+
+		r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
+		curInst := r.instanceSpace[r.crtInstance]
+
+		r.proposerBeginNextConfBal(r.crtInstance)
+		r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.curBal)
+		r.bcastPrepare(r.crtInstance)
+		dlog.Printf("Opened new instance %d\n", r.crtInstance)
 	}
-
-	r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
-	curInst := r.instanceSpace[r.crtInstance]
-
-	r.proposerBeginNextConfBal(r.crtInstance)
-	r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.curBal)
-	r.bcastPrepare(r.crtInstance)
-	dlog.Printf("Opened new instance %d\n", r.crtInstance)
-	//	}
 }
 
 func (r *Replica) acceptorPrepareOnConfBal(inst int32, confBal stdpaxosproto.Ballot) {

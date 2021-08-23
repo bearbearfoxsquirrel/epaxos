@@ -10,6 +10,7 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
+	"log"
 	"lwcproto"
 	"math"
 	"math/rand"
@@ -96,6 +97,7 @@ type Replica struct {
 	maxBatchedProposalVals     int
 	stats                      ServerStats
 	requeueOnPreempt           bool
+	reducePropConfs            bool
 }
 
 type ServerStats struct {
@@ -399,7 +401,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
 	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
-	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool) *Replica {
+	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &Replica{
@@ -450,6 +452,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		maxBatchedProposalVals: maxProposalVals,
 		stats:                  ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
 		requeueOnPreempt:       requeueOnPreempt,
+		reducePropConfs:        reducePropConfs,
 	}
 	r.ringCommit = true
 
@@ -1136,23 +1139,56 @@ func (r *Replica) proposerBeginNextConfBal(inst int32) {
 }
 
 func (r *Replica) beginNextInstance() {
-	r.incToNextOpenInstance()
-	for i := 0; i < len(r.crtOpenedInstances); i++ {
-		// allow for an openable instance
-		if r.crtOpenedInstances[i] == -1 {
-			r.crtOpenedInstances[i] = r.crtInstance
-			break
+	if r.reducePropConfs {
+		for i := r.crtInstance + 1; i < r.crtInstance+1+int32(r.N/(r.F+1)); i++ {
+			r.crtInstance = i
+			if r.crtInstance%int32(r.N/(r.F+1)) == r.Id%int32(r.N/(r.F+1)) {
+				for j := 0; j < len(r.crtOpenedInstances); j++ {
+					// allow for an openable instance
+					if r.crtOpenedInstances[j] == -1 {
+						r.crtOpenedInstances[j] = r.crtInstance
+						break
+					}
+				}
+				r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
+				curInst := r.instanceSpace[r.crtInstance]
+
+				r.proposerBeginNextConfBal(r.crtInstance)
+				r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.propCurConfBal)
+				r.bcastPrepare(r.crtInstance)
+				log.Printf("Opened new instance %d\n", r.crtInstance)
+			} else {
+				r.makeCatchupInstance(r.crtInstance)
+				r.BackoffManager.CheckAndHandleBackoff(r.crtInstance, lwcproto.ConfigBal{}, lwcproto.ConfigBal{}, PROMISE)
+				r.instanceSpace[r.crtInstance].pbk.status = BACKING_OFF
+				log.Printf("Not my instance so backing off %d\n", r.crtInstance)
+			}
+
 		}
+	} else {
+		r.incToNextOpenInstance()
+		for i := 0; i < len(r.crtOpenedInstances); i++ {
+			// allow for an openable instance
+			if r.crtOpenedInstances[i] == -1 {
+				r.crtOpenedInstances[i] = r.crtInstance
+				break
+			}
+		}
+
+		r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
+		curInst := r.instanceSpace[r.crtInstance]
+
+		r.proposerBeginNextConfBal(r.crtInstance)
+		r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.propCurConfBal)
+		r.bcastPrepare(r.crtInstance)
+		dlog.Printf("Opened new instance %d\n", r.crtInstance)
 	}
 
-	r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
-	curInst := r.instanceSpace[r.crtInstance]
+	//	r.instRotId = (r.instRotId + 1) % int32(r.N)
 
-	r.proposerBeginNextConfBal(r.crtInstance)
-	r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.propCurConfBal)
-	r.bcastPrepare(r.crtInstance)
-	dlog.Printf("Opened new instance %d\n", r.crtInstance)
-	//	}
+	//
+
+	////	}
 }
 
 func (r *Replica) acceptorPrepareOnConfBal(inst int32, confBal lwcproto.ConfigBal) {
