@@ -424,7 +424,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		Shutdown:               false,
 		counter:                0,
 		flush:                  true,
-		executedUpTo:           -1, //get from storage
+		executedUpTo:           0, //get from storage
 		batchWait:              batchWait,
 		maxBalInc:              10000,
 		maxOpenInstances:       maxOpenInstances,

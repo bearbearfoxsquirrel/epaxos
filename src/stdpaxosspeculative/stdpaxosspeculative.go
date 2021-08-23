@@ -352,11 +352,11 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		prepareReplyRPC:     0,
 		acceptReplyRPC:      0,
 		instanceSpace:       make([]*Instance, 15*1024*1024),
-		crtInstance:         -1, //get from storage
+		crtInstance:         0, //get from storage
 		Shutdown:            false,
 		counter:             0,
 		flush:               true,
-		executedUpTo:        -1, //get from storage
+		executedUpTo:        0, //get from storage
 		batchWait:           batchWait,
 		maxBalInc:           10000,
 		maxOpenInstances:    maxOpenInstances,
