@@ -1046,7 +1046,9 @@ func (r *Replica) beginNextInstance() {
 		old := r.crtInstance
 		for r.crtInstance < old+int32(r.N/(r.F+1)) {
 			r.incToNextOpenInstance()
-			if r.crtInstance%int32(r.N/(r.F+1)) == r.Id%int32(r.N/(r.F+1)) {
+			idHit := (r.Id + 1) % int32(r.N/(r.F+1))
+			instHit := r.crtInstance % int32(r.N/(r.F+1))
+			if instHit == idHit {
 				for j := 0; j < len(r.crtOpenedInstances); j++ {
 					// allow for an openable instance
 					if r.crtOpenedInstances[j] == -1 {

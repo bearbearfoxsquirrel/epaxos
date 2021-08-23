@@ -419,7 +419,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		prepareReplyRPC:        0,
 		acceptReplyRPC:         0,
 		instanceSpace:          make([]*Instance, 15*1024*1024),
-		crtInstance:            -1, //get from storage
+		crtInstance:            0, //get from storage
 		crtConfig:              1,
 		Shutdown:               false,
 		counter:                0,
@@ -1159,7 +1159,9 @@ func (r *Replica) beginNextInstance() {
 		old := r.crtInstance
 		for r.crtInstance < old+int32(r.N/(r.F+1)) {
 			r.incToNextOpenInstance()
-			if r.crtInstance%int32(r.N/(r.F+1)) == r.Id%int32(r.N/(r.F+1)) {
+			idHit := (r.Id + 1) % int32(r.N/(r.F+1))
+			instHit := r.crtInstance % int32(r.N/(r.F+1))
+			if instHit == idHit {
 				for j := 0; j < len(r.crtOpenedInstances); j++ {
 					// allow for an openable instance
 					if r.crtOpenedInstances[j] == -1 {
