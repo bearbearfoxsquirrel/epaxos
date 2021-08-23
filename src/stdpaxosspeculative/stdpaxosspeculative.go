@@ -9,7 +9,6 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -563,9 +562,16 @@ func (r *Replica) run() {
 	//	onOffProposeChan := r.ProposeChan
 
 	go r.WaitForClientConnections()
-	for i := 0; i < int(r.maxOpenInstances); i++ {
-		r.crtOpenedInstances[i] = -1
+	if r.reducePropConfs {
+		for i := 0; i < int(r.maxOpenInstances); i++ {
+			r.crtOpenedInstances[i] = -1
+		}
 		r.beginNextInstance()
+	} else {
+		for i := 0; i < int(r.maxOpenInstances); i++ {
+			r.crtOpenedInstances[i] = -1
+			r.beginNextInstance()
+		}
 	}
 
 	doner := make(chan struct{})
@@ -1025,10 +1031,20 @@ func (r *Replica) proposerBeginNextConfBal(inst int32) {
 	pbk.proposalInfos[nextConfBal] = NewQuorumInfo(PROMISE)
 }
 
+func (r *Replica) freeInstToOpen() bool {
+	for j := 0; j < len(r.crtOpenedInstances); j++ {
+		// allow for an openable instance
+		if r.crtOpenedInstances[j] == -1 {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Replica) beginNextInstance() {
 	if r.reducePropConfs {
-		for i := r.crtInstance + 1; i < r.crtInstance+1+int32(r.N/(r.F+1)); i++ {
-			r.crtInstance = i
+		for r.freeInstToOpen() {
+			r.incToNextOpenInstance()
 			if r.crtInstance%int32(r.N/(r.F+1)) == r.Id%int32(r.N/(r.F+1)) {
 				for j := 0; j < len(r.crtOpenedInstances); j++ {
 					// allow for an openable instance
@@ -1043,14 +1059,14 @@ func (r *Replica) beginNextInstance() {
 				r.proposerBeginNextConfBal(r.crtInstance)
 				r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.curBal)
 				r.bcastPrepare(r.crtInstance)
-				log.Printf("Opened new instance %d\n", r.crtInstance)
+				dlog.Printf("Opened new instance %d\n", r.crtInstance)
 			} else {
-				r.makeCatchupInstance(r.crtInstance)
-				r.BackoffManager.CheckAndHandleBackoff(r.crtInstance, stdpaxosproto.Ballot{}, stdpaxosproto.Ballot{}, PROMISE)
+				r.instanceSpace[r.crtInstance] = r.makeEmptyInstance() //r.makeCatchupInstance(r.crtInstance)
+				r.BackoffManager.CheckAndHandleBackoff(r.crtInstance, stdpaxosproto.Ballot{-1, -1},
+					stdpaxosproto.Ballot{-1, -1}, PROMISE)
 				r.instanceSpace[r.crtInstance].pbk.status = BACKING_OFF
-				log.Printf("Not my instance so backing off %d\n", r.crtInstance)
+				dlog.Printf("Not my instance so backing off %d\n", r.crtInstance)
 			}
-
 		}
 	} else {
 		r.incToNextOpenInstance()
