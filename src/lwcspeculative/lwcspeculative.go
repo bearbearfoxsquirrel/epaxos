@@ -651,17 +651,17 @@ func (r *Replica) run() {
 	//	onOffProposeChan := r.ProposeChan
 
 	go r.WaitForClientConnections()
-	if r.reducePropConfs {
-		for i := 0; i < int(r.maxOpenInstances); i++ {
-			r.crtOpenedInstances[i] = -1
-		}
+	//if r.reducePropConfs {
+	//	for i := 0; i < int(r.maxOpenInstances); i++ {
+	//		r.crtOpenedInstances[i] = -1
+	//	}
+	//	r.beginNextInstance()
+	//} else {
+	for i := 0; i < int(r.maxOpenInstances); i++ {
+		r.crtOpenedInstances[i] = -1
 		r.beginNextInstance()
-	} else {
-		for i := 0; i < int(r.maxOpenInstances); i++ {
-			r.crtOpenedInstances[i] = -1
-			r.beginNextInstance()
-		}
 	}
+	//}
 
 	doner := make(chan struct{})
 	if r.Id == r.whoCrash {
@@ -1156,7 +1156,8 @@ func (r *Replica) freeInstToOpen() bool {
 
 func (r *Replica) beginNextInstance() {
 	if r.reducePropConfs {
-		for r.freeInstToOpen() {
+		old := r.crtInstance
+		for r.crtInstance < old+int32(r.N/(r.F+1)) {
 			r.incToNextOpenInstance()
 			if r.crtInstance%int32(r.N/(r.F+1)) == r.Id%int32(r.N/(r.F+1)) {
 				for j := 0; j < len(r.crtOpenedInstances); j++ {
