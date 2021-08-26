@@ -97,6 +97,7 @@ type Replica struct {
 	stats                      ServerStats
 	requeueOnPreempt           bool
 	reducePropConfs            bool
+	bcastAcceptance            bool
 }
 
 type ServerStats struct {
@@ -400,7 +401,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
 	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
-	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool) *Replica {
+	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &Replica{
@@ -452,6 +453,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		stats:                  ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
 		requeueOnPreempt:       requeueOnPreempt,
 		reducePropConfs:        reducePropConfs,
+		bcastAcceptance:        bcastAcceptance,
 	}
 	r.ringCommit = false
 
@@ -1505,8 +1507,9 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 		//	pc.Command = val
 		//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, &pc )
 		//} else {
-
-		r.bcastCommitToAll(inst, accepted, val)
+		if !r.bcastAcceptance {
+			r.bcastCommitToAll(inst, accepted, val)
+		}
 		//}
 		r.acceptorCommit(inst, accepted, val)
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmd, false)
@@ -1746,7 +1749,16 @@ func (r *Replica) handleAccept(accept *lwcproto.Accept) {
 	}
 
 	areply := &lwcproto.AcceptReply{accept.Instance, r.Id, replyConfBal, accept.ConfigBal, inst.pbk.whoseCmds}
-	r.replyAccept(accept.LeaderId, areply)
+	if r.bcastAcceptance {
+		for i := 0; i < r.N; i++ {
+			if int32(i) == r.Id {
+				continue
+			}
+			r.replyAccept(int32(i), areply)
+		}
+	} else {
+		r.replyAccept(accept.LeaderId, areply)
+	}
 }
 
 func (r *Replica) checkAndOpenNewInstances(inst int32) {
