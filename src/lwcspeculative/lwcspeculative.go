@@ -88,7 +88,7 @@ type Replica struct {
 	group1Size                 int
 	flushCommit                bool
 	ringCommit                 bool
-	nextRecoveryBatchPoint     int32
+	nextCatchUpPoint           int32
 	recoveringFrom             int32
 	commitCatchUp              bool
 	commitExecComp             *CommitExecutionComparator.CommitExecutionComparator
@@ -453,7 +453,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		requeueOnPreempt:       requeueOnPreempt,
 		reducePropConfs:        reducePropConfs,
 	}
-	r.ringCommit = true
+	r.ringCommit = false
 
 	if group1Size <= r.N-r.F {
 		r.group1Size = r.N - r.F
@@ -582,22 +582,49 @@ func (r *Replica) restart() {
 	r.crtConfig++
 	r.recordNewConfig(r.crtConfig)
 	r.catchingUp = true
+	r.crtOpenedInstances = make([]int32, r.maxOpenInstances)
 
-	r.recoveringFrom = r.executedUpTo + 1
-	r.nextRecoveryBatchPoint = r.recoveringFrom
-	r.sendNextRecoveryRequestBatch()
+	for i := 0; i < len(r.crtOpenedInstances); i++ {
+		r.crtOpenedInstances[i] = -1
+	}
+
+	r.crtInstance = r.executedUpTo + 1
+
+	if r.Dreply || r.Exec {
+		r.recoveringFrom = r.crtInstance
+		r.nextCatchUpPoint = r.crtInstance
+		r.sendNextRecoveryRequestBatch()
+	} else {
+		for i := int32(0); i < r.maxOpenInstances; i++ {
+			r.beginNextInstance()
+		}
+	}
+}
+
+func randomExcluded(min, max, excluded int32) int32 {
+	var n = rand.Float64() * float64((max-min)+min)
+	if n >= float64(excluded) {
+		n++
+	}
+	return int32(n)
 }
 
 func (r *Replica) sendNextRecoveryRequestBatch() {
-	// assumes r.nextRecoveryBatchPoint is initialised correctly
-	for i := int32(0); i < int32(r.N); i++ {
-		if i == r.Id {
-			continue
-		}
-		dlog.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
-		r.sendRecoveryRequest(r.nextRecoveryBatchPoint, i)
-		r.nextRecoveryBatchPoint += r.catchUpBatchSize
+	// assumes r.nextCatchUpPoint is initialised correctly
+	var nextPoint int
+	//if r.recoveringFrom == r.crtInstance {
+	nextPoint = int(r.nextCatchUpPoint + r.catchUpBatchSize)
+	//} else {
+	//	nextPoint = min(int(r.nextCatchUpPoint+r.catchUpBatchSize), int(r.crtInstance-1))
+	//}
+
+	dlog.Printf("Sending recovery batch from %d to %d", r.nextCatchUpPoint, nextPoint-1)
+	for i := r.nextCatchUpPoint; i <= int32(nextPoint); i++ {
+		whoToSendTo := randomExcluded(0, int32(r.N-1), r.Id)
+		r.sendRecoveryRequest(i, whoToSendTo)
 	}
+
+	r.nextCatchUpPoint = int32(nextPoint)
 }
 
 func (r *Replica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
@@ -607,20 +634,22 @@ func (r *Replica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
 
 func (r *Replica) checkAndHandleCatchUpRequest(prepare *lwcproto.Prepare) bool {
 	//config is ignored here and not acknowledged until new proposals are actually made
-	if prepare.IsZero() {
-		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance+r.catchUpBatchSize)
-		r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, r.catchUpBatchSize)
+	if prepare.ConfigBal.IsZero() {
+		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance)
+		r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, 0)
 		return true
 	} else {
 		return false
 	}
 }
 
-//func (r *Replica) setNextCatchUpPoint()
+func (r *Replica) maxInstanceChosenBeforeCrash() int32 {
+	return r.recoveringFrom + r.maxOpenInstances*int32(r.N)
+}
+
 func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
 	if r.catchingUp {
-		//dlog.Printf("got catch up for %d", commit.Instance)
-		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
+		if commit.Instance > r.maxInstanceChosenBeforeCrash() && int32(commit.PropID) == r.Id && r.crtInstance-r.executedUpTo <= r.maxOpenInstances*int32(r.N) {
 			r.catchingUp = false
 			dlog.Printf("Caught up with consensus group")
 			//reset client connections so that we can begin benchmarking again
@@ -631,8 +660,7 @@ func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
 			r.Clients = make([]net.Conn, 0)
 			r.Mutex.Unlock()
 		} else {
-			//if commit.Instance == r.nextRecoveryBatchPoint {
-			if commit.Instance >= r.nextRecoveryBatchPoint-(r.catchUpBatchSize/4) {
+			if commit.Instance >= r.nextCatchUpPoint-(r.catchUpBatchSize/5) {
 				r.sendNextRecoveryRequestBatch()
 			}
 		}
@@ -759,6 +787,7 @@ func (r *Replica) retryConfigBal(maybeTimedout TimeoutInfo) {
 }
 
 func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
+
 	inst := r.instanceSpace[proposalInfo.inst]
 	pbk := inst.pbk
 	// note that 4 things can happen
@@ -861,8 +890,8 @@ func (r *Replica) sendSinglePrepare(instance int32, to int32) {
 	args := &lwcproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.propCurConfBal}
 	dlog.Printf("send prepare to %d\n", to)
 	r.SendMsg(to, r.prepareRPC, args)
-	whoSent := []int32{0}
-	r.beginTimeout(args.Instance, args.ConfigBal, whoSent, PREPARING, r.timeout*10)
+	whoSent := []int32{to}
+	r.beginTimeout(args.Instance, args.ConfigBal, whoSent, PREPARING, r.timeout*3)
 }
 
 func (r *Replica) bcastPrepareToAll(instance int32) {
@@ -1063,21 +1092,21 @@ func (r *Replica) bcastCommitToAll(instance int32, confBal lwcproto.ConfigBal, c
 
 func (r *Replica) getNextProposingConfigBal(instance int32) lwcproto.ConfigBal {
 	pbk := r.instanceSpace[instance].pbk
-	min := ((pbk.maxKnownBal.Number/r.maxBalInc)+1)*r.maxBalInc + int32(r.N)
+	mini := ((pbk.maxKnownBal.Number/r.maxBalInc)+1)*r.maxBalInc + int32(r.N)
 	var max int32
 	zero := time.Time{}
 	if r.timeSinceValueLastSelected != zero {
 		timeDif := time.Now().Sub(r.timeSinceValueLastSelected)
-		max = min + (r.maxBalInc) + int32(timeDif.Microseconds()/10)
+		max = mini + (r.maxBalInc) + int32(timeDif.Microseconds()/10)
 	} else {
-		max = min + (r.maxBalInc)
+		max = mini + (r.maxBalInc)
 	}
 	/*if max < 0 { // overflow
 		max = math.MaxInt32
 		panic("too many conf-bals")
 	}*/
 
-	next := int32(math.Floor(rand.Float64()*float64(max-min+1) + float64(min)))
+	next := int32(math.Floor(rand.Float64()*float64(max-mini+1) + float64(mini)))
 	/*if next < abk.curBal.Number {
 		panic("Trying outdated conf-bal?")
 	}*/
@@ -1557,6 +1586,7 @@ func min(x, y int) int {
 }
 
 func (r *Replica) propose(inst int32) {
+
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 	pbk.status = READY_TO_PROPOSE
@@ -1723,7 +1753,9 @@ func (r *Replica) checkAndOpenNewInstances(inst int32) {
 	// was instance opened by us
 	//	if r.executedUpTo+r.maxOpenInstances*int32(r.N) > r.crtInstance {
 	for i := 0; i < len(r.crtOpenedInstances); i++ {
-		if r.crtOpenedInstances[i] == inst || r.instanceSpace[r.crtOpenedInstances[i]].abk.status == COMMITTED {
+		if r.crtOpenedInstances[i] == -1 {
+			r.beginNextInstance()
+		} else if r.crtOpenedInstances[i] == inst || r.instanceSpace[r.crtOpenedInstances[i]].abk.status == COMMITTED {
 			r.crtOpenedInstances[i] = -1
 			r.beginNextInstance()
 		}
