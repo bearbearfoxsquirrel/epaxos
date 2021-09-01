@@ -113,9 +113,9 @@ func main() {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	if *doMencius && *thrifty {
-		log.Fatal("incompatble options -m -thrifty")
-	}
+	//if *doMencius && *thrifty {
+	//	log.Fatal("incompatble options -m -thrifty")
+	//}
 
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
