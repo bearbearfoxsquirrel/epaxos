@@ -52,6 +52,7 @@ type Replica struct {
 	batchWait                int
 	skipwait_ms              int
 	max_skips_awaiting       int
+	batch                    bool
 }
 
 type DelayedSkip struct {
@@ -85,7 +86,7 @@ type LeaderBookkeeping struct {
 	nacks          int
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int, batch bool) *Replica {
 	skippedTo := make([]int32, len(peerAddrList))
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
@@ -116,6 +117,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		batchwait,
 		skipwaitMs,
 		maxSkipsAwaiting,
+		batch,
 	}
 
 	r.Durable = durable
@@ -217,7 +219,10 @@ func (r *Replica) run() {
 	}
 
 	go r.clock()
-	go r.fastClock()
+
+	if r.BatchingEnabled() {
+		go r.fastClock()
+	}
 
 	go r.WaitForClientConnections()
 	onOffProposeChan := r.ProposeChan
@@ -476,7 +481,10 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	instNo := r.crtInstance
 	r.crtInstance += int32(r.N)
 
-	batchSize := len(r.ProposeChan) + 1
+	batchSize := 1
+	if r.batch && !r.BatchingEnabled() {
+		batchSize = len(r.ProposeChan) + 1
+	}
 
 	cmds := make([]state.Command, batchSize)
 	proposals := make([]*genericsmr.Propose, batchSize)

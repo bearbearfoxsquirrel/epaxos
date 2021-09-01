@@ -98,6 +98,8 @@ var reducePropConfs *bool = flag.Bool("reducepropconfs", false, "Reduce proposer
 
 var bcastAcceptance *bool = flag.Bool("bcastacceptance", false, "In lwp broadcast acceptance")
 
+var batch *bool = flag.Bool("batch", false, "turns on if batch wait > 0 also")
+
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
 func main() {
@@ -152,7 +154,7 @@ func main() {
 		rpc.Register(rep)
 	} else if *doMencius {
 		log.Println("Starting Mencius replica...")
-		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *batchWait, *skipwaitms, *maxoutstandingskips)
+		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *batchWait, *skipwaitms, *maxoutstandingskips, *batch)
 		rpc.Register(rep)
 	} else if *doGpaxos {
 		log.Println("Starting Generalized Paxos replica...")
