@@ -677,7 +677,7 @@ func (r *Replica) maxInstanceChosenBeforeCrash() int32 {
 
 func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
 	if r.catchingUp {
-		if commit.Instance > r.maxInstanceChosenBeforeCrash() && int32(commit.PropID) == r.Id && r.crtInstance-r.executedUpTo <= r.maxOpenInstances*int32(r.N) {
+		if commit.Instance > r.maxInstanceChosenBeforeCrash() && int32(commit.PropID) == r.Id && r.crtInstance-r.executedUpTo <= r.maxOpenInstances {
 			r.catchingUp = false
 			dlog.Printf("Caught up with consensus group")
 			//reset client connections so that we can begin benchmarking again
