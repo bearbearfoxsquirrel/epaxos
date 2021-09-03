@@ -1511,7 +1511,7 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 		}
 		if r.whatHappenedToClientProposals(inst) == ProposedButNotChosen {
 			r.requeueClientProposals(inst)
-			pbk.clientProposals = nil
+			//	pbk.clientProposals = nil
 			dlog.Printf("requeing")
 		}
 	}
