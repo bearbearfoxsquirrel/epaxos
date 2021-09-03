@@ -10,6 +10,7 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
+	"log"
 	"lwcproto"
 	"math"
 	"math/rand"
@@ -590,16 +591,39 @@ func (r *Replica) restart() {
 		r.crtOpenedInstances[i] = -1
 	}
 
+	// using crtInstance here as a cheat to find last instance proposed or accepted in so that we can reset the appropriate variables
+	for i := r.executedUpTo + 1; i <= r.crtInstance; i++ {
+		r.instanceSpace[i].abk.curBal = lwcproto.Ballot{-1, -1}
+		r.instanceSpace[i].pbk.maxKnownBal = lwcproto.Ballot{-1, -1}
+		r.instanceSpace[i].pbk.propCurConfBal = lwcproto.ConfigBal{Config: -1, Ballot: lwcproto.Ballot{-1, -1}}
+		r.instanceSpace[i].pbk.maxAcceptedConfBal = lwcproto.ConfigBal{Config: -1, Ballot: lwcproto.Ballot{-1, -1}}
+	}
+
 	r.crtInstance = r.executedUpTo + 1
 
 	if r.Dreply || r.Exec {
-		r.recoveringFrom = r.crtInstance
-		r.nextCatchUpPoint = r.crtInstance
-		r.sendNextRecoveryRequestBatch()
+		r.recoveringFrom = r.executedUpTo + 1
+		end := r.recoveringFrom + r.catchUpBatchSize
+		for i := r.recoveringFrom; i <= end; i++ {
+			whoToSendTo := randomExcluded(0, int32(r.N-1), r.Id)
+			if r.instanceSpace[i] != nil {
+				r.proposerBeginNextConfBal(i)
+				r.sendSinglePrepare(i, whoToSendTo) //gonna assume been chosen so only send to one proposer
+			} else {
+				r.sendRecoveryRequest(i, whoToSendTo)
+			}
+		}
+		r.nextCatchUpPoint = int32(end)
 	} else {
 		for i := int32(0); i < r.maxOpenInstances; i++ {
 			r.beginNextInstance()
 		}
+		r.Mutex.Lock()
+		for i := 0; i < len(r.Clients); i++ {
+			_ = r.Clients[i].Close()
+		}
+		r.Clients = make([]net.Conn, 0)
+		r.Mutex.Unlock()
 	}
 }
 
@@ -616,14 +640,16 @@ func (r *Replica) sendNextRecoveryRequestBatch() {
 	var nextPoint int
 	//if r.recoveringFrom == r.crtInstance {
 	nextPoint = int(r.nextCatchUpPoint + r.catchUpBatchSize)
-	//} else {
-	//	nextPoint = min(int(r.nextCatchUpPoint+r.catchUpBatchSize), int(r.crtInstance-1))
-	//}
+	if r.crtInstance >= r.maxInstanceChosenBeforeCrash() {
+		nextPoint = min(int(r.crtInstance), nextPoint)
+	}
 
-	dlog.Printf("Sending recovery batch from %d to %d", r.nextCatchUpPoint, nextPoint-1)
+	log.Printf("Sending recovery batch from %d to %d", r.nextCatchUpPoint, nextPoint)
 	for i := r.nextCatchUpPoint; i <= int32(nextPoint); i++ {
-		whoToSendTo := randomExcluded(0, int32(r.N-1), r.Id)
-		r.sendRecoveryRequest(i, whoToSendTo)
+		if r.instanceSpace[i] == nil {
+			whoToSendTo := randomExcluded(0, int32(r.N-1), r.Id)
+			r.sendRecoveryRequest(i, whoToSendTo)
+		}
 	}
 
 	r.nextCatchUpPoint = int32(nextPoint)
@@ -637,7 +663,7 @@ func (r *Replica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
 func (r *Replica) checkAndHandleCatchUpRequest(prepare *lwcproto.Prepare) bool {
 	//config is ignored here and not acknowledged until new proposals are actually made
 	if prepare.ConfigBal.IsZero() {
-		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance)
+		log.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance)
 		r.checkAndHandleCommit(prepare.Instance, prepare.LeaderId, 0)
 		return true
 	} else {
@@ -893,7 +919,7 @@ func (r *Replica) sendSinglePrepare(instance int32, to int32) {
 	dlog.Printf("send prepare to %d\n", to)
 	r.SendMsg(to, r.prepareRPC, args)
 	whoSent := []int32{to}
-	r.beginTimeout(args.Instance, args.ConfigBal, whoSent, PREPARING, r.timeout*3)
+	r.beginTimeout(args.Instance, args.ConfigBal, whoSent, PREPARING, r.timeout*5)
 }
 
 func (r *Replica) bcastPrepareToAll(instance int32) {
@@ -1687,7 +1713,7 @@ func (r *Replica) shouldNoop(inst int32) bool {
 	}
 
 	for i := inst + 1; i < r.crtInstance; i++ {
-		if r.instanceSpace[i].abk == nil {
+		if r.instanceSpace[i] == nil {
 			continue
 		}
 		if r.instanceSpace[i].abk.status == COMMITTED {

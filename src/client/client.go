@@ -138,6 +138,9 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 }
 
 func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToRecord int, timeLatenciesRecording time.Duration) LatencyRecorder {
+	//if numLatenciesToRecord <= 0 -1 && timeLatenciesRecording <= 0 {
+	//	return LatencyRecorder{}
+	//}
 	file, err := os.Create(outputFileLoc)
 	if err != nil {
 		panic("Cannot open latency recording output file at location")
