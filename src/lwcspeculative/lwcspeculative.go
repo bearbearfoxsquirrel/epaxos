@@ -601,6 +601,13 @@ func (r *Replica) restart() {
 
 	r.crtInstance = r.executedUpTo + 1
 
+	r.Mutex.Lock()
+	for i := 0; i < len(r.Clients); i++ {
+		_ = r.Clients[i].Close()
+	}
+	r.Clients = make([]net.Conn, 0)
+	r.Mutex.Unlock()
+
 	if r.Dreply || r.Exec {
 		r.recoveringFrom = r.executedUpTo + 1
 		end := r.recoveringFrom + r.catchUpBatchSize
@@ -618,12 +625,8 @@ func (r *Replica) restart() {
 		for i := int32(0); i < r.maxOpenInstances; i++ {
 			r.beginNextInstance()
 		}
-		r.Mutex.Lock()
-		for i := 0; i < len(r.Clients); i++ {
-			_ = r.Clients[i].Close()
-		}
-		r.Clients = make([]net.Conn, 0)
-		r.Mutex.Unlock()
+
+		r.timeSinceValueLastSelected = time.Time{}
 	}
 }
 
@@ -687,6 +690,7 @@ func (r *Replica) checkAndHandleCatchUpResponse(commit *lwcproto.Commit) {
 			}
 			r.Clients = make([]net.Conn, 0)
 			r.Mutex.Unlock()
+			r.timeSinceValueLastSelected = time.Time{}
 		} else {
 			if commit.Instance >= r.nextCatchUpPoint-(r.catchUpBatchSize/5) {
 				r.sendNextRecoveryRequestBatch()
