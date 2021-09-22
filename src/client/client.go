@@ -127,7 +127,7 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 	}
 
 	if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
-		_, err := latencyRecorder.outputFile.WriteString(fmt.Sprintf("%d\n", latencyMicroseconds))
+		_, err := latencyRecorder.outputFile.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + fmt.Sprintf("%d\n", latencyMicroseconds))
 		if err != nil {
 			dlog.Println("Error writing value")
 			return
