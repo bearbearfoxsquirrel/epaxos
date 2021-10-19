@@ -99,6 +99,7 @@ type Replica struct {
 	requeueOnPreempt           bool
 	reducePropConfs            bool
 	bcastAcceptance            bool
+	minBatchSize               int32
 }
 
 type ServerStats struct {
@@ -402,7 +403,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
 	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
-	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool) *Replica {
+	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool, minBatchSize int32) *Replica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &Replica{
@@ -455,6 +456,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		requeueOnPreempt:       requeueOnPreempt,
 		reducePropConfs:        reducePropConfs,
 		bcastAcceptance:        bcastAcceptance,
+		minBatchSize:           minBatchSize,
 	}
 	r.ringCommit = false
 
@@ -1646,29 +1648,48 @@ func (r *Replica) propose(inst int32) {
 			}(inst, pbk.propCurConfBal)
 			return
 		} else {
-			switch cliProp := r.clientValueQueue.TryDequeue(); {
-			case cliProp != nil:
-				numEnqueued := r.clientValueQueue.Len() + 1
+			switch qLen := int32(r.clientValueQueue.Len()); {
+			case qLen >= r.minBatchSize:
+				numEnqueued := r.clientValueQueue.Len()
 				batchSize := min(numEnqueued, r.maxBatchedProposalVals)
 				pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
 				pbk.cmds = make([]state.Command, batchSize)
-				pbk.clientProposals[0] = cliProp
-				pbk.cmds[0] = cliProp.Command
-				//batched := 0
-				for i := 1; i < batchSize; i++ {
-					cliProp = r.clientValueQueue.TryDequeue()
+				for batched := 0; batched < batchSize; {
+					cliProp := r.clientValueQueue.TryDequeue()
 					if cliProp == nil {
-						pbk.clientProposals = pbk.clientProposals[:i]
-						pbk.cmds = pbk.cmds[:i]
-						break
+						continue
 					}
-					pbk.clientProposals[i] = cliProp
-					pbk.cmds[i] = cliProp.Command
+					pbk.clientProposals[batched] = cliProp
+					pbk.cmds[batched] = cliProp.Command
+					batched++
 				}
 				dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
 				r.stats.Update("Proposed Instances with Values", 1)
-
 				break
+
+			//switch cliProp := r.clientValueQueue.TryDequeue(); {
+			//case cliProp != nil:
+			//	numEnqueued := r.clientValueQueue.Len() + 1
+			//	batchSize := min(numEnqueued, r.maxBatchedProposalVals)
+			//	pbk.clientProposals = make([]*genericsmr.Propose, batchSize)
+			//	pbk.cmds = make([]state.Command, batchSize)
+			//	pbk.clientProposals[0] = cliProp
+			//	pbk.cmds[0] = cliProp.Command
+			//	//batched := 0
+			//	for i := 1; i < batchSize; i++ {
+			//		cliProp = r.clientValueQueue.TryDequeue()
+			//		if cliProp == nil {
+			//			pbk.clientProposals = pbk.clientProposals[:i]
+			//			pbk.cmds = pbk.cmds[:i]
+			//			break
+			//		}
+			//		pbk.clientProposals[i] = cliProp
+			//		pbk.cmds[i] = cliProp.Command
+			//	}
+			//	dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
+			//	r.stats.Update("Proposed Instances with Values", 1)
+			//
+			//	break
 			default:
 				if r.noopWaitUs > 0 {
 					go func(inst int32, confBal lwcproto.ConfigBal) {

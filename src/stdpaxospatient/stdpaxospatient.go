@@ -1389,13 +1389,13 @@ func (r *Replica) propose(inst int32) {
 	pbk.status = PROPOSING
 	r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
 	// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
-	if r.fastLearn {
-		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
-		r.bcastAccept(inst)
-	} else {
-		r.bcastAccept(inst)
-		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
-	}
+	//	if r.fastLearn {
+	r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
+	r.bcastAccept(inst)
+	//	} else {
+	//		r.bcastAccept(inst)
+	//		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
+	//	}
 }
 
 func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32) {

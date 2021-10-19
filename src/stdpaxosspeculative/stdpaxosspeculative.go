@@ -719,17 +719,17 @@ func (r *Replica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 
 		pbk.status = PROPOSING
 		// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
-		if r.fastLearn {
-			r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.curBal, pbk.cmds)
-			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+		//	if r.fastLearn {
+		r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.curBal, pbk.cmds)
+		r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
 
-			r.bcastAccept(proposalInfo.inst)
-		} else {
-			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+		r.bcastAccept(proposalInfo.inst)
+		//	} else {
+		//		r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
 
-			r.bcastAccept(proposalInfo.inst)
-			r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.curBal, pbk.cmds)
-		}
+		//		r.bcastAccept(proposalInfo.inst)
+		r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.curBal, pbk.cmds)
+		//	}
 	}
 }
 
@@ -1441,17 +1441,17 @@ func (r *Replica) propose(inst int32) {
 	}
 	pbk.status = PROPOSING
 	// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
-	if r.fastLearn {
-		r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
-		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
+	//if r.fastLearn {
+	//	r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+	//	r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
 
-		r.bcastAccept(inst)
-	} else {
-		r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+	//	r.bcastAccept(inst)
+	//	} else {
+	r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+	r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
 
-		r.bcastAccept(inst)
-		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
-	}
+	r.bcastAccept(inst)
+	//}
 }
 
 func (r *Replica) shouldNoop(inst int32) bool {
