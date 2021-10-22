@@ -75,7 +75,7 @@ var initProposalWaitUs = flag.Int("initproposalwaitus", 0, "How long to wait bef
 
 var emulatedSS *bool = flag.Bool("emulatedss", false, "emulated stable storage")
 var emulatedWriteTimeNs *int = flag.Int("emulatedwritetimens", 0, "emulated stable storage write time in nanoseconds")
-
+var minBatchSize *int = flag.Int("minbatch", 1, "Minimum batch size for speculative Paxos (only for LWP currently)")
 var group1Size *int = flag.Int("group1size", -1, "group 1 size (-1 = thrify)")
 var flushCommit *bool = flag.Bool("flushcommit", true, "flush commits to buffer")
 var softExp *bool = flag.Bool("softExp", false, "flush commits to buffer")
@@ -163,7 +163,7 @@ func main() {
 
 	} else if *doLWCSpec {
 		log.Println("Starting LWC replica...")
-		rep := lwcspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance)
+		rep := lwcspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
 		rpc.Register(rep)
 	} else if *doLWCGlobalSpec {
 		log.Println("Starting LWC replica...")
