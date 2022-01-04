@@ -87,7 +87,7 @@ var nothreadexec *bool = flag.Bool("nothreadexec", false, "optional turning off 
 
 var catchUpFallenBehind *bool = flag.Bool("catchupfallenbehind", false, "catch up those who send messages for instances fallen behind")
 
-var deadTime *int = flag.Int("deadtime", 5000, "time to take replica out of quorum (default 5 second)")
+var deadTime *int = flag.Int("deadtime", 20000, "time to take replica out of quorum (default 20 second)")
 var batchsize *int = flag.Int("batchsize", 1024, "max vals held in a proposal")
 
 var skipwaitms *int = flag.Int("skipwaitms", 350, "ms to wait before mencius skips")

@@ -251,14 +251,8 @@ func benchmarkValue(proxy *bindings.Parameters, value ClientValue) {
 func main() {
 
 	flag.Parse()
-
 	runtime.GOMAXPROCS(*procs)
-
 	rand.Seed(time.Now().UnixNano())
-
-	//if *conflicts > 100 {
-	//	log.Fatalf("Conflicts percentage must be between 0 and 100.\n")
-	//}
 
 	if clientId == -1 {
 		clientId = int64(uuid.New().ID())
@@ -303,13 +297,7 @@ func main() {
 
 	beginBenchmarkingValues(benchmarker, proxy, *outstanding)
 
-	//shouldStats := make(chan bool)
-	//rate := *sampleRateMs
 	statsTimer := time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
-	//	go func() {
-	//	<-statsTimer.C
-	//	shouldStats <- true
-	//}()
 
 	// set up listener chan
 
@@ -319,11 +307,6 @@ func main() {
 		case <-statsTimer.C:
 			benchmarker.timeseriesStep()
 			statsTimer = time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
-
-			//	go func() {
-
-			//	shouldStats <- true
-			//	}()
 			break
 		case value := <-valueDone:
 			done := benchmarker.close(value)
@@ -331,13 +314,9 @@ func main() {
 				//	panic("returned value already done or never started")
 			} else {
 				newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
-
 				benchmarkValue(proxy, newValue)
 			}
-			//case value <-listener:
 			break
-			//	default:
-			//	break
 		}
 	}
 
