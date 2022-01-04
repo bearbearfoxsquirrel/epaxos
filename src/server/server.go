@@ -60,7 +60,7 @@ var beacon = flag.Bool("beacon", false, "Send beacons to other replicas to compa
 var maxfailures = flag.Int("maxfailures", -1, "maximum number of maxfailures; default is a minority, ignored by other protocols than Paxos.")
 var durable = flag.Bool("durable", false, "Log to a stable store (i.e., a file in the current dir).")
 var batchWait = flag.Int("batchwait", 0, "Milliseconds to wait before sending a batch. If set to 0, batching is disabled. Defaults to 0.")
-var transitiveConflicts = flag.Bool("transitiveconf", true, "Conflict relation is transitive.")
+var transitiveConflicts = flag.Bool("transitiveconf", false, "Conflict relation is transitive.")
 var storageParentDir = flag.String("storageparentdir", "./", "The parent directory of the stable storage file. Defaults to ./")
 var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
 var fastLearn *bool = flag.Bool("flearn", false, "Learn quickly when f=1")
