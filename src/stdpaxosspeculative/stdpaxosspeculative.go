@@ -117,7 +117,7 @@ const (
 	COMMITTED
 )
 
-type AcceptorBookkeeping struct {
+type BallotAcceptorBookkeeping struct {
 	status   AcceptorStatus
 	cmds     []state.Command
 	curBal   stdpaxosproto.Ballot
@@ -125,8 +125,8 @@ type AcceptorBookkeeping struct {
 }
 
 type Instance struct {
-	abk *AcceptorBookkeeping
-	pbk *ProposingBookkeeping
+	abk *BallotAcceptorBookkeeping
+	pbk *BallotProposingBookkeeping
 }
 
 func (q QuorumInfo) quorumCount() int32 {
@@ -168,7 +168,7 @@ type QuorumInfo struct {
 	aids    map[int32]struct{}
 }
 
-type ProposingBookkeeping struct {
+type BallotProposingBookkeeping struct {
 	status             ProposerStatus
 	proposalInfos      map[stdpaxosproto.Ballot]*QuorumInfo
 	maxAcceptedConfBal stdpaxosproto.Ballot // highest maxAcceptedConfBal at which a command was accepted
@@ -997,13 +997,13 @@ func (r *Replica) incToNextOpenInstance() {
 
 func (r *Replica) makeEmptyInstance() *Instance {
 	return &Instance{
-		abk: &AcceptorBookkeeping{
+		abk: &BallotAcceptorBookkeeping{
 			status:   NOT_STARTED,
 			cmds:     nil,
 			curBal:   stdpaxosproto.Ballot{-1, -1},
 			vConfBal: stdpaxosproto.Ballot{-1, -1},
 		},
-		pbk: &ProposingBookkeeping{
+		pbk: &BallotProposingBookkeeping{
 			status:        NOT_BEGUN,
 			proposalInfos: make(map[stdpaxosproto.Ballot]*QuorumInfo),
 
@@ -1250,7 +1250,7 @@ const (
 	CHOSEN
 )
 
-func (pbk *ProposingBookkeeping) isProposingClientValue() bool {
+func (pbk *BallotProposingBookkeeping) isProposingClientValue() bool {
 	return pbk.status == PROPOSING && pbk.clientProposals != nil
 }
 

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"configtwophase"
 	"epaxos"
 	"flag"
 	"fmt"
+	"genericsmr"
 	"gpaxos"
+	"instanceacceptormapper"
 	"io/ioutil"
 	"log"
 	"lwcglobalspec"
@@ -18,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"paxos"
+	"quorumsystem"
 	"runtime/pprof"
 	"stdpaxosglobalspec"
 	"stdpaxospatient"
@@ -41,6 +45,8 @@ var doLWCPatient *bool = flag.Bool("lp", false, "Use Less Writey Consensus as th
 var doSTDSpec *bool = flag.Bool("ss", false, "Use Standard Paxos Consensus as the replication protocol with Speculative proposals. Defaults to false.")
 var doSTDGlobalSpec *bool = flag.Bool("sgs", false, "Use Standard Paxos Consensus as the replication protocol with Speculative proposals. Defaults to false.")
 var doSTDPatient *bool = flag.Bool("sp", false, "Use Standard Paxos Consensus as the replication protocol with Patient proposals. Defaults to false.")
+
+var doELP *bool = flag.Bool("elp", false, "Use ELP algorithm")
 
 var crtConfig = flag.Int("config", 1, "Current config in LWC")
 var maxOInstances = flag.Int("oi", 50, "Max number of open instances in leaderless LWC")
@@ -99,6 +105,9 @@ var reducePropConfs *bool = flag.Bool("reducepropconfs", false, "Reduce proposer
 var bcastAcceptance *bool = flag.Bool("bcastacceptance", false, "In lwp broadcast acceptance")
 
 var batch *bool = flag.Bool("batch", false, "turns on if batch wait > 0 also")
+
+var reducedQrmSize *bool = flag.Bool("reducedqrmsize", false, "sets qrms to the minimum f+1 size (2f+1 groups of acceptors)")
+var gridQrms *bool = flag.Bool("gridqrms", false, "Use grid quorums")
 
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
@@ -184,6 +193,66 @@ func main() {
 	} else if *doSTDPatient {
 		log.Println("Starting LWC replica...")
 		rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt)
+		rpc.Register(rep)
+	} else if *doELP {
+
+		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
+
+		var qrm quorumsystem.SynodQuorumSystemConstructor
+
+		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
+			F:       0,
+			Replica: smrReplica,
+			Thrifty: *thrifty,
+		}
+		if *gridQrms {
+			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
+				F:       *maxfailures,
+				Replica: smrReplica,
+				Thrifty: *thrifty,
+			}
+		}
+
+		aids := make([]int, len(nodeList))
+		for i, _ := range aids {
+			aids[i] = i
+		}
+
+		balloter := configtwophase.Balloter{
+			PropID: int32(replicaId),
+			N:      int32(smrReplica.N),
+			MaxInc: 10000,
+		}
+		var initialtor configtwophase.ProposalManager
+		initialtor = &configtwophase.NormalQuorumProposalInitiator{
+			SynodQuorumSystemConstructor: qrm,
+			Balloter:                     balloter,
+			Aids:                         aids,
+		}
+
+		if *reducedQrmSize {
+			var mapper instanceacceptormapper.InstanceAcceptorMapper
+			if *gridQrms {
+				mapper = &instanceacceptormapper.InstanceAcceptorGridMapper{
+					Acceptors: aids,
+					F:         *maxfailures,
+					N:         len(nodeList),
+				}
+			} else {
+				mapper = &instanceacceptormapper.InstanceAcceptorSetMapper{
+					Acceptors: aids,
+					F:         *maxfailures,
+					N:         len(nodeList),
+				}
+			}
+
+			initialtor = &configtwophase.ReducedQuorumProposalInitiator{
+				AcceptorMapper:               mapper,
+				SynodQuorumSystemConstructor: qrm,
+				Balloter:                     balloter,
+			}
+		}
+		rep := configtwophase.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor)
 		rpc.Register(rep)
 	} else {
 		log.Println("Starting classic Paxos replica...")
