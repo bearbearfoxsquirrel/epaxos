@@ -4,6 +4,22 @@ import (
 	"state"
 )
 
+type Configuration interface {
+	GetConfiguration() Configuration
+	//	GetOrdering() Ordering
+}
+
+type Round interface {
+	GetRound() Round
+	//	GetOrdering() Ordering
+}
+
+type ConfigurationRound interface {
+	GetConfiguration() ConfigurationRound
+	GetRound() Round
+	// GetOrdering() Ordering
+}
+
 //
 //type Orderable interface {
 //	CompareIsLessThan(Orderable) IsLessThanOrdering
@@ -12,12 +28,37 @@ import (
 //}
 //
 //
+//
+//type Proposal interface { // caller should know which type to give
+//	Serialise()   []byte
+//	GetHashable() interface{}
+//}
 
 type ConfigBal struct {
 	Config int32
 	Ballot
 }
 
+//
+//func (cb *ConfigBal) GetHash() interface{} {
+//	return cb
+//}
+//
+//type ProposalOrdering interface {
+//	Apply() bool
+//}
+//
+//type ConfBalLessThan struct {
+//	a, b ConfigBal
+//}
+//
+//func (lt *ConfBalLessThan) Apply() bool {
+//	x := ConfBalOrdering{
+//		a: lt.a,
+//		b: lt.b,
+//	}
+//	return x.IsLessThan()
+//}
 //
 //func (cb * ConfigBal) CompareIsLessThan(orderable Orderable) Ordering {
 //	return &ConfBalOrdering{a, b}

@@ -22,11 +22,14 @@ import (
 	"os/signal"
 	"paxos"
 	"quorumsystem"
+	"runnable"
 	"runtime/pprof"
 	"stdpaxosglobalspec"
 	"stdpaxospatient"
 	"stdpaxosspeculative"
+	"syscall"
 	"time"
+	"twophase"
 )
 
 var portnum *int = flag.Int("port", 7070, "Port # to listen on. Defaults to 7070")
@@ -135,9 +138,6 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 
-		interrupt := make(chan os.Signal, 1)
-		signal.Notify(interrupt)
-		go catchKill(interrupt)
 	}
 
 	log.Printf("Server starting on port %d\n", *portnum)
@@ -155,8 +155,12 @@ func main() {
 
 	//TODO give parent dir to all replica types
 
+	initalProposalWait := time.Duration(*initProposalWaitUs) * time.Microsecond
+
 	emulatedWriteTime := time.Nanosecond * time.Duration(*emulatedWriteTimeNs)
 	timeout := time.Microsecond * time.Duration(*timeoutus)
+
+	var runnable runnable.Runnable
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
 		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *cmpCmtExec, *cmpCmtExecLoc, !*nothreadexec, int32(*deadTime))
@@ -194,7 +198,7 @@ func main() {
 		log.Println("Starting LWC replica...")
 		rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt)
 		rpc.Register(rep)
-	} else if *doELP {
+	} else if *doELP || *doLessWriteyNonEager {
 
 		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
 
@@ -252,14 +256,107 @@ func main() {
 				Balloter:                     balloter,
 			}
 		}
-		rep := configtwophase.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor)
+		var rep interface{}
+		if *doELP {
+			rep = configtwophase.NewElpReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
+				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind,
+				*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor)
+
+		} else {
+			rep = configtwophase.NewLwsReplica(initialtor, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
+				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind,
+				*batchsize, *constBackoff, *requeueOnPreempt)
+		}
 		rpc.Register(rep)
+
+	} else if *dostdEager || *doBaselineTwoPhase {
+
+		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
+
+		var qrm quorumsystem.SynodQuorumSystemConstructor
+
+		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
+			F:       0,
+			Replica: smrReplica,
+			Thrifty: *thrifty,
+		}
+		if *gridQrms {
+			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
+				F:       *maxfailures,
+				Replica: smrReplica,
+				Thrifty: *thrifty,
+			}
+		}
+
+		aids := make([]int, len(nodeList))
+		for i, _ := range aids {
+			aids[i] = i
+		}
+
+		balloter := twophase.Balloter{
+			PropID: int32(replicaId),
+			N:      int32(smrReplica.N),
+			MaxInc: 10000,
+		}
+		var initialtor twophase.ProposalManager
+		initialtor = &twophase.NormalQuorumProposalInitiator{
+			SynodQuorumSystemConstructor: qrm,
+			Balloter:                     balloter,
+			Aids:                         aids,
+		}
+
+		if *reducedQrmSize {
+			var mapper instanceacceptormapper.InstanceAcceptorMapper
+			if *gridQrms {
+				mapper = &instanceacceptormapper.InstanceAcceptorGridMapper{
+					Acceptors: aids,
+					F:         *maxfailures,
+					N:         len(nodeList),
+				}
+			} else {
+				mapper = &instanceacceptormapper.InstanceAcceptorSetMapper{
+					Acceptors: aids,
+					F:         *maxfailures,
+					N:         len(nodeList),
+				}
+			}
+
+			initialtor = &twophase.ReducedQuorumProposalInitiator{
+				AcceptorMapper:               mapper,
+				SynodQuorumSystemConstructor: qrm,
+				Balloter:                     balloter,
+			}
+		}
+		var rep interface{}
+		if *doELP {
+			rep = twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
+				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind,
+				*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor)
+
+		} else {
+			rep = twophase.NewBaselineTwoPhaseReplica(initialtor, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
+				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
+				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *cmpCmtExec, *cmpCmtExecLoc, *catchUpFallenBehind,
+				*batchsize, *constBackoff, *requeueOnPreempt)
+		}
+		rpc.Register(rep)
+
 	} else {
 		log.Println("Starting classic Paxos replica...")
 		rep := paxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime))
 		rpc.Register(rep)
 	}
 
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, os.Kill)
+	go catchKill(interrupt, runnable)
 	rpc.HandleHTTP()
 	//listen for RPC on a different port (8070 by default)
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", *portnum+1000))
@@ -294,11 +391,12 @@ func registerWithMaster(masterAddr string) (int, []string, bool) {
 	return reply.ReplicaId, reply.NodeList, reply.IsLeader
 }
 
-func catchKill(interrupt chan os.Signal) {
+func catchKill(interrupt chan os.Signal, runnable runnable.Runnable) {
 	<-interrupt
 	if *cpuprofile != "" {
 		pprof.StopCPUProfile()
 	}
 	fmt.Println("Caught signal")
+	runnable.CloseUp()
 	os.Exit(0)
 }

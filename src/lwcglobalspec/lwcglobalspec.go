@@ -1672,7 +1672,7 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 			if r.cmpCommitAndExec {
 				id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
 				r.commitExecComp.RecordExecution(id, time.Now())
-				//r.commitExecComp.Output(id)
+				//r.commitExecComp.outputCmtExecAndDiffTimes(id)
 			}
 
 			r.executedUpTo += 1

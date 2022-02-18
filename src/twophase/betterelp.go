@@ -1,4 +1,4 @@
-package configtwophase
+package twophase
 
 import (
 	"CommitExecutionComparator"
@@ -61,7 +61,6 @@ type elpReplica struct {
 	acceptReplyRPC             uint8
 	instanceSpace              []*Instance // the space of all instances (used and not yet used)
 	crtInstance                int32       // highest active instance number that this replica knows about
-	crtConfig                  int32
 	Shutdown                   bool
 	counter                    int
 	flush                      bool
@@ -105,64 +104,6 @@ type elpReplica struct {
 	reducePropConfs            bool
 	bcastAcceptance            bool
 	minBatchSize               int32
-}
-
-type ServerStats struct {
-	register    map[string]int32
-	orderedKeys []string
-	statsFile   *os.File
-	C           chan struct{}
-}
-
-func ServerStatsNew(initalRegisters []string, loc string) ServerStats {
-
-	statsFile, _ := os.Create(loc)
-	register := make(map[string]int32)
-	for i := 0; i < len(initalRegisters); i++ {
-		register[initalRegisters[i]] = 0
-	}
-
-	return ServerStats{
-		register:    register,
-		statsFile:   statsFile,
-		orderedKeys: initalRegisters,
-		C:           make(chan struct{}),
-	}
-}
-
-func (s *ServerStats) Reset() {
-	for k, _ := range s.register {
-		s.register[k] = 0
-	}
-}
-
-func (s *ServerStats) Update(stat string, count int32) {
-	s.register[stat] = s.register[stat] + count
-}
-
-func (s *ServerStats) Get(stat string) int32 {
-	return s.register[stat]
-}
-
-func (s *ServerStats) Print() {
-	str := strings.Builder{}
-	for i := 0; i < len(s.orderedKeys); i++ {
-		k := s.orderedKeys[i]
-		v := s.register[k]
-		str.WriteString(fmt.Sprintf("%s : %d ", k, v))
-	}
-
-	str.WriteString("\n")
-	s.statsFile.WriteString(time.Now().Format("2006/01/02 15:04:05 ") + str.String())
-}
-
-func (s *ServerStats) GoClock() {
-	go func() {
-		for {
-			time.Sleep(time.Second)
-			s.C <- struct{}{}
-		}
-	}()
 }
 
 type TimeoutInfo struct {
@@ -374,15 +315,15 @@ func (r *elpReplica) noopStillRelevant(inst int32) bool {
 
 const MAXPROPOSABLEINST = 1000
 
-func NewReplica(smrReplica *genericsmr.Replica, id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32,
+func NewBaselineEagerReplica(smrReplica *genericsmr.Replica, id int, durable bool, batchWait int,
 	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
 	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
-	cmpCmtExecLoc string, commitCatchUp bool, deadTime int32, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool, minBatchSize int32, initiator ProposalManager) *elpReplica {
+	cmpCmtExecLoc string, commitCatchUp bool, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool, minBatchSize int32, initiator ProposalManager) *elpReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &elpReplica{
-		Replica:                smrReplica, //genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
+		Replica:                smrReplica, //genericsmr.NewBaselineEagerReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
 		ProposalManager:        initiator,
 		configChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		prepareChan:            make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -399,7 +340,6 @@ func NewReplica(smrReplica *genericsmr.Replica, id int, peerAddrList []string, t
 		acceptReplyRPC:         0,
 		instanceSpace:          make([]*Instance, 15*1024*1024),
 		crtInstance:            0, //get from storage
-		crtConfig:              1,
 		Shutdown:               false,
 		counter:                0,
 		flush:                  true,
@@ -482,7 +422,6 @@ func (r *elpReplica) recordInstanceMetadata(inst *Instance) {
 	}
 
 	var b [12]byte
-	binary.LittleEndian.PutUint32(b[0:4], uint32(r.crtConfig))
 	binary.LittleEndian.PutUint32(b[4:8], uint32(inst.abk.curBal.Number))
 	binary.LittleEndian.PutUint32(b[8:12], uint32(inst.abk.curBal.PropID))
 	_, _ = r.StableStore.Write(b[:])
@@ -560,8 +499,6 @@ func (r *elpReplica) restart() {
 
 	r.stats.Reset()
 	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac, r.BackoffManager.constBackoff)
-	r.crtConfig++
-	r.recordNewConfig(r.crtConfig)
 	r.catchingUp = true
 	r.crtOpenedInstances = make([]int32, r.maxOpenInstances)
 
@@ -1698,7 +1635,7 @@ func (r *elpReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 				if r.cmpCommitExec {
 					id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
 					r.commitExecComp.RecordExecution(id, time.Now())
-					//r.commitExecComp.Output(id)
+					//r.commitExecComp.outputCmtExecAndDiffTimes(id)
 				}
 				//	returnInst.pbk = nil
 				r.executedUpTo += 1

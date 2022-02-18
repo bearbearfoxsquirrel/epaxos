@@ -1,4 +1,4 @@
-package configtwophase
+package twophase
 
 import (
 	"math"

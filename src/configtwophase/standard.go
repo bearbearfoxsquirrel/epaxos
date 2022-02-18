@@ -1,6 +1,7 @@
 package configtwophase
 
 import (
+	"CommitExecutionComparator"
 	"clientproposalqueue"
 	"dlog"
 	"encoding/binary"
@@ -73,13 +74,21 @@ type lwsReplica struct {
 	commitCatchUp                 bool
 	batchSize                     int
 	requeueOnPreempt              bool
+	//	stats                         ServerStats
+	//	commitExecComp                *CommitExecutionComparator.CommitExecutionComparator
+	cmpCommitExec bool
 }
 
-func NewLwsReplica(propMan ProposalManager, id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, crtConfig int32, storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool) *lwsReplica {
+func NewLwsReplica(propMan ProposalManager, replica *genericsmr.Replica, id int, durable bool, batchWait int,
+	storageParentLoc string, maxOpenInstances int32,
+	minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32,
+	whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration,
+	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
+	cmpCmtExecLoc string, commitCatchup bool, batchSize int, constBackoff bool, requeueOnPreempt bool) *lwsReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &lwsReplica{
 		ProposalManager:     propMan,
-		Replica:             genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
+		Replica:             replica,
 		configChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		prepareChan:         make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		acceptChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -125,6 +134,8 @@ func NewLwsReplica(propMan ProposalManager, id int, peerAddrList []string, thrif
 		commitCatchUp:       commitCatchup,
 		batchSize:           batchSize,
 		requeueOnPreempt:    requeueOnPreempt,
+		stats:               ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
+		cmpCommitExec:       cmpCmtExec,
 	}
 
 	if group1Size <= r.N-r.F {
@@ -142,6 +153,10 @@ func NewLwsReplica(propMan ProposalManager, id int, peerAddrList []string, thrif
 	r.commitShortRPC = r.RegisterRPC(new(lwcproto.CommitShort), r.commitShortChan)
 	r.prepareReplyRPC = r.RegisterRPC(new(lwcproto.PrepareReply), r.prepareReplyChan)
 	r.acceptReplyRPC = r.RegisterRPC(new(lwcproto.AcceptReply), r.acceptReplyChan)
+
+	if cmpCmtExec {
+		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(cmpCmtExecLoc)
+	}
 
 	go r.run()
 	return r
@@ -393,7 +408,6 @@ func (r *lwsReplica) run() {
 				break
 			}
 			dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
-
 			if !r.checkAndHandlecatchupRequest(prepare) {
 				r.handlePrepare(prepare)
 			}
@@ -1201,10 +1215,12 @@ func (r *lwsReplica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal
 		break
 	case ProposedAndChosen:
 		dlog.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals), inst)
-		//		for i := 0; i < len(pbk.clientProposals); i++ {
-		//		r.clientValueQueue.CloseValue(pbk.clientProposals[i])
-		//	}
 		break
+	}
+
+	if r.cmpCommitExec {
+		id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
+		r.commitExecComp.RecordCommit(id, time.Now())
 	}
 
 	//if r.instanceSpace[inst].pbk.status != CLOSED && r.instanceSpace[inst].abk.status != COMMITTED {
