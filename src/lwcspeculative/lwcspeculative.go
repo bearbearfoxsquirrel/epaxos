@@ -353,7 +353,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedConfBal lwc
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
-	log.Printf("Beginning backoff of %d us for instance %d on conf-bal %d.%d (attempt %d)", next, inst, attemptedConfBal.Number, attemptedConfBal.PropID, preemptNum)
+	dlog.Printf("Beginning backoff of %d us for instance %d on conf-bal %d.%d (attempt %d)", next, inst, attemptedConfBal.Number, attemptedConfBal.PropID, preemptNum)
 	bm.currentBackoffs[inst] = RetryInfo{
 		backedoff:        true,
 		InstToPrep:       inst,

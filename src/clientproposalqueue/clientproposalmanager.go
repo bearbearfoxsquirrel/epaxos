@@ -184,6 +184,10 @@ func (q *ClientProposalQueue) TryDequeue() *genericsmr.Propose {
 	}
 }
 
+func (q *ClientProposalQueue) GetQueueChan() chan *genericsmr.Propose {
+	return q.proposalsQueue
+}
+
 func (q *ClientProposalQueue) isQueued(propose *genericsmr.Propose) bool {
 	uid := UID{
 		commandID: propose.CommandId,

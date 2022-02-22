@@ -1637,7 +1637,7 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 				pbk.clientProposals[i].Timestamp}
 			r.ReplyProposeTS(propreply, pbk.clientProposals[i].Reply, pbk.clientProposals[i].Mutex)
 		}
-		//	id := CommitExecutionComparator.InstanceID{pbk.clientProposals[i].CliID}
+		//	id := commitExecutionComparator.InstanceID{pbk.clientProposals[i].CliID}
 	}
 
 	if r.cmpCommitAndExec {

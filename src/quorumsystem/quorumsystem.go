@@ -4,11 +4,12 @@ import (
 	"dlog"
 	"fastrpc"
 	"genericsmr"
-	"log"
 	"math"
 	"math/rand"
 	"quorum"
 )
+
+//todo figure out when to reset bcast attempts, new phase or never?
 
 type SynodQuorumSystemConstructor interface {
 	Construct(acceptors []int) SynodQuorumSystem
@@ -31,6 +32,7 @@ func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) Sy
 		p2size:  constructor.F + 1,
 		thrifty: constructor.Thrifty,
 		Replica: constructor.Replica,
+		allAids: acc,
 	}
 }
 
@@ -63,7 +65,7 @@ func (constructor *SynodGridQuorumSystemConstructor) Construct(acc []int) SynodQ
 		j = min(k+constructor.F+1, groupN)
 		a := acc[k:j]
 		k = j
-		log.Println(a)
+		//log.Println(a)
 		cols[i] = a
 	}
 
@@ -75,7 +77,7 @@ func (constructor *SynodGridQuorumSystemConstructor) Construct(acc []int) SynodQ
 			row[l] = cols[l][i]
 		}
 		rem -= rowLen
-		log.Println(row)
+		//log.Println(row)
 		rows[i] = row
 	}
 	return &GridQuorumSynodQuorumSystem{
@@ -109,7 +111,7 @@ func (constructor *SynodTringleGridQuorumSystemConstructor) Construct(acc []int)
 		j = k + colLen
 		a := acc[k:j]
 		k = j
-		log.Println(a)
+		//log.Println(a)
 		cols[i] = a
 		colLen--
 	}
@@ -209,6 +211,9 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	}()
 
 	qrmSys.Replica.CalculateAlive()
+	//log.Println("broadcasting")
+	//log.Println("attmots" , qrmSys.bcastAttempts)
+	//log.Println("thrifty", qrmSys.thrifty)
 	if qrmSys.thrifty && qrmSys.bcastAttempts < 2 {
 		groupSize := qrmSys.crtQrmSize
 		numSent := 0
@@ -217,21 +222,29 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		rand.Shuffle(len(qrmSys.allAids), func(i, j int) {
 			qrmSys.allAids[i], qrmSys.allAids[j] = qrmSys.allAids[j], qrmSys.allAids[i]
 		})
+
+		//log.Println(qrmSys.allAids)
+
 		for _, a := range qrmSys.allAids {
+			//log.Println("sending to ", a)
 			if qrmSys.Alive[a] {
 				qrmSys.Replica.SendMsg(int32(a), code, msg)
 				numSent++
 			} else if int32(a) == qrmSys.Replica.Id {
 				//	qrmSys.crtQrm.Add(a)
 				numSent++
+			} else {
+				//log.Println("jk they are dead or me")
 			}
 			if numSent == groupSize {
+				qrmSys.bcastAttempts++
 				return // we managed to send to a quorum so can return
 			}
 		} // if fail to find a quorum, just fall back on sending to all
 		qrmSys.bcastAttempts++
 	}
 	// send to all
+	println("sending to all")
 	sendToAll(qrmSys.allAids, qrmSys.Replica, code, msg)
 }
 
@@ -283,7 +296,7 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 
 	possibleQrms := qrmSys.rows
 	if qrmSys.Phase == ACCEPTANCE {
-		log.Println("Acceptance broadcast")
+		//log.Println("Acceptance broadcast")
 		possibleQrms = qrmSys.cols
 	}
 
@@ -307,7 +320,7 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 			for _, a := range possibleQrms[livingQuorums[qrmSelected]] {
 				// don't need to send to self, just need to record our acknowledgement
 				if a32 := int32(a); qrmSys.Replica.Id != a32 {
-					log.Println("Sending to %d", a32)
+					//log.Println("Sending to %d", a32)
 					qrmSys.Replica.SendMsg(a32, code, msg)
 				} // else {
 				//	qrmSys.crtQrm.Add(a)
@@ -382,7 +395,7 @@ func (qrmSys *BetterGridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastr
 
 	possibleQrms := qrmSys.rows
 	if qrmSys.Phase == ACCEPTANCE {
-		log.Println("Acceptance broadcast")
+		//log.Println("Acceptance broadcast")
 		possibleQrms = qrmSys.cols
 	}
 
@@ -406,7 +419,7 @@ func (qrmSys *BetterGridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastr
 			for _, a := range possibleQrms[livingQuorums[qrmSelected]] {
 				// don't need to send to self, just need to record our acknowledgement
 				if a32 := int32(a); qrmSys.Replica.Id != a32 {
-					log.Println("Sending to %d", a32)
+					//log.Println("Sending to %d", a32)
 					qrmSys.Replica.SendMsg(a32, code, msg)
 				} // else {
 				//	qrmSys.crtQrm.Add(a)

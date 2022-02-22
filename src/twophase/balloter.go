@@ -36,5 +36,5 @@ func (balloter *Balloter) getNextProposingBal(maxPrevRoundNum int32) stdpaxospro
 }
 
 func (ballot *Balloter) GetAttemptNumber(rnd int32) int {
-	return 1
+	return int(rnd / ballot.MaxInc)
 }

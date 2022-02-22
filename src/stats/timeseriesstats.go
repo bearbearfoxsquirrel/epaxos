@@ -14,11 +14,15 @@ func (d DefaultTSMetrics) Get() []string {
 		"Instances Opened",
 		"My Phase 1 Preempted",
 		"My Phase 2 Preempted",
-		"Instances with Noops Proposed",
-		"Instances with Client Values Proposed",
-		"Instances Previous Value Proposed",
+		"Times Noops Proposed",
+		"Times Client Values Proposed",
+		"Times Previous Value Proposed",
 		"Requeued Client Values",
-		"Instances Executed"}
+		"Instances I Choose",
+		"Instances Learnt",
+		"Instances Executed",
+		"Message Timeouts",
+	}
 }
 
 type TimeseriesStats struct {
@@ -30,14 +34,23 @@ type TimeseriesStats struct {
 	close       chan struct{}
 }
 
-func TimeseriesStatsNew(initalRegisters []string, loc string, tick time.Duration) TimeseriesStats {
+func TimeseriesStatsNew(initalRegisters []string, loc string, tick time.Duration) *TimeseriesStats {
 	statsFile, _ := os.Create(loc)
 	register := make(map[string]int32)
 	for i := 0; i < len(initalRegisters); i++ {
 		register[initalRegisters[i]] = 0
 	}
 
-	return TimeseriesStats{
+	str := strings.Builder{}
+	str.WriteString("Date, Time, Log ID, Log Seq No")
+	for i := 0; i < len(initalRegisters); i++ {
+		str.WriteString(fmt.Sprintf(", %s", initalRegisters[i]))
+	}
+	str.WriteString(", ")
+	str.WriteString("\n")
+	statsFile.WriteString(str.String())
+
+	return &TimeseriesStats{
 		register:    register,
 		statsFile:   statsFile,
 		orderedKeys: initalRegisters,
@@ -66,11 +79,14 @@ func (s *TimeseriesStats) Print() {
 	for i := 0; i < len(s.orderedKeys); i++ {
 		k := s.orderedKeys[i]
 		v := s.register[k]
-		str.WriteString(fmt.Sprintf("%s : %d ", k, v))
+		str.WriteString(fmt.Sprintf("%d", v))
+		if i != len(s.orderedKeys)-1 {
+			str.WriteString(", ")
+		}
 	}
 
 	str.WriteString("\n")
-	s.statsFile.WriteString(time.Now().Format("2006/01/02 15:04:05 .000 ") + str.String())
+	s.statsFile.WriteString(time.Now().Format("2006/01/02, 15:04:05 .000, ") + str.String())
 }
 
 func (s *TimeseriesStats) PrintAndReset() {

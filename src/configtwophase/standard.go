@@ -1,7 +1,6 @@
 package configtwophase
 
 import (
-	"CommitExecutionComparator"
 	"clientproposalqueue"
 	"dlog"
 	"encoding/binary"
@@ -15,10 +14,11 @@ import (
 	"net"
 	"quorumsystem"
 	"state"
+	"stats"
 	"time"
 )
 
-type lwsReplica struct {
+type LWPReplica struct {
 	ProposalManager
 	*genericsmr.Replica // extends a generic Paxos replica
 	configChan          chan fastrpc.Serializable
@@ -75,18 +75,20 @@ type lwsReplica struct {
 	batchSize                     int
 	requeueOnPreempt              bool
 	//	stats                         ServerStats
-	//	commitExecComp                *CommitExecutionComparator.CommitExecutionComparator
-	cmpCommitExec bool
+	//	commitExecComp                *commitExecutionComparator.commitExecutionComparator
+	doStats         bool
+	TimeseriesStats *stats.TimeseriesStats
+	InstanceStats   *stats.InstanceStats
 }
 
 func NewLwsReplica(propMan ProposalManager, replica *genericsmr.Replica, id int, durable bool, batchWait int,
 	storageParentLoc string, maxOpenInstances int32,
 	minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32,
 	whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration,
-	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, cmpCmtExec bool,
-	cmpCmtExecLoc string, commitCatchup bool, batchSize int, constBackoff bool, requeueOnPreempt bool) *lwsReplica {
+	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, doStats bool,
+	statsParentLoc string, commitCatchup bool, batchSize int, constBackoff bool, requeueOnPreempt bool) *LWPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
-	r := &lwsReplica{
+	r := &LWPReplica{
 		ProposalManager:     propMan,
 		Replica:             replica,
 		configChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -134,8 +136,12 @@ func NewLwsReplica(propMan ProposalManager, replica *genericsmr.Replica, id int,
 		commitCatchUp:       commitCatchup,
 		batchSize:           batchSize,
 		requeueOnPreempt:    requeueOnPreempt,
-		stats:               ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
-		cmpCommitExec:       cmpCmtExec,
+		doStats:             doStats,
+	}
+
+	if r.doStats {
+		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/server-%d-timeseries-stats.txt", id), time.Second)
+		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/server-%d-instance-stats.txt", id), stats.DefaultIMetrics{}.Get())
 	}
 
 	if group1Size <= r.N-r.F {
@@ -154,19 +160,20 @@ func NewLwsReplica(propMan ProposalManager, replica *genericsmr.Replica, id int,
 	r.prepareReplyRPC = r.RegisterRPC(new(lwcproto.PrepareReply), r.prepareReplyChan)
 	r.acceptReplyRPC = r.RegisterRPC(new(lwcproto.AcceptReply), r.acceptReplyChan)
 
-	if cmpCmtExec {
-		r.commitExecComp = CommitExecutionComparator.CommitExecutionComparatorNew(cmpCmtExecLoc)
-	}
-
 	go r.run()
 	return r
 }
 
-func (r *lwsReplica) GetPBK(inst int32) *ProposingBookkeeping {
+func (r *LWPReplica) CloseUp() {
+	r.TimeseriesStats.Close()
+	r.InstanceStats.Close()
+}
+
+func (r *LWPReplica) GetPBK(inst int32) *ProposingBookkeeping {
 	return r.instanceSpace[inst].pbk
 }
 
-func (r *lwsReplica) recordNewConfig(config int32) {
+func (r *LWPReplica) recordNewConfig(config int32) {
 	if !r.Durable {
 		return
 	}
@@ -176,14 +183,14 @@ func (r *lwsReplica) recordNewConfig(config int32) {
 	r.StableStore.WriteAt(b[:], 0)
 }
 
-func (r *lwsReplica) recordExecutedUpTo() {
+func (r *LWPReplica) recordExecutedUpTo() {
 	var b [4]byte
 	binary.LittleEndian.PutUint32(b[0:4], uint32(r.executedUpTo))
 	r.StableStore.WriteAt(b[:], 4)
 }
 
 //append a log entry to stable storage
-func (r *lwsReplica) recordInstanceMetadata(inst *Instance) {
+func (r *LWPReplica) recordInstanceMetadata(inst *Instance) {
 	if !r.Durable {
 		return
 	}
@@ -196,7 +203,7 @@ func (r *lwsReplica) recordInstanceMetadata(inst *Instance) {
 }
 
 //write a sequence of commands to stable storage
-func (r *lwsReplica) recordCommands(cmds []state.Command) {
+func (r *LWPReplica) recordCommands(cmds []state.Command) {
 	if !r.Durable {
 		return
 	}
@@ -210,7 +217,7 @@ func (r *lwsReplica) recordCommands(cmds []state.Command) {
 }
 
 //sync with the stable store
-func (r *lwsReplica) sync() {
+func (r *LWPReplica) sync() {
 	if !r.Durable {
 		return
 	}
@@ -222,17 +229,17 @@ func (r *lwsReplica) sync() {
 	}
 }
 
-func (r *lwsReplica) replyPrepare(replicaId int32, reply *lwcproto.PrepareReply) {
+func (r *LWPReplica) replyPrepare(replicaId int32, reply *lwcproto.PrepareReply) {
 	r.SendMsg(replicaId, r.prepareReplyRPC, reply)
 }
 
-func (r *lwsReplica) replyAccept(replicaId int32, reply *lwcproto.AcceptReply) {
+func (r *LWPReplica) replyAccept(replicaId int32, reply *lwcproto.AcceptReply) {
 	r.SendMsg(replicaId, r.acceptReplyRPC, reply)
 }
 
 /* Clock goroutine */
 
-func (r *lwsReplica) fastClock() {
+func (r *LWPReplica) fastClock() {
 	for !r.Shutdown {
 		time.Sleep(time.Duration(r.batchWait) * time.Millisecond) // ms
 		dlog.Println("sending fast clock")
@@ -240,14 +247,14 @@ func (r *lwsReplica) fastClock() {
 	}
 }
 
-func (r *lwsReplica) BatchingEnabled() bool {
+func (r *LWPReplica) BatchingEnabled() bool {
 	return r.batchWait > 0
 }
 
 /* ============= */
 
 /* Main event processing loop */
-func (r *lwsReplica) restart() {
+func (r *LWPReplica) restart() {
 	for cont := true; cont; {
 		select {
 		case <-r.prepareChan:
@@ -268,6 +275,10 @@ func (r *lwsReplica) restart() {
 		}
 	}
 
+	if r.doStats {
+		r.TimeseriesStats.Reset()
+	}
+
 	r.BackoffManager = NewBackoffManager(r.BackoffManager.minBackoff, r.BackoffManager.maxInitBackoff, r.BackoffManager.maxBackoff, &r.retryInstance, r.BackoffManager.factor, r.BackoffManager.softFac, r.BackoffManager.constBackoff)
 	r.crtConfig++
 	r.recordNewConfig(r.crtConfig)
@@ -278,7 +289,7 @@ func (r *lwsReplica) restart() {
 	r.sendNextRecoveryRequestBatch()
 }
 
-func (r *lwsReplica) sendNextRecoveryRequestBatch() {
+func (r *LWPReplica) sendNextRecoveryRequestBatch() {
 	// assumes r.nextRecoveryBatchPoint is initialised correctly
 	for i := int32(0); i < int32(r.N); i++ {
 		if i == r.Id {
@@ -290,18 +301,18 @@ func (r *lwsReplica) sendNextRecoveryRequestBatch() {
 	}
 }
 
-func (r *lwsReplica) makeCatchupInstance(inst int32) {
+func (r *LWPReplica) makeCatchupInstance(inst int32) {
 	r.instanceSpace[inst] = r.makeEmptyInstance()
 }
 
-func (r *lwsReplica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
+func (r *LWPReplica) sendRecoveryRequest(fromInst int32, toAccptor int32) {
 	//for i := fromInst; i < fromInst + r.nextRecoveryBatchPoint; i++ {
 	r.makeCatchupInstance(fromInst)
 	r.sendSinglePrepare(fromInst, toAccptor)
 	//}
 }
 
-func (r *lwsReplica) checkAndHandlecatchupRequest(prepare *lwcproto.Prepare) bool {
+func (r *LWPReplica) checkAndHandlecatchupRequest(prepare *lwcproto.Prepare) bool {
 	//config is ignored here and not acknowledged until new proposals are actually made
 	if prepare.IsZero() {
 		dlog.Printf("received catch up request from to instance %d to %d", prepare.Instance, prepare.Instance+r.catchupBatchSize)
@@ -313,7 +324,7 @@ func (r *lwsReplica) checkAndHandlecatchupRequest(prepare *lwcproto.Prepare) boo
 }
 
 //func (r *Replica) setNextcatchupPoint()
-func (r *lwsReplica) checkAndHandlecatchupResponse(commit *lwcproto.Commit) {
+func (r *LWPReplica) checkAndHandlecatchupResponse(commit *lwcproto.Commit) {
 	if r.catchingUp {
 		//dlog.Printf("got catch up for %d", commit.Instance)
 		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
@@ -335,7 +346,7 @@ func (r *lwsReplica) checkAndHandlecatchupResponse(commit *lwcproto.Commit) {
 	}
 }
 
-func (r *lwsReplica) doHeartbeat() {
+func (r *LWPReplica) doHeartbeat() {
 	heartBeat := lwcproto.Prepare{
 		LeaderId: r.Id,
 		Instance: -1,
@@ -358,7 +369,7 @@ func (r *lwsReplica) doHeartbeat() {
 	}()
 }
 
-func (r *lwsReplica) run() {
+func (r *LWPReplica) run() {
 	r.ConnectToPeers()
 	r.RandomisePeerOrder()
 
@@ -382,9 +393,20 @@ func (r *lwsReplica) run() {
 
 	r.doHeartbeat()
 
+	var c chan struct{}
+	if r.doStats {
+		r.TimeseriesStats.GoClock()
+		c = r.TimeseriesStats.C
+	} else {
+		c = make(chan struct{})
+	}
+
 	for !r.Shutdown {
 
 		select {
+		case <-c:
+			r.TimeseriesStats.PrintAndReset()
+			break
 		case <-r.goHeartbeat:
 			r.doHeartbeat()
 			break
@@ -496,20 +518,17 @@ func (r *lwsReplica) run() {
 	}
 }
 
-func (r *lwsReplica) retryConfigBal(maybeTimedout TimeoutInfo) {
+func (r *LWPReplica) retryConfigBal(maybeTimedout TimeoutInfo) {
 	inst := r.instanceSpace[maybeTimedout.inst]
 	if inst.pbk.propCurConfBal.Equal(maybeTimedout.proposingConfBal) && inst.pbk.status == maybeTimedout.phase {
-		if maybeTimedout.phase == PREPARING {
-			dlog.Printf("retrying instance in phase 1")
-			r.bcastPrepare(maybeTimedout.inst)
-		} else if maybeTimedout.phase == PROPOSING {
-			dlog.Printf("retrying instance in phase 2")
-			r.bcastAccept(maybeTimedout.inst)
+		if r.doStats {
+			r.TimeseriesStats.Update("Message Timeouts", 1)
 		}
+		inst.pbk.proposalInfos[inst.pbk.propCurConfBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
 	}
 }
 
-func (r *lwsReplica) tryNextAttempt(next RetryInfo) {
+func (r *LWPReplica) tryNextAttempt(next RetryInfo) {
 	inst := r.instanceSpace[next.InstToPrep]
 	if !next.backedoff {
 		if inst == nil {
@@ -530,7 +549,7 @@ func (r *lwsReplica) tryNextAttempt(next RetryInfo) {
 	}
 }
 
-func (r *lwsReplica) sendSinglePrepare(instance int32, to int32) {
+func (r *LWPReplica) sendSinglePrepare(instance int32, to int32) {
 	// cheats - should really be a special recovery message but lazzzzzyyyy
 	defer func() {
 		if err := recover(); err != nil {
@@ -543,11 +562,12 @@ func (r *lwsReplica) sendSinglePrepare(instance int32, to int32) {
 	r.beginTimeout(args.Instance, args.ConfigBal, PREPARING, r.timeout*5, r.prepareRPC, args)
 }
 
-func (r *lwsReplica) beginTimeout(inst int32, attempted lwcproto.ConfigBal, onWhatPhase ProposerStatus, timeout time.Duration, msgcode uint8, msg fastrpc.Serializable) {
+func (r *LWPReplica) beginTimeout(inst int32, attempted lwcproto.ConfigBal, onWhatPhase ProposerStatus, timeout time.Duration, msgcode uint8, msg fastrpc.Serializable) {
 	go func(instance int32, tried lwcproto.ConfigBal, phase ProposerStatus, timeoutWait time.Duration) {
 		timer := time.NewTimer(timeout)
 		<-timer.C
 		if r.instanceSpace[inst].pbk.propCurConfBal.Equal(tried) && r.instanceSpace[inst].pbk.status == phase {
+			log.Println("asdfjlksjflk")
 			// not atomic and might change when message received but that's okay (only to limit number of channel messages sent)
 			r.timeoutMsgs <- TimeoutInfo{
 				ProposalInfo: ProposalInfo{instance, tried},
@@ -559,14 +579,15 @@ func (r *lwsReplica) beginTimeout(inst int32, attempted lwcproto.ConfigBal, onWh
 	}(inst, attempted, onWhatPhase, timeout)
 }
 
-func (r *lwsReplica) bcastPrepare(instance int32) {
+func (r *LWPReplica) bcastPrepare(instance int32) {
 	args := &lwcproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.propCurConfBal}
 	pbk := r.instanceSpace[instance].pbk
 	pbk.proposalInfos[pbk.propCurConfBal].Broadcast(r.prepareRPC, args)
+	log.Println("beginning time out")
 	r.beginTimeout(args.Instance, args.ConfigBal, PREPARING, r.timeout, r.prepareRPC, args)
 }
 
-func (r *lwsReplica) bcastAccept(instance int32) {
+func (r *LWPReplica) bcastAccept(instance int32) {
 	pa.LeaderId = r.Id
 	pa.Instance = instance
 	pa.ConfigBal = r.instanceSpace[instance].pbk.propCurConfBal
@@ -579,7 +600,7 @@ func (r *lwsReplica) bcastAccept(instance int32) {
 	r.beginTimeout(args.Instance, args.ConfigBal, PREPARING, r.timeout, r.acceptRPC, args)
 }
 
-func (r *lwsReplica) bcastCommitToAll(instance int32, confBal lwcproto.ConfigBal, command []state.Command) {
+func (r *LWPReplica) bcastCommitToAll(instance int32, confBal lwcproto.ConfigBal, command []state.Command) {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("commit bcast failed:", err)
@@ -620,11 +641,11 @@ func (r *lwsReplica) bcastCommitToAll(instance int32, confBal lwcproto.ConfigBal
 	}
 }
 
-func (r *lwsReplica) incToNextOpenInstance() {
+func (r *LWPReplica) incToNextOpenInstance() {
 	r.crtInstance++
 }
 
-func (r *lwsReplica) makeEmptyInstance() *Instance {
+func (r *LWPReplica) makeEmptyInstance() *Instance {
 	return &Instance{
 		abk: &AcceptorBookkeeping{
 			status: NOT_STARTED,
@@ -655,25 +676,32 @@ func (r *lwsReplica) makeEmptyInstance() *Instance {
 	}
 }
 
-func (r *lwsReplica) beginNextInstance(valsToPropose []*genericsmr.Propose) {
+func (r *LWPReplica) beginNextInstance(valsToPropose []*genericsmr.Propose) {
 	r.incToNextOpenInstance()
 	r.instanceSpace[r.crtInstance] = r.makeEmptyInstance()
 	curInst := r.instanceSpace[r.crtInstance]
 	r.ProposalManager.beginNewProposal(r, r.crtInstance, r.crtConfig)
 	r.instanceSpace[r.crtInstance].pbk.clientProposals = valsToPropose
+
+	if r.doStats {
+		r.InstanceStats.RecordOpened(stats.InstanceID{0, r.crtInstance}, time.Now())
+		r.TimeseriesStats.Update("Instances Opened", 1)
+	}
+
 	r.acceptorPrepareOnConfBal(r.crtInstance, curInst.pbk.propCurConfBal)
 	curInst.pbk.proposalInfos[curInst.pbk.propCurConfBal].AddToQuorum(int(r.Id))
 	r.bcastPrepare(r.crtInstance)
 	dlog.Printf("Opened new instance %d\n", r.crtInstance)
+
 }
 
-func (r *lwsReplica) handlePropose(propose *genericsmr.Propose) {
+func (r *LWPReplica) handlePropose(propose *genericsmr.Propose) {
 	dlog.Printf("Received new client value\n")
 	r.clientValueQueue.TryEnqueue(propose)
 	//check if any open instances
 }
 
-func (r *lwsReplica) acceptorPrepareOnConfBal(inst int32, confBal lwcproto.ConfigBal) {
+func (r *LWPReplica) acceptorPrepareOnConfBal(inst int32, confBal lwcproto.ConfigBal) {
 
 	instance := r.instanceSpace[inst]
 	abk := instance.abk
@@ -692,7 +720,7 @@ func (r *lwsReplica) acceptorPrepareOnConfBal(inst int32, confBal lwcproto.Confi
 	abk.curBal = confBal.Ballot
 }
 
-func (r *lwsReplica) acceptorAcceptOnConfBal(inst int32, confBal lwcproto.ConfigBal, cmds []state.Command) {
+func (r *LWPReplica) acceptorAcceptOnConfBal(inst int32, confBal lwcproto.ConfigBal, cmds []state.Command) {
 
 	abk := r.instanceSpace[inst].abk
 
@@ -716,7 +744,7 @@ func (r *lwsReplica) acceptorAcceptOnConfBal(inst int32, confBal lwcproto.Config
 	r.sync()
 }
 
-func (r *lwsReplica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal lwcproto.ConfigBal, preemterPhase Phase) bool {
+func (r *LWPReplica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigBal lwcproto.ConfigBal, preemterPhase Phase) bool {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 
@@ -728,6 +756,17 @@ func (r *lwsReplica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigB
 		if pbk.status == PREPARING && pbk.clientProposals != nil {
 			r.requeueClientProposals(inst)
 			pbk.clientProposals = nil
+		}
+
+		if pbk.status != BACKING_OFF && r.doStats {
+			if pbk.status == PREPARING || pbk.status == READY_TO_PROPOSE {
+				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "My Phase 1 Preempted", 1)
+				r.TimeseriesStats.Update("My Phase 1 Preempted", 1)
+			} else if pbk.status == PROPOSING {
+				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "My Phase 2 Preempted", 1)
+				r.TimeseriesStats.Update("My Phase 2 Preempted", 1)
+			}
+
 		}
 
 		if r.requeueOnPreempt {
@@ -745,7 +784,7 @@ func (r *lwsReplica) proposerCheckAndHandlePreempt(inst int32, preemptingConfigB
 	}
 }
 
-func (r *lwsReplica) checkAndHandleConfigPreempt(inst int32, preemptingConfigBal lwcproto.ConfigBal, preemterPhase Phase) bool {
+func (r *LWPReplica) checkAndHandleConfigPreempt(inst int32, preemptingConfigBal lwcproto.ConfigBal, preemterPhase Phase) bool {
 	// in this function there is an error where if we start up a process and other processes are at a higher config, we will go into this function
 	// if
 	if r.crtConfig < preemptingConfigBal.Config {
@@ -781,7 +820,7 @@ func (r *lwsReplica) checkAndHandleConfigPreempt(inst int32, preemptingConfigBal
 	}
 }
 
-func (r *lwsReplica) isMoreCommitsToComeAfter(inst int32) bool {
+func (r *LWPReplica) isMoreCommitsToComeAfter(inst int32) bool {
 	for i := inst + 1; i <= r.crtInstance; i++ {
 		instance := r.instanceSpace[i]
 		if instance != nil {
@@ -793,7 +832,7 @@ func (r *lwsReplica) isMoreCommitsToComeAfter(inst int32) bool {
 	return false
 }
 
-func (r *lwsReplica) howManyExtraCommitsToSend(inst int32) int32 {
+func (r *LWPReplica) howManyExtraCommitsToSend(inst int32) int32 {
 	if r.commitCatchUp {
 		return r.crtInstance - inst
 	} else {
@@ -801,7 +840,7 @@ func (r *lwsReplica) howManyExtraCommitsToSend(inst int32) int32 {
 	}
 }
 
-func (r *lwsReplica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
+func (r *LWPReplica) checkAndHandleCommit(instance int32, whoRespondTo int32, maxExtraInstances int32) bool {
 	inst := r.instanceSpace[instance]
 	if inst == nil {
 		return false
@@ -838,7 +877,7 @@ func (r *lwsReplica) checkAndHandleCommit(instance int32, whoRespondTo int32, ma
 	}
 }
 
-func (r *lwsReplica) handlePrepare(prepare *lwcproto.Prepare) {
+func (r *LWPReplica) handlePrepare(prepare *lwcproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(prepare.Instance, prepare.ConfigBal, PROMISE)
 
@@ -886,7 +925,7 @@ func (r *lwsReplica) handlePrepare(prepare *lwcproto.Prepare) {
 	r.replyPrepare(prepare.LeaderId, preply)
 }
 
-func (r *lwsReplica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcproto.ConfigBal, accepted lwcproto.ConfigBal, acceptedVal []state.Command, inst int32) {
+func (r *LWPReplica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcproto.ConfigBal, accepted lwcproto.ConfigBal, acceptedVal []state.Command, inst int32) {
 	if new.PropID != old.PropID && int32(new.PropID) != r.Id && old.PropID != -1 && new.GreaterThan(old) {
 		preemptOldPropMsg := &lwcproto.PrepareReply{
 			Instance:   inst,
@@ -900,7 +939,7 @@ func (r *lwsReplica) checkAndHandleOldPreempted(new lwcproto.ConfigBal, old lwcp
 	}
 }
 
-func (r *lwsReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, accepted lwcproto.ConfigBal, val []state.Command, whoseCmds int32) ProposerAccValHandler {
+func (r *LWPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, accepted lwcproto.ConfigBal, val []state.Command, whoseCmds int32) ProposerAccValHandler {
 	if accepted.IsZero() {
 		return IGNORED
 	}
@@ -952,7 +991,7 @@ func (r *lwsReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 	}
 }
 
-func (r *lwsReplica) handlePrepareReply(preply *lwcproto.PrepareReply) {
+func (r *LWPReplica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 	inst := r.instanceSpace[preply.Instance]
 	pbk := inst.pbk
 	configPreempt := r.checkAndHandleConfigPreempt(preply.Instance, preply.ConfigBal, PROMISE)
@@ -1002,12 +1041,12 @@ func (r *lwsReplica) handlePrepareReply(preply *lwcproto.PrepareReply) {
 	qrm := pbk.proposalInfos[pbk.propCurConfBal]
 	qrm.AddToQuorum(int(preply.AcceptorId))
 	dlog.Printf("Added replica's %d promise to qrm", preply.AcceptorId)
-	if qrm.QuorumReached() { //int(qrm.quorumCount()+1) >= r.elpReplica.ReadQuorumSize() {
+	if qrm.QuorumReached() { //int(qrm.quorumCount()+1) >= r.ELPReplica.ReadQuorumSize() {
 		r.propose(preply.Instance)
 	}
 }
 
-func (r *lwsReplica) propose(inst int32) {
+func (r *LWPReplica) propose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 
@@ -1047,15 +1086,27 @@ func (r *lwsReplica) propose(inst int32) {
 				}
 
 				dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals), inst)
+				if r.doStats {
+					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+					r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+				}
 				break
 			default:
+				if r.doStats {
+					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
+					r.TimeseriesStats.Update("Times Noops Proposed", 1)
+				}
+
 				pbk.cmds = state.NOOP()
 				dlog.Println("Proposing noop in recovered instance")
 			}
 		}
 	} else {
-
 		whoseCmds = pbk.whoseCmds
+		if r.doStats {
+			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)
+			r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
+		}
 	}
 
 	pbk.status = PROPOSING
@@ -1070,7 +1121,7 @@ func (r *lwsReplica) propose(inst int32) {
 	}
 }
 
-func (r *lwsReplica) checkAndHandleNewlyReceivedInstance(instance int32) {
+func (r *LWPReplica) checkAndHandleNewlyReceivedInstance(instance int32) {
 	inst := r.instanceSpace[instance]
 	if inst == nil {
 		if instance > r.crtInstance {
@@ -1080,7 +1131,7 @@ func (r *lwsReplica) checkAndHandleNewlyReceivedInstance(instance int32) {
 	}
 }
 
-func (r *lwsReplica) handleAccept(accept *lwcproto.Accept) {
+func (r *LWPReplica) handleAccept(accept *lwcproto.Accept) {
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	configPreempted := r.checkAndHandleConfigPreempt(accept.Instance, accept.ConfigBal, ACCEPTANCE)
 
@@ -1126,7 +1177,7 @@ func (r *lwsReplica) handleAccept(accept *lwcproto.Accept) {
 	r.replyAccept(accept.LeaderId, areply)
 }
 
-func (r *lwsReplica) handleAcceptReply(areply *lwcproto.AcceptReply) {
+func (r *LWPReplica) handleAcceptReply(areply *lwcproto.AcceptReply) {
 	// could modify to have record of all ballots
 	inst := r.instanceSpace[areply.Instance]
 	pbk := inst.pbk
@@ -1156,16 +1207,21 @@ func (r *lwsReplica) handleAcceptReply(areply *lwcproto.AcceptReply) {
 	}
 }
 
-func (r *lwsReplica) requeueClientProposals(instance int32) {
+func (r *LWPReplica) requeueClientProposals(instance int32) {
 	inst := r.instanceSpace[instance]
 	dlog.Printf("Requeing client values in instance %d", instance)
+
+	if r.doStats && len(inst.pbk.clientProposals) > 0 {
+		r.TimeseriesStats.Update("Requeued Client Values", 1)
+	}
+
 	for i := 0; i < len(inst.pbk.clientProposals); i++ {
 		//r.ProposeChan <- inst.pbk.clientProposals[i]
 		r.clientValueQueue.TryRequeue(inst.pbk.clientProposals[i])
 	}
 }
 
-func (r *lwsReplica) whatHappenedToClientProposals(instance int32) ClientProposalStory {
+func (r *LWPReplica) whatHappenedToClientProposals(instance int32) ClientProposalStory {
 	inst := r.instanceSpace[instance]
 	pbk := inst.pbk
 	if pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
@@ -1180,7 +1236,7 @@ func (r *lwsReplica) whatHappenedToClientProposals(instance int32) ClientProposa
 	}
 }
 
-func (r *lwsReplica) howManyAttemptsToChoose(inst int32) {
+func (r *LWPReplica) howManyAttemptsToChoose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 
@@ -1188,7 +1244,7 @@ func (r *lwsReplica) howManyAttemptsToChoose(inst int32) {
 	dlog.Printf("Attempts to chose instance %d: %d", inst, attempts)
 }
 
-func (r *lwsReplica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, chosenVal []state.Command, whoseCmd int32) {
+func (r *LWPReplica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, chosenVal []state.Command, whoseCmd int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 
@@ -1218,9 +1274,18 @@ func (r *lwsReplica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal
 		break
 	}
 
-	if r.cmpCommitExec {
-		id := CommitExecutionComparator.InstanceID{Log: 0, Seq: inst}
-		r.commitExecComp.RecordCommit(id, time.Now())
+	if r.doStats {
+		balloter := r.ProposalManager.getBalloter()
+		atmts := balloter.GetAttemptNumber(chosenAt.Number)
+		r.InstanceStats.RecordCommitted(stats.InstanceID{0, inst}, atmts, time.Now())
+		r.TimeseriesStats.Update("Instances Learnt", 1)
+		if int32(chosenAt.PropID) == r.Id {
+			r.TimeseriesStats.Update("Instances I Choose", 1)
+			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "I Chose", 1)
+		}
+		if !r.Exec {
+			r.InstanceStats.OutputRecord(stats.InstanceID{0, inst})
+		}
 	}
 
 	//if r.instanceSpace[inst].pbk.status != CLOSED && r.instanceSpace[inst].abk.status != COMMITTED {
@@ -1245,6 +1310,13 @@ func (r *lwsReplica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal
 			returnInst := r.instanceSpace[i]
 			if returnInst != nil && returnInst.abk.status == COMMITTED { //&& returnInst.abk.cmds != nil {
 				dlog.Printf("Executing instance %d\n", i)
+
+				if r.doStats {
+					r.InstanceStats.RecordExecuted(stats.InstanceID{0, inst}, time.Now())
+					r.TimeseriesStats.Update("Instances Executed", 1)
+					r.InstanceStats.OutputRecord(stats.InstanceID{0, inst})
+				}
+
 				for j := 0; j < len(returnInst.abk.cmds); j++ {
 					dlog.Printf("Executing " + returnInst.abk.cmds[j].String())
 					if r.Dreply && returnInst.pbk != nil && returnInst.pbk.clientProposals != nil {
@@ -1275,7 +1347,7 @@ func (r *lwsReplica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal
 	}
 }
 
-func (r *lwsReplica) acceptorCommit(instance int32, chosenAt lwcproto.ConfigBal, cmds []state.Command) {
+func (r *LWPReplica) acceptorCommit(instance int32, chosenAt lwcproto.ConfigBal, cmds []state.Command) {
 	inst := r.instanceSpace[instance]
 	abk := inst.abk
 	dlog.Printf("Committing (crtInstance=%d)\n", instance)
@@ -1302,7 +1374,7 @@ func (r *lwsReplica) acceptorCommit(instance int32, chosenAt lwcproto.ConfigBal,
 	}
 }
 
-func (r *lwsReplica) handleCommit(commit *lwcproto.Commit) {
+func (r *LWPReplica) handleCommit(commit *lwcproto.Commit) {
 	r.checkAndHandleNewlyReceivedInstance(commit.Instance)
 	inst := r.instanceSpace[commit.Instance]
 
@@ -1315,7 +1387,7 @@ func (r *lwsReplica) handleCommit(commit *lwcproto.Commit) {
 	r.proposerCloseCommit(commit.Instance, commit.ConfigBal, commit.Command, commit.WhoseCmd)
 }
 
-func (r *lwsReplica) handleCommitShort(commit *lwcproto.CommitShort) {
+func (r *LWPReplica) handleCommitShort(commit *lwcproto.CommitShort) {
 	r.checkAndHandleNewlyReceivedInstance(commit.Instance)
 	inst := r.instanceSpace[commit.Instance]
 

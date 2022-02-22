@@ -3,7 +3,6 @@ package configtwophase
 import (
 	"genericsmr"
 	"instanceacceptormapper"
-	"log"
 	"lwcproto"
 	"quorumsystem"
 	"state"
@@ -34,6 +33,7 @@ type ProposingBookkeeping struct {
 type ProposalManager interface {
 	beginNewProposal(replica ConfigRoundProposable, inst int32, conf int32)
 	trackProposalAcceptance(replica ConfigRoundProposable, inst int32, bal lwcproto.ConfigBal)
+	getBalloter() Balloter
 }
 
 type ReducedQuorumProposalInitiator struct {
@@ -61,7 +61,7 @@ type ConfigRoundProposable interface {
 }
 
 //
-//func (r *elpReplica) GetPBK(inst int32) *ProposingBookkeeping {
+//func (r *ELPReplica) GetPBK(inst int32) *ProposingBookkeeping {
 //	return r.instanceSpace[inst].pbk
 //}
 
@@ -80,12 +80,16 @@ func (proposalConstructor *NormalQuorumProposalInitiator) trackProposalAcceptanc
 	quorumaliser.StartAcceptanceQuorum()
 }
 
+func (propsalCOnstructor *NormalQuorumProposalInitiator) getBalloter() Balloter {
+	return propsalCOnstructor.Balloter
+}
+
 func (proposalConstructor *ReducedQuorumProposalInitiator) beginNewProposal(r ConfigRoundProposable, inst int32, conf int32) {
 	pbk := r.GetPBK(inst)
 	beginPreparingConfBal(pbk, proposalConstructor.Balloter, conf)
 	//make quorum
 	group := proposalConstructor.AcceptorMapper.GetGroup(int(inst))
-	log.Println("group for instance", inst, ":", group)
+	//log.Println("group for instance", inst, ":", group)
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[pbk.propCurConfBal] = quorumaliser
 	pbk.proposalInfos[pbk.propCurConfBal].StartPromiseQuorum()
@@ -98,4 +102,8 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) trackProposalAcceptan
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[bal] = quorumaliser
 	quorumaliser.StartAcceptanceQuorum()
+}
+
+func (inititor *ReducedQuorumProposalInitiator) getBalloter() Balloter {
+	return inititor.Balloter
 }

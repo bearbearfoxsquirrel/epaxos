@@ -1,7 +1,6 @@
 package instanceacceptormapper
 
 import (
-	"log"
 	"math/rand"
 )
 
@@ -77,7 +76,7 @@ func main() {
 	x := make([][]int, 100)
 	for i := 0; i < 100; i++ {
 		x[i] = mapper.GetGroup(i)
-		log.Println(x[i])
+		//		log.Println(x[i])
 	}
 
 }
