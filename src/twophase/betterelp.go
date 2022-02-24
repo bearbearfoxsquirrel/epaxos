@@ -317,7 +317,8 @@ func NewBaselineEagerReplica(smrReplica *genericsmr.Replica, id int, durable boo
 	storageLoc string, maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool,
 	factor float64, whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, initalProposalWait time.Duration, emulatedSS bool,
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, doStats bool,
-	statsParentLoc string, commitCatchUp bool, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool, minBatchSize int32, initiator ProposalManager) *ELPReplica {
+	statsParentLoc string, commitCatchUp bool, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool,
+	minBatchSize int32, initiator ProposalManager, tsStatsFilename string, instStatsFilename string) *ELPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &ELPReplica{
@@ -374,8 +375,8 @@ func NewBaselineEagerReplica(smrReplica *genericsmr.Replica, id int, durable boo
 	r.ringCommit = false
 
 	if r.doStats {
-		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/server-%d-timeseries-stats.txt", id), time.Second)
-		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/server-%d-instance-stats.txt", id), stats.DefaultIMetrics{}.Get())
+		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
+		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get())
 	}
 
 	if group1Size <= r.N-r.F {

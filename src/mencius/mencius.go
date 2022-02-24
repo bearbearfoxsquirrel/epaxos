@@ -55,6 +55,10 @@ type Replica struct {
 	batch                    bool
 }
 
+func (r *Replica) CloseUp() {
+	//panic("implement me")
+}
+
 type DelayedSkip struct {
 	skipEnd int32
 }

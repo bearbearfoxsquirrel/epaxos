@@ -86,7 +86,7 @@ func NewLwsReplica(propMan ProposalManager, replica *genericsmr.Replica, id int,
 	minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64, whoCrash int32,
 	whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration,
 	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, doStats bool,
-	statsParentLoc string, commitCatchup bool, batchSize int, constBackoff bool, requeueOnPreempt bool) *LWPReplica {
+	statsParentLoc string, commitCatchup bool, batchSize int, constBackoff bool, requeueOnPreempt bool, tsStatsFilename string, instStatsFilename string) *LWPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &LWPReplica{
 		ProposalManager:     propMan,
@@ -140,8 +140,8 @@ func NewLwsReplica(propMan ProposalManager, replica *genericsmr.Replica, id int,
 	}
 
 	if r.doStats {
-		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/server-%d-timeseries-stats.txt", id), time.Second)
-		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/server-%d-instance-stats.txt", id), stats.DefaultIMetrics{}.Get())
+		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
+		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get())
 	}
 
 	if group1Size <= r.N-r.F {

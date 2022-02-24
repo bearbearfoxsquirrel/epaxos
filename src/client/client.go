@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"os/signal"
 	"runtime"
 	"time"
 )
@@ -99,6 +100,10 @@ func (stats *TimeseriesStats) reset() {
 	stats.deliveredBytes = 0
 }
 
+func (stats *TimeseriesStats) close() {
+	stats.file.Close()
+}
+
 type LatencyRecorder struct {
 	outputFile             *os.File
 	totalLatenciesToRecord int
@@ -107,6 +112,10 @@ type LatencyRecorder struct {
 	numLatenciesLeft       int
 	timeLatenciesRecording time.Duration
 	stopRecording          chan struct{}
+}
+
+func (latencyRecorder *LatencyRecorder) close() {
+	latencyRecorder.outputFile.Close()
 }
 
 func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
@@ -167,7 +176,7 @@ func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToReco
 }
 
 type ClientBenchmarker struct {
-	timeseriesStates     TimeseriesStats
+	timeseriesStats      TimeseriesStats
 	valueSubmissionTimes map[int32]time.Time
 	latencyRecorder      LatencyRecorder
 	clientID             int64
@@ -175,7 +184,7 @@ type ClientBenchmarker struct {
 
 func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string, timeLatenciesRecording time.Duration, storeTimeseriesToFile bool, timeSeriesFileLoc string) ClientBenchmarker {
 	benchmarker := ClientBenchmarker{
-		timeseriesStates:     NewTimeseriesStates(storeTimeseriesToFile, timeSeriesFileLoc),
+		timeseriesStats:      NewTimeseriesStates(storeTimeseriesToFile, timeSeriesFileLoc),
 		valueSubmissionTimes: make(map[int32]time.Time),
 		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord, timeLatenciesRecording),
 		clientID:             clientID,
@@ -184,9 +193,14 @@ func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, re
 	return benchmarker
 }
 
+func (benchmarker *ClientBenchmarker) stop() {
+	benchmarker.latencyRecorder.close()
+	benchmarker.timeseriesStats.close()
+}
+
 func (benchmarker *ClientBenchmarker) reset() {
 	benchmarker.valueSubmissionTimes = make(map[int32]time.Time)
-	benchmarker.timeseriesStates.reset()
+	benchmarker.timeseriesStats.reset()
 }
 
 func (benchmarker *ClientBenchmarker) register(value ClientValue) bool {
@@ -206,18 +220,18 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 	now := time.Now()
 	lat := now.Sub(valSubmittedAt)
 	benchmarker.latencyRecorder.record(lat.Microseconds())
-	benchmarker.timeseriesStates.update(int64(len(value.value)), lat)
+	benchmarker.timeseriesStats.update(int64(len(value.value)), lat)
 	delete(benchmarker.valueSubmissionTimes, value.uid)
 	return true
 }
 
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
-	if benchmarker.timeseriesStates.file != nil {
-		benchmarker.timeseriesStates.file.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + benchmarker.timeseriesStates.String() + "\n")
+	if benchmarker.timeseriesStats.file != nil {
+		benchmarker.timeseriesStats.file.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + benchmarker.timeseriesStats.String() + "\n")
 	} else {
-		log.Println(benchmarker.timeseriesStates.String())
+		log.Println(benchmarker.timeseriesStats.String())
 	}
-	benchmarker.timeseriesStates.reset()
+	benchmarker.timeseriesStats.reset()
 }
 
 func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize int, maxOutstanding int) ClientValue {
@@ -302,8 +316,13 @@ func main() {
 	// set up listener chan
 
 	shutdown := false
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, os.Kill)
 	for !shutdown {
 		select {
+		case <-interrupt:
+			benchmarker.stop()
+			shutdown = true
 		case <-statsTimer.C:
 			benchmarker.timeseriesStep()
 			statsTimer = time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)

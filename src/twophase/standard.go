@@ -84,7 +84,7 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 	minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64,
 	whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration,
 	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, doStats bool,
-	statsParentLoc string, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool) *LWPReplica {
+	statsParentLoc string, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool, tsStatsFilename string, instStatsFilename string) *LWPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &LWPReplica{
 		ProposalManager:     propMan,
@@ -139,8 +139,8 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 	}
 
 	if r.doStats {
-		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/server-%d-timeseries-stats.txt", id), time.Second)
-		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/server-%d-instance-stats.txt", id), stats.DefaultIMetrics{}.Get())
+		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
+		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get())
 	}
 
 	if group1Size <= r.N-r.F {
@@ -1168,9 +1168,9 @@ func (r *LWPReplica) propose(inst int32) {
 }
 
 func (r *LWPReplica) shouldNoop(inst int32) bool {
-	//	if r.alwaysNoop {
-	//		return true
-	//	}
+	if r.alwaysNoop {
+		return true
+	}
 
 	for i := inst + 1; i < r.crtInstance; i++ {
 		if r.instanceSpace[i] == nil {
@@ -1335,9 +1335,6 @@ func (r *LWPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 		break
 	case ProposedAndChosen:
 		dlog.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals), inst)
-		//		for i := 0; i < len(pbk.clientProposals); i++ {
-		//		r.clientValueQueue.CloseValue(pbk.clientProposals[i])
-		//	}
 		break
 	}
 

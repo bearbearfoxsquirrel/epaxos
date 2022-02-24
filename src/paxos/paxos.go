@@ -50,6 +50,10 @@ type Replica struct {
 	emulatedWriteTime     time.Duration
 }
 
+func (r *Replica) CloseUp() {
+	panic("implement me")
+}
+
 type InstanceStatus int
 
 const (

@@ -102,6 +102,10 @@ type Replica struct {
 	minBatchSize               int32
 }
 
+func (r *Replica) CloseUp() {
+	panic("implement me")
+}
+
 type ServerStats struct {
 	register    map[string]int32
 	orderedKeys []string

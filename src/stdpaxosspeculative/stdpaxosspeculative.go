@@ -92,6 +92,10 @@ type Replica struct {
 	reducePropConfs            bool
 }
 
+func (r *Replica) CloseUp() {
+	panic("implement me")
+}
+
 type TimeoutInfo struct {
 	ProposalInfo
 	phase    ProposerStatus

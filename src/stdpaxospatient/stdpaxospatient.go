@@ -96,6 +96,10 @@ type Replica struct {
 	requeueOnPreempt              bool
 }
 
+func (r *Replica) CloseUp() {
+	panic("implement me")
+}
+
 type ProposerStatus int
 type AcceptorStatus int
 

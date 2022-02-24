@@ -88,6 +88,10 @@ type Replica struct {
 	recoveringFrom             int32
 }
 
+func (r *Replica) CloseUp() {
+	panic("implement me")
+}
+
 type TimeoutInfo struct {
 	ProposalInfo
 	phase    ProposerStatus

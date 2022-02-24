@@ -48,6 +48,10 @@ type Replica struct {
 	Shutdown bool
 }
 
+func (r *Replica) CloseUp() {
+	panic("implement me")
+}
+
 type Propose struct {
 	*genericsmrproto.Propose
 	reply *bufio.Writer

@@ -92,6 +92,10 @@ type Replica struct {
 	sepExecThread         bool
 }
 
+func (r *Replica) CloseUp() {
+	//panic("implement me")
+}
+
 type Instance struct {
 	Cmds           []state.Command
 	bal, vbal      int32
