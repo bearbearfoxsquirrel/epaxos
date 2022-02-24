@@ -32,7 +32,7 @@ var verbose *bool = flag.Bool("v", false, "verbose mode. ")
 var scan *bool = flag.Bool("s", false, "replace read with short scan (100 elements)")
 var connectReplica *int = flag.Int("connectreplica", -1, "Must state which replica to send requests to")
 var latencyOutput = flag.String("lato", "", "Must state where resultant latencies will be written")
-var settleInTime = flag.Int("settletime", 60, "Number of seconds to allow before recording latency")
+var settleInTime = flag.Int("settletime", 0, "Number of seconds to allow before recording latency")
 var numLatenciesRecording = flag.Int("numlatencies", -1, "Number of latencies to record")
 var timeLatenciesRecording = flag.Int("timerecordlatsecs", -1, "How long to record latencies for")
 var sampleRateMs = flag.Int("samerate", 1000, "how often to sample timeseries data (ms)")
@@ -122,11 +122,13 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 	select {
 	case <-latencyRecorder.beginRecording:
 		latencyRecorder.shouldRecord = true
-		go func() {
-			timer := time.NewTimer(latencyRecorder.timeLatenciesRecording)
-			<-timer.C
-			latencyRecorder.stopRecording <- struct{}{}
-		}()
+		if latencyRecorder.timeLatenciesRecording > 0 {
+			go func() {
+				timer := time.NewTimer(latencyRecorder.timeLatenciesRecording)
+				<-timer.C
+				latencyRecorder.stopRecording <- struct{}{}
+			}()
+		}
 		break
 	case <-latencyRecorder.stopRecording:
 		latencyRecorder.shouldRecord = false
