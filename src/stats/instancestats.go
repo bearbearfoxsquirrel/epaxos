@@ -94,7 +94,11 @@ func (c *commitExecutionComparator) outputInstanceTimes(id InstanceID) string {
 	}
 	cmtDiff := timeTup.Commit.Sub(timeTup.Open)
 	execDiff := timeTup.Execute.Sub(timeTup.Commit)
-	return fmt.Sprintf("%d, %d, %d, %d, %d", timeTup.Open.UnixNano(), timeTup.Commit.UnixNano(), timeTup.Execute.UnixNano(), cmtDiff.Microseconds(), execDiff.Microseconds())
+	var timeOpenOut int64 = 0
+	if !timeTup.Open.IsZero() {
+		timeOpenOut = timeTup.Open.UnixNano()
+	}
+	return fmt.Sprintf("%d, %d, %d, %d, %d", timeOpenOut, timeTup.Commit.UnixNano(), timeTup.Execute.UnixNano(), cmtDiff.Microseconds(), execDiff.Microseconds())
 }
 
 func (c *commitExecutionComparator) getOutputFields() string {
