@@ -12,8 +12,12 @@ type DefaultIMetrics struct{}
 
 func (d DefaultIMetrics) Get() []string {
 	return []string{
+		"My Phase 1 Proposals",
+		"My Phase 2 Proposals",
 		"My Phase 1 Preempted",
 		"My Phase 2 Preempted",
+		"Phase 1 Timeouts",
+		"Phase 2 Timeouts",
 		"Choosing Round Attempts",
 		"Noop Proposed",
 		"Client Value Proposed",
@@ -119,29 +123,37 @@ type MultiStageConditionStatConstructor struct {
 // slow qrm phase one --- y \/ n
 // slow qrm phase two --- y \/ n
 
-func MultiStartMultiOutStatNew(name string, starts []string, outcomes map[string][]string, negativeOutcomes map[string]string, assumeNegNoEnd bool) *MutliStartMultiOutcomeStat {
+type MultiStartMultiOutStatConstructor struct {
+	Name             string
+	Starts           []string
+	Outcomes         map[string][]string
+	NegativeOutcomes map[string]string
+	AssumeNegNoEnd   bool
+}
+
+func (stat *MultiStartMultiOutStatConstructor) Construct() *MutliStartMultiOutcomeStat {
 	startsRec := make(map[string]struct{})
 	outcomesRec := make(map[string]*MultiOutcomeStat)
-	for _, s := range starts {
+	for _, s := range stat.Starts {
 		startsRec[s] = struct{}{}
 		outcomesMap := make(map[string]int)
-		for _, sOutcome := range outcomes[s] {
+		for _, sOutcome := range stat.Outcomes[s] {
 			outcomesMap[sOutcome] = 0
 		}
 		outcomesRec[s] = &MultiOutcomeStat{
 			started:    0,
 			outcomes:   outcomesMap,
-			negative:   negativeOutcomes[s],
-			printOrder: outcomes[s],
+			negative:   stat.NegativeOutcomes[s],
+			printOrder: stat.Outcomes[s],
 		}
 	}
 
 	return &MutliStartMultiOutcomeStat{
-		name:                   name,
+		name:                   stat.Name,
 		Outcomes:               outcomesRec,
 		startsRecord:           startsRec,
-		printOrder:             starts,
-		negativeOutcomeOnNoEnd: assumeNegNoEnd,
+		printOrder:             stat.Starts,
+		negativeOutcomeOnNoEnd: stat.AssumeNegNoEnd,
 		curStart:               "",
 		started:                false,
 	}
@@ -254,19 +266,20 @@ func (stat *MultiOutcomeStat) RecordOutcome(outcome string) {
 type InstanceStats struct {
 	outputFile *os.File
 	*commitExecutionComparator
-	register       map[InstanceID]map[string]int
-	orderedKeys    []string
-	complexStatIDs map[string]int
-	complexStats   []*MutliStartMultiOutcomeStat
+	register                map[InstanceID]map[string]int
+	orderedKeys             []string
+	complexStatIDs          map[string]int
+	complexStats            map[InstanceID][]*MutliStartMultiOutcomeStat
+	complexStatConstructors []MultiStartMultiOutStatConstructor
 }
 
-func InstanceStatsNew(outputLoc string, registerIDs []string, complexStats []*MutliStartMultiOutcomeStat) *InstanceStats {
+func InstanceStatsNew(outputLoc string, registerIDs []string, complexStatsConstructors []MultiStartMultiOutStatConstructor) *InstanceStats {
 	file, _ := os.Create(outputLoc)
 
 	registerIDs = append(registerIDs, "Ballot Choosing Attempts")
 	statNames := make(map[string]int)
-	for i, complexStat := range complexStats {
-		statNames[complexStat.name] = i
+	for i, complexStat := range complexStatsConstructors {
+		statNames[complexStat.Name] = i
 	}
 	instanceStats := &InstanceStats{
 		outputFile:                file,
@@ -274,7 +287,8 @@ func InstanceStatsNew(outputLoc string, registerIDs []string, complexStats []*Mu
 		orderedKeys:               registerIDs,
 		register:                  make(map[InstanceID]map[string]int),
 		complexStatIDs:            statNames,
-		complexStats:              complexStats,
+		complexStatConstructors:   complexStatsConstructors,
+		complexStats:              make(map[InstanceID][]*MutliStartMultiOutcomeStat),
 	}
 
 	str := strings.Builder{}
@@ -283,9 +297,15 @@ func InstanceStatsNew(outputLoc string, registerIDs []string, complexStats []*Mu
 		str.WriteString(fmt.Sprintf(", %s", registerIDs[i]))
 	}
 	str.WriteString(", ")
-	for _, cStat := range instanceStats.complexStats {
-		str.WriteString(cStat.getOutputField() + ",")
+	for _, cStat := range instanceStats.complexStatConstructors {
+		for _, start := range cStat.Starts {
+			for _, end := range cStat.Outcomes[start] {
+				str.WriteString(fmt.Sprintf("%s %s %s, ", cStat.Name, start, end))
+			}
+		}
 	}
+
+	str.WriteString(", ")
 	str.WriteString(instanceStats.commitExecutionComparator.getOutputFields())
 	str.WriteString("\n")
 	file.WriteString(str.String())
@@ -300,18 +320,22 @@ func (stats *InstanceStats) checkAndInitialiseInstance(inst InstanceID) {
 			instanceRegister[stats.orderedKeys[i]] = 0
 		}
 		stats.register[inst] = instanceRegister
+		stats.complexStats[inst] = make([]*MutliStartMultiOutcomeStat, len(stats.complexStatConstructors))
+		for _, statConstructor := range stats.complexStatConstructors {
+			stats.complexStats[inst][stats.complexStatIDs[statConstructor.Name]] = statConstructor.Construct()
+		}
 	}
 }
 
-func (stat *InstanceStats) RecordComplexStatStart(statName, start string) {
+func (stat *InstanceStats) RecordComplexStatStart(inst InstanceID, statName, start string) {
 	if v, e := stat.complexStatIDs[statName]; e {
-		stat.complexStats[v].Begin(start)
+		stat.complexStats[inst][v].Begin(start)
 	}
 }
 
-func (stat *InstanceStats) RecordComplexStatEnd(statName, end string) {
+func (stat *InstanceStats) RecordComplexStatEnd(inst InstanceID, statName, end string) {
 	if v, e := stat.complexStatIDs[statName]; e {
-		stat.complexStats[v].End(end)
+		stat.complexStats[inst][v].End(end)
 	}
 }
 
@@ -348,7 +372,7 @@ func (stats *InstanceStats) OutputRecord(id InstanceID) {
 		v := stats.register[id][k]
 		str.WriteString(fmt.Sprintf("%d, ", v))
 	}
-	for _, cStat := range stats.complexStats {
+	for _, cStat := range stats.complexStats[id] {
 		str.WriteString(cStat.OutputResult() + ", ")
 	}
 	cmtExecCmpStr := stats.commitExecutionComparator.outputInstanceTimes(id)

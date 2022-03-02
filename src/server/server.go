@@ -114,6 +114,8 @@ var batch *bool = flag.Bool("batch", false, "turns on if batch wait > 0 also")
 var reducedQrmSize *bool = flag.Bool("reducedqrmsize", false, "sets qrms to the minimum f+1 size (2f+1 groups of acceptors)")
 var gridQrms *bool = flag.Bool("gridqrms", false, "Use grid quorums")
 
+var sendFastestQrm *bool = flag.Bool("sendfastestqrm", false, "Send to fastest thought qrm")
+
 var tsStatsFilename *string = flag.String("tsstatsfilename", "", "Name for timeseries stats file")
 var instStatsFilename *string = flag.String("inststatsfilename", "", "Name for instance stats file")
 
@@ -221,15 +223,17 @@ func main() {
 		var qrm quorumsystem.SynodQuorumSystemConstructor
 
 		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
-			F:       0,
-			Replica: smrReplica,
-			Thrifty: *thrifty,
+			F:                0,
+			Replica:          smrReplica,
+			Thrifty:          *thrifty,
+			BroadcastFastest: *sendFastestQrm,
 		}
 		if *gridQrms {
 			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
-				F:       *maxfailures,
-				Replica: smrReplica,
-				Thrifty: *thrifty,
+				F:                *maxfailures,
+				Replica:          smrReplica,
+				Thrifty:          *thrifty,
+				BroadcastFastest: *sendFastestQrm,
 			}
 		}
 
@@ -293,15 +297,17 @@ func main() {
 		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
 		var qrm quorumsystem.SynodQuorumSystemConstructor
 		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
-			F:       *maxfailures,
-			Replica: smrReplica,
-			Thrifty: *thrifty,
+			F:                *maxfailures,
+			Replica:          smrReplica,
+			Thrifty:          *thrifty,
+			BroadcastFastest: *sendFastestQrm,
 		}
 		if *gridQrms {
 			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
-				F:       *maxfailures,
-				Replica: smrReplica,
-				Thrifty: *thrifty,
+				F:                *maxfailures,
+				Replica:          smrReplica,
+				Thrifty:          *thrifty,
+				BroadcastFastest: *sendFastestQrm,
 			}
 		}
 

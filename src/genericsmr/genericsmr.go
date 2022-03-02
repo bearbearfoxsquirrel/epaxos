@@ -10,6 +10,7 @@ import (
 	"genericsmrproto"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -264,8 +265,8 @@ func (r *Replica) WaitForClientConnections() {
 func (r *Replica) heartbeatLoop() {
 	timer := time.NewTimer(r.heartbeatFrequency)
 	for !r.Shutdown {
-		for i := int32(0); i < int32(r.N-1); i++ {
-			if r.PreferredPeerOrder[i] == r.Id {
+		for i := int32(0); i < int32(r.N); i++ {
+			if i == r.Id {
 				continue
 			}
 			r.SendBeacon(i)
@@ -311,7 +312,7 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 			}
 			dlog.Println("receive beacon ", gbeaconReply.Timestamp, " reply from ", rid)
 			r.Mutex.Lock()
-			r.updateLatencyRanks(rid, gbeaconReply)
+			r.updateLatencyWithReply(rid, gbeaconReply)
 			r.Mutex.Unlock()
 			break
 		default:
@@ -564,7 +565,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 
 	for i := int32(0); i < int32(r.N); i++ {
 		if r.Id == i {
-			continue
+			r.Ewma[i] = math.MaxFloat64
 		}
 		r.Ewma[i] = 0.0
 		r.ReplicasLatenciesOrders[i] = i
@@ -714,10 +715,16 @@ func (r *Replica) RandomisePeerOrder() {
 	*/
 }
 
-func (r *Replica) updateLatencyRanks(rid int, gbeaconReply genericsmrproto.BeaconReply) {
-
+func (r *Replica) updateLatencyWithReply(rid int, gbeaconReply genericsmrproto.BeaconReply) {
+	r.Mutex.Lock()
 	r.Ewma[rid] = (1-r.ewmaWeight)*r.Ewma[rid] + r.ewmaWeight*float64(time.Now().UnixNano()-gbeaconReply.Timestamp)
+	r.Mutex.Unlock()
+}
+
+func (r *Replica) CalculateLatencyRanks() {
+	r.Mutex.Lock()
 	sort.Slice(r.ReplicasLatenciesOrders, func(i, j int) bool {
 		return r.Ewma[i] < r.Ewma[j]
 	})
+	r.Mutex.Unlock()
 }

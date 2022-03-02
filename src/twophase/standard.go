@@ -151,9 +151,11 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 			"Fast Quorum": "Failure",
 			"Slow Quorum": "Success",
 		}
-		phaseCStats := []*stats.MutliStartMultiOutcomeStat{
-			stats.MultiStartMultiOutStatNew("Phase 1", phaseStarts, phaseRes, phaseNegs, true),
-			stats.MultiStartMultiOutStatNew("Phase 2", phaseStarts, phaseRes, phaseNegs, true),
+		phaseCStats := []stats.MultiStartMultiOutStatConstructor{
+			{"Phase 1", phaseStarts, phaseRes, phaseNegs, true},
+			{"Phase 2", phaseStarts, phaseRes, phaseNegs, true},
+			//stats.MultiStartMultiOutStatNew(),
+			//stats.MultiStartMultiOutStatNew(),
 		}
 
 		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get(), phaseCStats)
@@ -614,9 +616,7 @@ func (r *LWPReplica) run() {
 				dlog.Println("Client value(s) received beginning new instance")
 				r.beginNextInstance(clientProposals)
 			}
-
 		}
-
 	}
 }
 
@@ -625,6 +625,15 @@ func (r *LWPReplica) retryBallot(maybeTimedout TimeoutInfo) {
 	if inst.pbk.propCurBal.Equal(maybeTimedout.proposingBal) && inst.pbk.status == maybeTimedout.phase {
 		if r.doStats {
 			r.TimeseriesStats.Update("Message Timeouts", 1)
+			id := stats.InstanceID{
+				Log: 0,
+				Seq: maybeTimedout.inst,
+			}
+			if maybeTimedout.phase == PREPARING {
+				r.InstanceStats.RecordOccurrence(id, "Phase 1 Timeout", 1)
+			} else if maybeTimedout.phase == PROPOSING {
+				r.InstanceStats.RecordOccurrence(id, "Phase 2 Timeout", 1)
+			}
 		}
 		//log.Println("resending")
 		inst.pbk.proposalInfos[inst.pbk.propCurBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
@@ -683,11 +692,46 @@ func (r *LWPReplica) beginTimeout(inst int32, attempted stdpaxosproto.Ballot, on
 	}(inst, attempted, onWhatPhase, timeout)
 }
 
+func (r *LWPReplica) isSlowestSlowerThanMedian(sent []int) bool {
+	slowestLat := float64(-1)
+	for _, v := range sent {
+		if r.Ewma[v] > slowestLat {
+			slowestLat = r.Ewma[v]
+		}
+	}
+
+	// is slower than median???
+	if (r.N-1)%2 != 0 {
+		return slowestLat > r.Ewma[len(r.Ewma)-1/2]
+	} else {
+		return slowestLat > (r.Ewma[len(r.Ewma)/2]+r.Ewma[(len(r.Ewma)/2)-1])/2
+	}
+}
+
+func (r *LWPReplica) beginTracking(instID stats.InstanceID, sentTo []int, trackingName string) {
+	if len(sentTo) == r.N-1 || r.isSlowestSlowerThanMedian(sentTo) {
+		r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Slow Quorum")
+	} else {
+		r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Fast Quorum")
+	}
+}
+
 func (r *LWPReplica) bcastPrepare(instance int32) {
 	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.propCurBal}
 	pbk := r.instanceSpace[instance].pbk
 	dlog.Println("sending prepare")
-	pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
+
+	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
+
+	if r.doStats {
+		instID := stats.InstanceID{
+			Log: 0,
+			Seq: instance,
+		}
+		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
+		r.beginTracking(instID, sentTo, "Phase 1")
+	}
+
 	r.beginTimeout(args.Instance, args.Ballot, PREPARING, r.timeout, r.prepareRPC, args)
 }
 
@@ -700,7 +744,17 @@ func (r *LWPReplica) bcastAccept(instance int32) {
 	args := &pa
 
 	pbk := r.instanceSpace[instance].pbk
-	pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, args)
+	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, args)
+
+	if r.doStats {
+		instID := stats.InstanceID{
+			Log: 0,
+			Seq: instance,
+		}
+		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
+		r.beginTracking(instID, sentTo, "Phase 2")
+	}
+
 	r.beginTimeout(args.Instance, args.Ballot, PREPARING, r.timeout, r.acceptRPC, args)
 }
 
@@ -840,11 +894,14 @@ func (r *LWPReplica) proposerCheckAndHandlePreempt(inst int32, preemptingBallot 
 		r.BackoffManager.CheckAndHandleBackoff(inst, pbk.propCurBal, preemptingBallot, preemterPhase)
 
 		if pbk.status != BACKING_OFF && r.doStats {
+			id := stats.InstanceID{0, inst}
 			if pbk.status == PREPARING || pbk.status == READY_TO_PROPOSE {
-				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "My Phase 1 Preempted", 1)
+				r.InstanceStats.RecordOccurrence(id, "My Phase 1 Preempted", 1)
+				r.InstanceStats.RecordComplexStatEnd(id, "Phase 1", "Failure")
 				r.TimeseriesStats.Update("My Phase 1 Preempted", 1)
 			} else if pbk.status == PROPOSING {
-				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "My Phase 2 Preempted", 1)
+				r.InstanceStats.RecordOccurrence(id, "My Phase 2 Preempted", 1)
+				r.InstanceStats.RecordComplexStatEnd(id, "Phase 2", "Failure")
 				r.TimeseriesStats.Update("My Phase 2 Preempted", 1)
 			}
 		}
@@ -1080,6 +1137,12 @@ func (r *LWPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	qrm.AddToQuorum(int(preply.AcceptorId))
 	dlog.Printf("Added replica's %d promise to qrm", preply.AcceptorId)
 	if qrm.QuorumReached() { //int(qrm.quorumCount()+1) >= r.ELPReplica.ReadQuorumSize() {
+		id := stats.InstanceID{
+			Log: 0,
+			Seq: preply.Instance,
+		}
+		r.InstanceStats.RecordComplexStatEnd(id, "Phase 1", "Success")
+
 		r.propose(preply.Instance)
 	}
 }
@@ -1259,10 +1322,14 @@ func (r *LWPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	preempted := areply.Cur.GreaterThan(areply.Req)
 	if accepted {
 		dlog.Printf("Acceptance of instance %d at %d.%d by Acceptor %d received\n", areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId)
-		r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
+		res := r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
 		// we can count proposer of value too because they durably accept before sending accept request - only if fast learn is on
-		if r.fastLearn {
-			r.proposerCheckAndHandleAcceptedValue(areply.Instance, int32(areply.Req.PropID), areply.Cur, pbk.cmds, areply.WhoseCmd)
+		if res == CHOSEN {
+			id := stats.InstanceID{
+				Log: 0,
+				Seq: areply.Instance,
+			}
+			r.InstanceStats.RecordComplexStatEnd(id, "Phase 2", "Success")
 		}
 	} else if preempted {
 		r.proposerCheckAndHandlePreempt(areply.Instance, areply.Cur, ACCEPTANCE) // todo fix

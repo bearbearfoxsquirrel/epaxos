@@ -379,7 +379,7 @@ func NewElpReplica(smrReplica *genericsmr.Replica, id int, durable bool, batchWa
 
 	if r.doStats {
 		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
-		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get())
+		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get(), nil)
 	}
 
 	if group1Size <= r.N-r.F {
