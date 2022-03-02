@@ -119,6 +119,8 @@ var instStatsFilename *string = flag.String("inststatsfilename", "", "Name for i
 
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
+// todo add in selected fastest qrm
+
 func main() {
 	flag.Parse()
 

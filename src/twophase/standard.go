@@ -140,7 +140,23 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 
 	if r.doStats {
 		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
-		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get())
+
+		phaseStarts := []string{"Fast Quorum", "Slow Quorum"}
+		phaseEnds := []string{"Success", "Failure"}
+		phaseRes := map[string][]string{
+			"Fast Quorum": phaseEnds,
+			"Slow Quorum": phaseEnds,
+		}
+		phaseNegs := map[string]string{
+			"Fast Quorum": "Failure",
+			"Slow Quorum": "Success",
+		}
+		phaseCStats := []*stats.MutliStartMultiOutcomeStat{
+			stats.MultiStartMultiOutStatNew("Phase 1", phaseStarts, phaseRes, phaseNegs, true),
+			stats.MultiStartMultiOutStatNew("Phase 2", phaseStarts, phaseRes, phaseNegs, true),
+		}
+
+		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get(), phaseCStats)
 	}
 
 	if group1Size <= r.N-r.F {
