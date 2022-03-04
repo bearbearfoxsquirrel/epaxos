@@ -171,9 +171,9 @@ type MutliStartMultiOutcomeStat struct {
 }
 
 func (stat *MutliStartMultiOutcomeStat) Begin(start string) {
-	stat.closeOpenEnds()
+	//stat.closeOpenEnds()
 	if _, exists := stat.startsRecord[start]; exists {
-		stat.closeOpenEnds()
+		//	stat.closeOpenEnds()
 		stat.curStart = start
 		stat.started = true
 		stat.Outcomes[start].started++
@@ -191,9 +191,12 @@ func (stat *MutliStartMultiOutcomeStat) End(outcome string) {
 }
 
 func (stat *MutliStartMultiOutcomeStat) closeOpenEnds() {
-	if stat.started { // if we start a new stat and didn't finish previous one, assume it is negative
-		startedStat := stat.Outcomes[stat.curStart]
-		startedStat.outcomes[startedStat.negative]++
+	//	if stat.started { // if we start a new stat and didn't finish previous one, assume it is negative
+	//		startedStat := stat.Outcomes[stat.curStart]
+	//		startedStat.outcomes[startedStat.negative]++
+	//	}
+	for _, ongoing := range stat.Outcomes {
+		ongoing.correctNegativeOutcomes()
 	}
 }
 
@@ -304,8 +307,6 @@ func InstanceStatsNew(outputLoc string, registerIDs []string, complexStatsConstr
 			}
 		}
 	}
-
-	str.WriteString(", ")
 	str.WriteString(instanceStats.commitExecutionComparator.getOutputFields())
 	str.WriteString("\n")
 	file.WriteString(str.String())
@@ -381,6 +382,7 @@ func (stats *InstanceStats) OutputRecord(id InstanceID) {
 	stats.outputFile.WriteString(str.String())
 	delete(stats.register, id)
 	delete(stats.commitExecutionComparator.cmdsTimes, id)
+	delete(stats.complexStats, id)
 }
 
 func (stats *InstanceStats) Close() {

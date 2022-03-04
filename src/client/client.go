@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -275,6 +276,7 @@ func main() {
 	}
 
 	var proxy *bindings.Parameters
+	proxyMutex := sync.Mutex{}
 	for {
 		proxy = bindings.NewParameters(*masterAddr, *masterPort, *verbose, *noLeader, *fast, *localReads, *connectReplica)
 		err := proxy.Connect()
@@ -289,7 +291,9 @@ func main() {
 	valueDone := make(chan ClientValue, *outstanding)
 
 	go func() {
+		proxyMutex.Lock()
 		replicaReader := proxy.GetListener()
+		proxyMutex.Unlock()
 		for {
 			rep := new(genericsmrproto.ProposeReplyTS)
 			if err := rep.Unmarshal(replicaReader); err == nil {
@@ -303,10 +307,12 @@ func main() {
 				}
 			} else {
 				err = errors.New("Failed to receive a response.")
+				proxyMutex.Lock()
 				proxy.Connect()
 				replicaReader = proxy.GetListener()
 				benchmarker.reset()
 				beginBenchmarkingValues(benchmarker, proxy, *outstanding)
+				proxyMutex.Unlock()
 			}
 		}
 	}()
@@ -335,7 +341,9 @@ func main() {
 				//	panic("returned value already done or never started")
 			} else {
 				newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
+				proxyMutex.Lock()
 				benchmarkValue(proxy, newValue)
+				proxyMutex.Unlock()
 			}
 			break
 		}

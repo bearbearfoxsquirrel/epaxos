@@ -98,7 +98,7 @@ var nothreadexec *bool = flag.Bool("nothreadexec", false, "optional turning off 
 
 var catchUpFallenBehind *bool = flag.Bool("catchupfallenbehind", false, "catch up those who send messages for instances fallen behind")
 
-var deadTime *int = flag.Int("deadtime", 20000, "time to take replica out of quorum (default 20 second)")
+var deadTime *int = flag.Int("deadtime", 60000, "time to take replica out of quorum (default 60 seconds)")
 var batchsize *int = flag.Int("batchsize", 1024, "max vals held in a proposal")
 
 var skipwaitms *int = flag.Int("skipwaitms", 350, "ms to wait before mencius skips")
@@ -171,7 +171,7 @@ func main() {
 	var runnable runnable.Runnable
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
-		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime))
+		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doMencius {
@@ -369,7 +369,7 @@ func main() {
 		}
 	} else {
 		log.Println("Starting classic Paxos replica...")
-		rep := paxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime))
+		rep := paxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *sendFastestQrm)
 		rpc.Register(rep)
 		runnable = rep
 	}

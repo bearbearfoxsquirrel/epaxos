@@ -48,6 +48,7 @@ type Replica struct {
 	batchWait             int
 	emulatedSS            bool
 	emulatedWriteTime     time.Duration
+	sendToFastestQrm      bool
 }
 
 func (r *Replica) CloseUp() {
@@ -81,7 +82,7 @@ type LeaderBookkeeping struct {
 	lastTriedBallot int32           // highest ballot tried so far
 }
 
-func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, sendToFastestQrm bool) *Replica {
 	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -103,7 +104,8 @@ func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec
 		-1,
 		batchWait,
 		emulatedSS,
-		emulatedWriteTime}
+		emulatedWriteTime,
+		sendToFastestQrm}
 
 	r.Durable = durable
 
@@ -221,9 +223,7 @@ func (r *Replica) run() {
 	go r.WaitForClientConnections()
 
 	for !r.Shutdown {
-
 		select {
-
 		case propose := <-onOffProposeChan:
 			//got a Propose from a client
 			r.handlePropose(propose)
@@ -233,59 +233,50 @@ func (r *Replica) run() {
 				onOffProposeChan = nil
 			}
 			break
-
 		case <-fastClockChan:
 			//activate new proposals channel
 			onOffProposeChan = r.ProposeChan
 			break
-
 		case prepareS := <-r.prepareChan:
 			prepare := prepareS.(*paxosproto.Prepare)
 			//got a Prepare message
 			dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
 			r.handlePrepare(prepare)
 			break
-
 		case acceptS := <-r.acceptChan:
 			accept := acceptS.(*paxosproto.Accept)
 			//got an Accept message
 			dlog.Printf("Received Accept from replica %d, for instance %d\n", accept.LeaderId, accept.Instance)
 			r.handleAccept(accept)
 			break
-
 		case commitS := <-r.commitChan:
 			commit := commitS.(*paxosproto.Commit)
 			//got a Commit message
 			dlog.Printf("Received Commit from replica %d, for instance %d\n", commit.LeaderId, commit.Instance)
 			r.handleCommit(commit)
 			break
-
 		case commitS := <-r.commitShortChan:
 			commit := commitS.(*paxosproto.CommitShort)
 			//got a Commit message
 			dlog.Printf("Received short Commit from replica %d, for instance %d\n", commit.LeaderId, commit.Instance)
 			r.handleCommitShort(commit)
 			break
-
 		case prepareReplyS := <-r.prepareReplyChan:
 			prepareReply := prepareReplyS.(*paxosproto.PrepareReply)
 			//got a Prepare reply
 			dlog.Printf("Received PrepareReply for instance %d\n", prepareReply.Instance)
 			r.handlePrepareReply(prepareReply)
 			break
-
 		case acceptReplyS := <-r.acceptReplyChan:
 			acceptReply := acceptReplyS.(*paxosproto.AcceptReply)
 			//got an Accept reply
 			dlog.Printf("Received AcceptReply for instance %d\n", acceptReply.Instance)
 			r.handleAcceptReply(acceptReply)
 			break
-
 		case iid := <-r.instancesToRecover:
 			r.recover(iid)
 			break
 		}
-
 	}
 }
 
@@ -310,21 +301,18 @@ func (r *Replica) bcastPrepare(instance int32) {
 
 	args := &paxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].lb.lastTriedBallot}
 
-	n := r.N - 1
+	n := r.ReadQuorumSize()
 
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-
-	sent := 0
-	for q := 0; q < r.N-1; q++ {
-		if !r.Alive[r.PreferredPeerOrder[q]] {
-			continue
-		}
-		r.SendMsg(r.PreferredPeerOrder[q], r.prepareRPC, args)
-		sent++
-		if sent >= n {
-			break
-		}
+	var order []int32
+	if r.sendToFastestQrm {
+		order = r.GetLatencyPeerOrder()
+	} else {
+		order = r.GetAliveRandomPeerOrder()
+	}
+	if len(order) < n || !r.Thrifty {
+		r.SendToGroup(order, r.prepareRPC, args)
+	} else {
+		r.SendToGroup(order[:n], r.prepareRPC, args)
 	}
 
 }
@@ -343,21 +331,18 @@ func (r *Replica) bcastAccept(instance int32) {
 	pa.Command = r.instanceSpace[instance].lb.cmds
 	args := &pa
 
-	n := r.N - 1
+	n := r.WriteQuorumSize()
 
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-
-	sent := 0
-	for q := 0; q < r.N-1; q++ {
-		if !r.Alive[r.PreferredPeerOrder[q]] {
-			continue
-		}
-		r.SendMsg(r.PreferredPeerOrder[q], r.acceptRPC, args)
-		sent++
-		if sent >= n {
-			break
-		}
+	var order []int32
+	if r.sendToFastestQrm {
+		order = r.GetLatencyPeerOrder()
+	} else {
+		order = r.GetAliveRandomPeerOrder()
+	}
+	if len(order) < n || !r.Thrifty {
+		r.SendToGroup(order, r.acceptRPC, args)
+	} else {
+		r.SendToGroup(order[:n], r.acceptRPC, args)
 	}
 
 }
@@ -383,14 +368,19 @@ func (r *Replica) bcastCommit(instance int32, ballot int32, command []state.Comm
 	argsShort := &pcs
 
 	sent := 0
+	r.Mutex.Lock()
 	for q := 0; q < r.N-1; q++ {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
 			continue
 		}
-		r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+		if r.Thrifty {
+			r.SendMsgUNSAFE(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+		} else {
+			r.SendMsgUNSAFE(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+		}
 		sent++
 	}
-
+	r.Mutex.Unlock()
 }
 
 func (r *Replica) handlePropose(propose *genericsmr.Propose) {

@@ -52,7 +52,6 @@ type Replica struct {
 	batchWait                int
 	skipwait_ms              int
 	max_skips_awaiting       int
-	batch                    bool
 }
 
 func (r *Replica) CloseUp() {
@@ -121,7 +120,6 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		batchwait,
 		skipwaitMs,
 		maxSkipsAwaiting,
-		batch,
 	}
 
 	r.Durable = durable
@@ -216,7 +214,7 @@ func (r *Replica) run() {
 
 	r.ConnectToPeers()
 
-	r.RandomisePeerOrder()
+	//r.RandomisePeerOrder()
 
 	if r.Exec {
 		go r.executeCommands()
@@ -224,12 +222,13 @@ func (r *Replica) run() {
 
 	go r.clock()
 
+	fastClockChan = make(chan bool)
+	go r.WaitForClientConnections()
+	onOffProposeChan := r.ProposeChan
+
 	if r.BatchingEnabled() {
 		go r.fastClock()
 	}
-
-	go r.WaitForClientConnections()
-	onOffProposeChan := r.ProposeChan
 
 	for !r.Shutdown {
 
@@ -335,6 +334,7 @@ func (r *Replica) bcastSkip(startInstance int32, endInstance int32, exceptReplic
 			dlog.Println("Skip bcast failed:", err)
 		}
 	}()
+	r.CalculateAlive()
 	sk.LeaderId = r.Id
 	sk.StartInstance = startInstance
 	sk.EndInstance = endInstance
@@ -343,7 +343,7 @@ func (r *Replica) bcastSkip(startInstance int32, endInstance int32, exceptReplic
 
 	n := r.N - 1
 	q := r.Id
-
+	r.Mutex.Lock()
 	for sent := 0; sent < n; {
 		q = (q + 1) % int32(r.N)
 		if q == r.Id {
@@ -353,8 +353,9 @@ func (r *Replica) bcastSkip(startInstance int32, endInstance int32, exceptReplic
 			continue
 		}
 		sent++
-		r.SendMsgNoFlush(q, r.skipRPC, args)
+		r.SendMsgNoFlushUNSAFE(q, r.skipRPC, args)
 	}
+	r.Mutex.Unlock()
 }
 
 func (r *Replica) bcastPrepare(instance int32, ballot int32) {
@@ -363,6 +364,8 @@ func (r *Replica) bcastPrepare(instance int32, ballot int32) {
 			dlog.Println("Prepare bcast failed:", err)
 		}
 	}()
+
+	r.CalculateAlive()
 	args := &menciusproto.Prepare{r.Id, instance, ballot}
 
 	n := r.N - 1
@@ -370,7 +373,7 @@ func (r *Replica) bcastPrepare(instance int32, ballot int32) {
 		n = r.N >> 1
 	}
 	q := r.Id
-
+	r.Mutex.Lock()
 	for sent := 0; sent < n; {
 		q = (q + 1) % int32(r.N)
 		if q == r.Id {
@@ -380,8 +383,9 @@ func (r *Replica) bcastPrepare(instance int32, ballot int32) {
 			continue
 		}
 		sent++
-		r.SendMsg(q, r.prepareRPC, args)
+		r.SendMsgUNSAFE(q, r.prepareRPC, args)
 	}
+	r.Mutex.Unlock()
 }
 
 var ma menciusproto.Accept
@@ -392,19 +396,21 @@ func (r *Replica) bcastAccept(instance int32, ballot int32, skip uint8, nbInstTo
 			dlog.Println("Accept bcast failed:", err)
 		}
 	}()
+	r.CalculateAlive()
 	ma.LeaderId = r.Id
 	ma.Instance = instance
 	ma.Ballot = ballot
 	ma.Skip = skip
 	ma.NbInstancesToSkip = nbInstToSkip
 	ma.Command = command
-	args := &ma
-	//args := &menciusproto.Accept{r.Id, instance, ballot, skip, nbInstToSkip, command}
+	//args := &ma
+	args := &menciusproto.Accept{r.Id, instance, ballot, skip, nbInstToSkip, command}
 
 	n := r.N - 1
 	q := r.Id
 
 	sent := 0
+	r.Mutex.Lock()
 	for sent < n {
 		q = (q + 1) % int32(r.N)
 		if q == r.Id {
@@ -423,7 +429,7 @@ func (r *Replica) bcastAccept(instance int32, ballot int32, skip uint8, nbInstTo
 			}
 		}
 		sent++
-		r.SendMsg(q, r.acceptRPC, args)
+		r.SendMsgUNSAFE(q, r.acceptRPC, args)
 	}
 
 	for sent < r.N>>1 {
@@ -444,8 +450,9 @@ func (r *Replica) bcastAccept(instance int32, ballot int32, skip uint8, nbInstTo
 			}
 		}
 		sent++
-		r.SendMsg(q, r.acceptRPC, args)
+		r.SendMsgNoFlushUNSAFE(q, r.acceptRPC, args)
 	}
+	r.Mutex.Unlock()
 }
 
 var mc menciusproto.Commit
@@ -456,6 +463,7 @@ func (r *Replica) bcastCommit(instance int32, skip uint8, nbInstToSkip int32, co
 			dlog.Println("Commit bcast failed:", err)
 		}
 	}()
+	r.CalculateAlive()
 	mc.LeaderId = r.Id
 	mc.Instance = instance
 	mc.Skip = skip
@@ -467,6 +475,7 @@ func (r *Replica) bcastCommit(instance int32, skip uint8, nbInstToSkip int32, co
 	n := r.N - 1
 	q := r.Id
 
+	r.Mutex.Lock()
 	for sent := 0; sent < n; {
 		q = (q + 1) % int32(r.N)
 		if q == r.Id {
@@ -476,19 +485,19 @@ func (r *Replica) bcastCommit(instance int32, skip uint8, nbInstToSkip int32, co
 			continue
 		}
 		sent++
-		r.SendMsg(q, r.commitRPC, args)
+		r.SendMsgUNSAFE(q, r.commitRPC, args)
 	}
+	r.Mutex.Unlock() // todo clean up all these bcasts -- lazy way done, fragile
 }
 
 func (r *Replica) handlePropose(propose *genericsmr.Propose) {
-
 	instNo := r.crtInstance
 	r.crtInstance += int32(r.N)
 
-	batchSize := 1
-	if r.batch && !r.BatchingEnabled() {
-		batchSize = len(r.ProposeChan) + 1
-	}
+	//batchSize := 1
+	//if !r.BatchingEnabled() {
+	batchSize := len(r.ProposeChan) + 1
+	//}
 
 	cmds := make([]state.Command, batchSize)
 	proposals := make([]*genericsmr.Propose, batchSize)
@@ -646,6 +655,7 @@ func (r *Replica) handleAccept(accept *menciusproto.Accept) {
 		dlog.Printf("Skipping!!\n")
 		r.bcastSkip(skipStart, skipEnd, accept.LeaderId)
 		r.updateBlocking(skipStart)
+		r.Mutex.Lock()
 		if flush {
 			for _, w := range r.PeerWriters {
 				if w != nil {
@@ -653,6 +663,7 @@ func (r *Replica) handleAccept(accept *menciusproto.Accept) {
 				}
 			}
 		}
+		r.Mutex.Unlock()
 	} else {
 		r.updateBlocking(accept.Instance)
 	}
@@ -660,11 +671,13 @@ func (r *Replica) handleAccept(accept *menciusproto.Accept) {
 
 func (r *Replica) handleDelayedSkip(delayedSkip *DelayedSkip) {
 	r.skipsWaiting--
+	r.Mutex.Lock()
 	for _, w := range r.PeerWriters {
 		if w != nil {
 			w.Flush()
 		}
 	}
+	r.Mutex.Unlock()
 }
 
 func (r *Replica) handleCommit(commit *menciusproto.Commit) {

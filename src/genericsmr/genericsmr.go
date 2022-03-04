@@ -75,8 +75,8 @@ type Replica struct {
 
 	PreferredPeerOrder []int32 // replicas in the preferred order of communication
 
-	rpcTable map[uint8]*RPCPair
-	rpcCode  uint8
+	rpcTable   map[uint8]*RPCPair
+	maxRpcCode uint8
 
 	Ewma                    []float64
 	ReplicasLatenciesOrders []int32
@@ -288,22 +288,13 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 			break
 		}
 
-		go func() {
-			r.Mutex.Lock()
-			if r.Alive[rid] == false {
-				r.Alive[rid] = true
-			}
-			r.lastHeardFrom[rid] = time.Now()
-			r.Mutex.Unlock()
-		}()
-
 		switch uint8(msgType) {
 		case genericsmrproto.GENERIC_SMR_BEACON:
 			if err = gbeacon.Unmarshal(reader); err != nil {
 				break
 			}
-			beacon := &Beacon{int32(rid), gbeacon.Timestamp}
-			r.ReplyBeacon(beacon)
+			beac := &Beacon{int32(rid), gbeacon.Timestamp}
+			r.ReplyBeacon(beac)
 			break
 
 		case genericsmrproto.GENERIC_SMR_BEACON_REPLY:
@@ -312,6 +303,10 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 			}
 			dlog.Println("receive beacon ", gbeaconReply.Timestamp, " reply from ", rid)
 			r.Mutex.Lock()
+			if r.Alive[rid] == false {
+				r.Alive[rid] = true
+			}
+			r.lastHeardFrom[rid] = time.Now()
 			r.updateLatencyWithReply(rid, gbeaconReply)
 			r.Mutex.Unlock()
 			break
@@ -323,6 +318,7 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 				}
 				rpair.Chan <- obj
 			} else {
+				panic("alsdjfjldskf")
 				log.Fatal("Error: received unknown message type ", msgType, " from  ", rid)
 			}
 		}
@@ -416,15 +412,20 @@ func (r *Replica) clientListener(conn net.Conn) {
 }
 
 func (r *Replica) RegisterRPC(msgObj fastrpc.Serializable, notify chan fastrpc.Serializable) uint8 {
-	code := r.rpcCode
-	r.rpcCode++
+	code := r.maxRpcCode
+	r.maxRpcCode++
 	r.rpcTable[code] = &RPCPair{msgObj, notify}
-	dlog.Println("registering RPC ", r.rpcCode)
+	dlog.Println("registering RPC ", r.maxRpcCode)
 	return code
 }
 
 func (r *Replica) CalculateAlive() {
 	r.Mutex.Lock()
+	r.calcAliveInternal()
+	r.Mutex.Unlock()
+}
+
+func (r *Replica) calcAliveInternal() {
 	for i := 0; i < r.N; i++ {
 		if i == int(r.Id) || r.lastHeardFrom[i].Equal(time.Time{}) {
 			continue
@@ -435,7 +436,6 @@ func (r *Replica) CalculateAlive() {
 			}
 		}
 	}
-	r.Mutex.Unlock()
 }
 
 func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
@@ -451,12 +451,45 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 	if code == 0 {
 		panic("bad rpc code")
 	}
+	if _, okie := r.rpcTable[code]; !okie {
+		panic("waaaaaaaa")
+	}
 	w.WriteByte(code)
 	msg.Marshal(w)
 	w.Flush()
 }
 
+func (r *Replica) SendMsgUNSAFE(peerId int32, code uint8, msg fastrpc.Serializable) {
+	w := r.PeerWriters[peerId]
+	if w == nil {
+		log.Printf("Connection to %d lost!\n", peerId)
+		return
+	}
+
+	if code == 0 {
+		panic("bad rpc code")
+	}
+	if _, okie := r.rpcTable[code]; !okie {
+		panic("waaaaaaaa")
+	}
+	w.WriteByte(code)
+	msg.Marshal(w)
+	w.Flush()
+}
+
+func (r *Replica) SendMsgNoFlushUNSAFE(peerId int32, code uint8, msg fastrpc.Serializable) {
+	w := r.PeerWriters[peerId]
+	if w == nil {
+		log.Printf("Connection to %d lost!\n", peerId)
+		return
+	}
+	w.WriteByte(code)
+	msg.Marshal(w)
+}
+
 func (r *Replica) SendMsgNoFlush(peerId int32, code uint8, msg fastrpc.Serializable) {
+	r.Mutex.Lock()
+	defer r.Mutex.Unlock()
 	w := r.PeerWriters[peerId]
 	if w == nil {
 		log.Printf("Connection to %d lost!\n", peerId)
@@ -472,7 +505,6 @@ func (r *Replica) ReplyProposeTS(reply *genericsmrproto.ProposeReplyTS, w *bufio
 	reply.Marshal(w)
 	w.Flush()
 }
-
 func (r *Replica) SendBeacon(peerId int32) {
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
@@ -481,6 +513,7 @@ func (r *Replica) SendBeacon(peerId int32) {
 		log.Printf("Connection to %d lost!\n", peerId)
 		return
 	}
+	//log.Println("sending beacon to", peerId)
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON)
 	beacon := &genericsmrproto.Beacon{Timestamp: time.Now().UnixNano()}
 	beacon.Marshal(w)
@@ -497,13 +530,15 @@ func (r *Replica) ReplyBeacon(beacon *Beacon) {
 		log.Printf("Connection to %d lost!\n", beacon.Rid)
 		return
 	}
+	//log.Println("sending beacon reply to", beacon.Rid)
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON_REPLY)
-	rb := &genericsmrproto.BeaconReply{beacon.Timestamp}
+	rb := genericsmrproto.BeaconReply{beacon.Timestamp}
 	rb.Marshal(w)
 	w.Flush()
 }
 
 func (r *Replica) Crash() {
+	r.Mutex.Lock()
 	r.Listener.Close()
 	for i := 0; i < r.N; i++ {
 		if int(r.Id) == i {
@@ -512,6 +547,7 @@ func (r *Replica) Crash() {
 			r.Peers[i].Close()
 		}
 	}
+	r.Mutex.Unlock()
 }
 
 func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string, deadTime int32) *Replica {
@@ -548,7 +584,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		&genericsmrproto.Stats{make(map[string]int)},
 		make([]time.Time, len(peerAddrList)),
 		deadTime,
-		time.Duration(100 * time.Millisecond),
+		time.Duration(200 * time.Millisecond),
 		0.1,
 	}
 
@@ -565,13 +601,22 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 
 	for i := int32(0); i < int32(r.N); i++ {
 		if r.Id == i {
-			r.Ewma[i] = math.MaxFloat64
+			r.Alive[i] = true
 		}
 		r.Ewma[i] = 0.0
 		r.ReplicasLatenciesOrders[i] = i
+
 	}
 
 	return r
+}
+
+func (r *Replica) CopyEWMA() []float64 {
+	r.Mutex.Lock()
+	cp := make([]float64, len(r.Ewma))
+	copy(cp, r.Ewma)
+	r.Mutex.Unlock()
+	return cp
 }
 
 /*
@@ -625,12 +670,6 @@ func testEq(a, b []int32) bool {
 	}
 
 	return true
-}
-
-func (r *Replica) SortPeerOrderByLatency() {
-	r.Mutex.Lock()
-
-	r.Mutex.Unlock()
 }
 
 func (r *Replica) RandomisePeerOrder() {
@@ -716,15 +755,127 @@ func (r *Replica) RandomisePeerOrder() {
 }
 
 func (r *Replica) updateLatencyWithReply(rid int, gbeaconReply genericsmrproto.BeaconReply) {
-	r.Mutex.Lock()
+	//r.Mutex.Lock()
 	r.Ewma[rid] = (1-r.ewmaWeight)*r.Ewma[rid] + r.ewmaWeight*float64(time.Now().UnixNano()-gbeaconReply.Timestamp)
-	r.Mutex.Unlock()
+	//r.Mutex.Unlock()
 }
 
-func (r *Replica) CalculateLatencyRanks() {
+//
+//func (r *Replica) SortPeerOrderByLatencyRanks() {
+//	r.Mutex.Lock()
+//	sort.Slice(r.PreferredPeerOrder, func(i, j int) bool {
+//		return r.Ewma[i] < r.Ewma[j]
+//	})
+//	r.Mutex.Unlock()
+//}
+
+// returns all alive acceptors ordered by random (including self)
+func (r *Replica) GetAliveRandomPeerOrder() []int32 {
+	// returns a random preference order for sending messages, except we are always first
 	r.Mutex.Lock()
-	sort.Slice(r.ReplicasLatenciesOrders, func(i, j int) bool {
+	defer r.Mutex.Unlock()
+	aliveReps := r.getAlivePeers()
+	aliveReps[0] = r.Id
+	rand.Shuffle(len(aliveReps[1:]), func(i, j int) {
+		aliveReps[i], aliveReps[j] = aliveReps[j], aliveReps[i]
+	})
+	return aliveReps
+}
+
+// returns all alive acceptors ordered by latency (including self)
+func (r *Replica) GetLatencyPeerOrder() []int32 {
+	r.Mutex.Lock()
+	aliveReps := r.getAlivePeers()
+	sort.Slice(aliveReps, func(i, j int) bool {
 		return r.Ewma[i] < r.Ewma[j]
 	})
 	r.Mutex.Unlock()
+	return aliveReps
+}
+
+func (r *Replica) getAlivePeers() []int32 {
+	aliveReps := make([]int32, 0, r.N)
+	for i, isAlive := range r.Alive {
+		if isAlive {
+			aliveReps = append(aliveReps, int32(i))
+		}
+	}
+	return aliveReps
+}
+
+func (r *Replica) FromCandidatesSelectBestLatency(candidates [][]int) []int {
+	r.Mutex.Lock()
+	defer r.Mutex.Unlock()
+
+	livingQrmsIds := r.getLivingFromCandidates(candidates)
+	bestQrm := -1
+	bestScore := int32(math.MaxInt32)
+	for _, id := range livingQrmsIds {
+		qrm := candidates[id]
+		crtScore := int32(0)
+		for acc := range qrm {
+			crtScore += r.ReplicasLatenciesOrders[acc]
+		}
+		if crtScore < bestScore {
+			bestScore = crtScore
+			bestQrm = id
+		}
+	}
+	if bestQrm == -1 {
+		return []int{}
+	}
+	return candidates[bestQrm]
+}
+
+func (r *Replica) FromCandidatesSelectRandom(candidates [][]int) []int {
+	r.Mutex.Lock()
+	defer r.Mutex.Unlock()
+
+	livingQrmsIds := r.getLivingFromCandidates(candidates)
+	if len(livingQrmsIds) == 0 {
+		return []int{}
+	}
+	return candidates[livingQrmsIds[rand.Intn(len(livingQrmsIds))]]
+}
+
+func (r *Replica) getLivingFromCandidates(candidates [][]int) []int {
+	r.calcAliveInternal()
+	livingQuorums := make([]int, 0, len(candidates))
+	for i, qrm := range candidates {
+		for j := 0; j < len(qrm); j++ {
+			if !r.Alive[qrm[j]] && int32(qrm[j]) != r.Id { // we are assumed to be alive but will appear dead
+				break
+			}
+		}
+		livingQuorums = append(livingQuorums, i)
+	}
+	return livingQuorums
+}
+
+func (r *Replica) SendToGroup(group []int32, code uint8, msg fastrpc.Serializable) {
+	r.Mutex.Lock()
+	defer r.Mutex.Unlock()
+	for _, aid := range group {
+		if aid == r.Id || !r.Alive[aid] {
+			continue
+		}
+		w := r.PeerWriters[aid]
+		if w == nil {
+			log.Printf("Connection to %d lost!\n", aid)
+			return
+		}
+
+		if code == 0 {
+			panic("bad rpc code")
+		}
+		w.WriteByte(code)
+		msg.Marshal(w)
+		w.Flush()
+	}
+}
+
+func (r *Replica) FlushBuffer(to int32) {
+	r.Mutex.Lock()
+	_ = r.PeerWriters[to].Flush()
+	r.Mutex.Unlock() //todo implement for all that don't flush commits
 }

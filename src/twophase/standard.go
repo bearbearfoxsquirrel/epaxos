@@ -60,7 +60,6 @@ type LWPReplica struct {
 	whoCrash                      int32
 	emulatedSS                    bool
 	emulatedWriteTime             time.Duration
-	goHeartbeat                   chan struct{}
 	timeoutMsgs                   chan TimeoutInfo
 	timeout                       time.Duration
 	catchupBatchSize              int32
@@ -123,8 +122,7 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 		howLongCrash:        howlongCrash,
 		emulatedSS:          emulatedSS,
 		emulatedWriteTime:   emulatedWriteTime,
-		goHeartbeat:         make(chan struct{}),
-		timeoutMsgs:         make(chan TimeoutInfo, 1000),
+		timeoutMsgs:         make(chan TimeoutInfo, 5000),
 		timeout:             timeout,
 		catchupBatchSize:    catchupBatchSize,
 		lastSettleBatchInst: -1,
@@ -134,7 +132,7 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 		batchSize:           batchSize,
 		requeueOnPreempt:    requeueOnPreempt,
 		doStats:             doStats,
-		batchedProps:        make(chan []*genericsmr.Propose, 100),
+		batchedProps:        make(chan []*genericsmr.Propose, 500),
 		openInst:            make(chan struct{}, maxOpenInstances),
 	}
 
@@ -149,7 +147,7 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 		}
 		phaseNegs := map[string]string{
 			"Fast Quorum": "Failure",
-			"Slow Quorum": "Success",
+			"Slow Quorum": "Failure",
 		}
 		phaseCStats := []stats.MultiStartMultiOutStatConstructor{
 			{"Phase 1", phaseStarts, phaseRes, phaseNegs, true},
@@ -408,25 +406,25 @@ func (r *LWPReplica) checkAndHandlecatchupResponse(commit *stdpaxosproto.Commit)
 	}
 }
 
-func (r *LWPReplica) doHeartbeat() {
-	heartBeat := stdpaxosproto.Prepare{
-		LeaderId: r.Id,
-		Instance: -2,
-		Ballot:   stdpaxosproto.Ballot{-1, -1},
-	}
-	for i := 0; i < r.N-1; i++ {
-		if r.PreferredPeerOrder[i] == r.Id {
-			continue
-		}
-		r.SendMsg(r.PreferredPeerOrder[i], r.prepareRPC, &heartBeat)
-	}
-
-	go func() {
-		timer := time.NewTimer(100 * time.Millisecond)
-		<-timer.C
-		r.goHeartbeat <- struct{}{}
-	}()
-}
+//func (r *LWPReplica) doHeartbeat() {
+//	heartBeat := stdpaxosproto.Prepare{
+//		LeaderId: r.Id,
+//		Instance: -2,
+//		Ballot:   stdpaxosproto.Ballot{-1, -1},
+//	}
+//	for i := 0; i < r.N-1; i++ {
+//		if r.PreferredPeerOrder[i] == r.Id {
+//			continue
+//		}
+//		r.SendMsg(r.PreferredPeerOrder[i], r.prepareRPC, &heartBeat)
+//	}
+//
+//	go func() {
+//		timer := time.NewTimer(100 * time.Millisecond)
+//		<-timer.C
+//		r.goHeartbeat <- struct{}{}
+//	}()
+//}
 
 func (r *LWPReplica) run() {
 	r.ConnectToPeers()
@@ -451,7 +449,7 @@ func (r *LWPReplica) run() {
 		}()
 	}
 
-	r.doHeartbeat()
+	//	r.doHeartbeat()
 	var c chan struct{}
 	if r.doStats {
 		r.TimeseriesStats.GoClock()
@@ -469,9 +467,9 @@ func (r *LWPReplica) run() {
 			case <-c:
 				r.TimeseriesStats.PrintAndReset()
 				break
-			case <-r.goHeartbeat:
-				r.doHeartbeat()
-				break
+				//	case <-r.goHeartbeat:
+			//	r.doHeartbeat()
+			//	break
 			case maybeTimedout := <-r.timeoutMsgs:
 				r.retryBallot(maybeTimedout)
 				break
@@ -488,9 +486,6 @@ func (r *LWPReplica) run() {
 			case prepareS := <-r.prepareChan:
 				prepare := prepareS.(*stdpaxosproto.Prepare)
 				//got a Prepare message
-				if prepare.Instance == -2 { //received heartbeat
-					break
-				}
 				dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
 				if !r.checkAndHandlecatchupRequest(prepare) {
 					r.handlePrepare(prepare)
@@ -535,9 +530,6 @@ func (r *LWPReplica) run() {
 			case <-c:
 				r.TimeseriesStats.PrintAndReset()
 				break
-			case <-r.goHeartbeat:
-				r.doHeartbeat()
-				break
 			case maybeTimedout := <-r.timeoutMsgs:
 				r.retryBallot(maybeTimedout)
 				break
@@ -554,11 +546,7 @@ func (r *LWPReplica) run() {
 			case prepareS := <-r.prepareChan:
 				prepare := prepareS.(*stdpaxosproto.Prepare)
 				//got a Prepare message
-				if prepare.Instance == -2 { //received heartbeat
-					break
-				}
 				dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
-
 				if !r.checkAndHandlecatchupRequest(prepare) {
 					r.handlePrepare(prepare)
 				}
@@ -676,7 +664,6 @@ func (r *LWPReplica) sendSinglePrepare(instance int32, to int32) {
 }
 
 func (r *LWPReplica) beginTimeout(inst int32, attempted stdpaxosproto.Ballot, onWhatPhase ProposerStatus, timeout time.Duration, msgcode uint8, msg fastrpc.Serializable) {
-
 	go func(instance int32, tried stdpaxosproto.Ballot, phase ProposerStatus, timeoutWait time.Duration) {
 		timer := time.NewTimer(timeout)
 		<-timer.C
@@ -694,17 +681,18 @@ func (r *LWPReplica) beginTimeout(inst int32, attempted stdpaxosproto.Ballot, on
 
 func (r *LWPReplica) isSlowestSlowerThanMedian(sent []int) bool {
 	slowestLat := float64(-1)
+	ewma := r.CopyEWMA()
 	for _, v := range sent {
-		if r.Ewma[v] > slowestLat {
-			slowestLat = r.Ewma[v]
+		if ewma[v] > slowestLat {
+			slowestLat = ewma[v]
 		}
 	}
 
 	// is slower than median???
 	if (r.N-1)%2 != 0 {
-		return slowestLat > r.Ewma[len(r.Ewma)-1/2]
+		return slowestLat > ewma[len(ewma)-1/2]
 	} else {
-		return slowestLat > (r.Ewma[len(r.Ewma)/2]+r.Ewma[(len(r.Ewma)/2)-1])/2
+		return slowestLat > (ewma[len(ewma)/2]+ewma[(len(ewma)/2)-1])/2
 	}
 }
 
@@ -731,7 +719,6 @@ func (r *LWPReplica) bcastPrepare(instance int32) {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
 		r.beginTracking(instID, sentTo, "Phase 1")
 	}
-
 	r.beginTimeout(args.Instance, args.Ballot, PREPARING, r.timeout, r.prepareRPC, args)
 }
 
@@ -755,7 +742,7 @@ func (r *LWPReplica) bcastAccept(instance int32) {
 		r.beginTracking(instID, sentTo, "Phase 2")
 	}
 
-	r.beginTimeout(args.Instance, args.Ballot, PREPARING, r.timeout, r.acceptRPC, args)
+	r.beginTimeout(args.Instance, args.Ballot, PROPOSING, r.timeout, r.acceptRPC, args)
 }
 
 func (r *LWPReplica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, command []state.Command) {
@@ -776,24 +763,19 @@ func (r *LWPReplica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballo
 	pcs.Ballot = Ballot
 	pcs.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
 	pcs.Count = int32(len(command))
-	argsShort := &pcs
+	argsShort := pcs
 
 	r.CalculateAlive()
 	sent := 0
-	for q := 0; q < r.N-1; q++ {
-		inQrm := r.instanceSpace[instance].pbk.proposalInfos[Ballot].HasAcknowledged(q) //pbk.proposalInfos[Ballot].Broadcast//.aids[r.PreferredPeerOrder[q]]
+	for q := int32(0); q < int32(r.N); q++ {
+		if q == r.Id { //todo update others with this
+			continue
+		}
+		inQrm := r.instanceSpace[instance].pbk.proposalInfos[Ballot].HasAcknowledged(int(q)) //pbk.proposalInfos[Ballot].Broadcast//.aids[r.PreferredPeerOrder[q]]
 		if inQrm {
-			if r.flushCommit {
-				r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
-			} else {
-				r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
-			}
+			r.SendMsg(q, r.commitShortRPC, &argsShort)
 		} else {
-			if r.flushCommit {
-				r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, &pc)
-			} else {
-				r.SendMsgNoFlush(r.PreferredPeerOrder[q], r.commitRPC, &pc)
-			}
+			r.SendMsg(q, r.commitRPC, &pc)
 		}
 		sent++
 	}
@@ -897,11 +879,11 @@ func (r *LWPReplica) proposerCheckAndHandlePreempt(inst int32, preemptingBallot 
 			id := stats.InstanceID{0, inst}
 			if pbk.status == PREPARING || pbk.status == READY_TO_PROPOSE {
 				r.InstanceStats.RecordOccurrence(id, "My Phase 1 Preempted", 1)
-				r.InstanceStats.RecordComplexStatEnd(id, "Phase 1", "Failure")
+				//r.InstanceStats.RecordComplexStatEnd(id, "Phase 1", "Failure")
 				r.TimeseriesStats.Update("My Phase 1 Preempted", 1)
 			} else if pbk.status == PROPOSING {
 				r.InstanceStats.RecordOccurrence(id, "My Phase 2 Preempted", 1)
-				r.InstanceStats.RecordComplexStatEnd(id, "Phase 2", "Failure")
+				//r.InstanceStats.RecordComplexStatEnd(id, "Phase 2", "Failure")
 				r.TimeseriesStats.Update("My Phase 2 Preempted", 1)
 			}
 		}
@@ -977,7 +959,7 @@ func (r *LWPReplica) checkAndHandleCommit(instance int32, whoRespondTo int32, ma
 				}
 			}
 		}
-		_ = r.PeerWriters[whoRespondTo].Flush()
+		r.Replica.FlushBuffer(whoRespondTo)
 		return true
 	} else {
 		return false
@@ -1322,15 +1304,14 @@ func (r *LWPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	preempted := areply.Cur.GreaterThan(areply.Req)
 	if accepted {
 		dlog.Printf("Acceptance of instance %d at %d.%d by Acceptor %d received\n", areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId)
-		res := r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
+		r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
 		// we can count proposer of value too because they durably accept before sending accept request - only if fast learn is on
-		if res == CHOSEN {
-			id := stats.InstanceID{
-				Log: 0,
-				Seq: areply.Instance,
-			}
-			r.InstanceStats.RecordComplexStatEnd(id, "Phase 2", "Success")
-		}
+		////if res == CHOSEN {
+		////	id := stats.InstanceID{
+		////		Log: 0,
+		////		Seq: areply.Instance,
+		////	}
+		//}
 	} else if preempted {
 		r.proposerCheckAndHandlePreempt(areply.Instance, areply.Cur, ACCEPTANCE) // todo fix
 	} else {
@@ -1402,6 +1383,10 @@ func (r *LWPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 
 	if int32(chosenAt.PropID) == r.Id {
 		r.timeSinceLastProposedInstance = time.Now()
+	}
+
+	if chosenAt.Equal(instance.pbk.propCurBal) {
+		r.InstanceStats.RecordComplexStatEnd(stats.InstanceID{0, inst}, "Phase 2", "Success")
 	}
 
 	pbk.maxAcceptedBal = chosenAt

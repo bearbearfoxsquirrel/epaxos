@@ -90,6 +90,7 @@ type Replica struct {
 	commitExecComp        *CommitExecutionComparator.CommitExecutionComparator
 	commitExecMutex       *sync.Mutex
 	sepExecThread         bool
+	sendToFastestQrm      bool
 }
 
 func (r *Replica) CloseUp() {
@@ -137,7 +138,7 @@ type LeaderBookkeeping struct {
 	leaderResponded   bool
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, failures int, storageParentDir string, fastLearn bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool, deadTime int32, sendToFastQrm bool) *Replica {
 	r := &Replica{
 		genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageParentDir, deadTime),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -173,7 +174,8 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		cmpCommitExec,
 		nil,
 		new(sync.Mutex),
-		sepExecThread}
+		sepExecThread,
+		sendToFastQrm}
 
 	r.Beacon = beacon
 	r.Durable = durable
@@ -282,7 +284,7 @@ func (r *Replica) stopAdapting() {
 	time.Sleep(1000 * 1000 * 1000 * ADAPT_TIME_SEC)
 	r.Beacon = false
 	time.Sleep(1000 * 1000 * 1000)
-
+	r.Mutex.Lock()
 	for i := 0; i < r.N-1; i++ {
 		min := i
 		for j := i + 1; j < r.N-1; j++ {
@@ -294,8 +296,8 @@ func (r *Replica) stopAdapting() {
 		r.PreferredPeerOrder[i] = r.PreferredPeerOrder[min]
 		r.PreferredPeerOrder[min] = aux
 	}
-
 	log.Println(r.PreferredPeerOrder)
+	r.Mutex.Unlock()
 }
 
 func (r *Replica) BatchingEnabled() bool {
@@ -560,23 +562,32 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	}()
 	lb := r.InstanceSpace[replica][instance].lb
 	args := &epaxosproto.Prepare{r.Id, replica, instance, lb.lastTriedBallot}
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-	// todo add thrifty
-	n := r.N - 1
-	q := r.Id
-	for sent := 0; sent < n; {
-		q = (q + 1) % int32(r.N)
-		if q == r.Id {
-			dlog.Printf("Not enough replicas alive! %v", r.Alive)
-			break
-		}
-		if !r.Alive[q] {
-			continue
-		}
-		dlog.Printf("Sending Prepare %d.%d w. ballot %d to %d\n", replica, instance, lb.lastTriedBallot, q)
-		r.SendMsg(q, r.prepareRPC, args)
-		sent++
+	//r.CalculateAlive()
+	var order []int32
+	if r.sendToFastestQrm {
+		order = r.GetLatencyPeerOrder()
+	} else {
+		order = r.GetAliveRandomPeerOrder()
+	}
+	if len(order) < r.SlowQuorumSize() {
+		r.SendToGroup(order, r.prepareRPC, args)
+		//n := r.N - 1
+		//q := r.Id
+		//for sent := 0; sent < n; {
+		//	q = (q + 1) % int32(r.N)
+		//	if q == r.Id {
+		//		dlog.Printf("Not enough replicas alive! %v", r.Alive)
+		//		break
+		//	}
+		//	if !r.Alive[q] {
+		//		continue
+		//	}
+		//	dlog.Printf("Sending Prepare %d.%d w. ballot %d to %d\n", replica, instance, lb.lastTriedBallot, q)
+		//	r.SendMsg(q, r.prepareRPC, args)
+		//	sent++
+		//}
+	} else {
+		r.SendToGroup(order[:r.SlowQuorumSize()], r.prepareRPC, args)
 	}
 
 }
@@ -597,24 +608,33 @@ func (r *Replica) bcastPreAccept(replica int32, instance int32) {
 	pa.Seq = lb.seq
 	pa.Deps = lb.deps
 
-	n := r.N - 1
-	if r.Thrifty {
-		n = r.Replica.FastQuorumSize() - 1
+	var order []int32
+	if r.sendToFastestQrm {
+		order = r.GetLatencyPeerOrder()
+	} else {
+		order = r.GetAliveRandomPeerOrder()
 	}
-
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-	sent := 0
-	for q := 0; q < r.N-1; q++ {
-		if !r.Alive[r.PreferredPeerOrder[q]] {
-			continue
-		}
-		dlog.Printf("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
-		r.SendMsg(r.PreferredPeerOrder[q], r.preAcceptRPC, pa)
-		sent++
-		if sent >= n {
-			break
-		}
+	if len(order) < r.FastQuorumSize() {
+		r.SendToGroup(order, r.preAcceptRPC, pa)
+		//n := r.N - 1
+		//if r.Thrifty {
+		//	n = r.Replica.FastQuorumSize() - 1
+		//}
+		//
+		//sent := 0
+		//for q := 0; q < r.N-1; q++ {
+		//	if !r.Alive[r.PreferredPeerOrder[q]] {
+		//		continue
+		//	}
+		//	dlog.Printf("Sending PreAccept %d.%d w. ballot %d and deps %d to %d \n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+		//	r.SendMsg(r.PreferredPeerOrder[q], r.preAcceptRPC, pa)
+		//	sent++
+		//	if sent >= n {
+		//		break
+		//	}
+		//}
+	} else {
+		r.SendToGroup(order[:r.FastQuorumSize()], r.preAcceptRPC, pa)
 	}
 }
 
@@ -634,18 +654,18 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 	tpa.Seq = lb.seq
 	tpa.Deps = lb.deps
 
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-	for q := int32(0); q < int32(r.N); q++ {
-		if q == r.Id {
-			continue
-		}
-		if !r.Alive[q] {
-			continue
-		}
-		dlog.Println("Sending TryPreAccept %d.%d w. ballot %d and deps %d to %d\n", replica, instance, lb.lastTriedBallot, lb.deps, q)
-		r.SendMsg(q, r.tryPreAcceptRPC, tpa)
-	}
+	peers := r.GetAliveRandomPeerOrder()
+	r.SendToGroup(peers, r.tryPreAcceptRPC, tpa)
+	//for q := int32(0); q < int32(r.N); q++ {
+	//	if q == r.Id {
+	//		continue
+	//	}
+	////	if !r.Alive[q] {
+	////		continue
+	////	}
+	//	dlog.Println("Sending TryPreAccept %d.%d w. ballot %d and deps %d to %d\n", replica, instance, lb.lastTriedBallot, lb.deps, q)
+	//	r.SendMsg(q, r.tryPreAcceptRPC, tpa)
+	//}
 }
 
 func (r *Replica) bcastAccept(replica int32, instance int32) {
@@ -664,25 +684,26 @@ func (r *Replica) bcastAccept(replica int32, instance int32) {
 	ea.Seq = lb.seq
 	ea.Deps = lb.deps
 
-	n := r.N - 1
-	if r.Thrifty {
-		n = r.N / 2
+	//
+	//r.CalculateAlive()
+	//r.RandomisePeerOrder()
+
+	var order []int32
+	if r.sendToFastestQrm {
+		order = r.GetLatencyPeerOrder()
+	} else {
+		order = r.GetAliveRandomPeerOrder()
 	}
 
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-	sent := 0
-	for q := 0; q < r.N-1; q++ {
-		if !r.Alive[r.PreferredPeerOrder[q]] {
-			continue
-		}
-		dlog.Printf("Sending Accept %d.%d w. ballot %d to %d\n", replica, instance, lb.lastTriedBallot, q)
-		r.SendMsg(r.PreferredPeerOrder[q], r.acceptRPC, ea)
-		sent++
-		if sent >= n {
-			break
-		}
+	if len(order) < r.SlowQuorumSize() {
+		n := r.SlowQuorumSize()
+		order = order[:n]
+		dlog.Printf("Sending Accept %d.%d w. ballot %d \n", replica, instance, lb.lastTriedBallot)
+		r.SendToGroup(order, r.acceptRPC, ea)
+	} else {
+		r.SendToGroup(order[:r.SlowQuorumSize()], r.acceptRPC, ea)
 	}
+
 }
 
 func (r *Replica) bcastCommit(replica int32, instance int32) {
@@ -701,15 +722,18 @@ func (r *Replica) bcastCommit(replica int32, instance int32) {
 	ec.Deps = lb.deps
 	ec.Ballot = lb.ballot
 
-	r.CalculateAlive()
-	r.RandomisePeerOrder()
-	for q := 0; q < r.N-1; q++ {
-		if !r.Alive[r.PreferredPeerOrder[q]] {
-			continue
-		}
-		dlog.Printf("Sending Commit %d.%d to %d\n", replica, instance, r.PreferredPeerOrder[q])
-		r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, ec)
-	}
+	//	r.CalculateAlive()
+	//	r.RandomisePeerOrder()
+	peers := r.GetAliveRandomPeerOrder()
+	r.SendToGroup(peers, r.commitRPC, ec)
+	//for q := 0; q < r.N-1; q++ {
+	//
+	////	if !r.Alive[r.PreferredPeerOrder[q]] {
+	////		continue
+	////	}
+	//	dlog.Printf("Sending Commit %d.%d to %d\n", replica, instance, r.PreferredPeerOrder[q])
+	//	r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, ec)
+	//}
 }
 
 /******************************************************************

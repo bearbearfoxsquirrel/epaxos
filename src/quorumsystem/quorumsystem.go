@@ -5,7 +5,6 @@ import (
 	"fastrpc"
 	"genericsmr"
 	"math"
-	"math/rand"
 	"quorum"
 )
 
@@ -25,6 +24,17 @@ type SynodCountingQuorumSystemConstructor struct {
 }
 
 func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
+	amIInQrm := false
+	if len(acc) == constructor.N {
+		amIInQrm = true
+	} else {
+		for _, aid := range acc {
+			if aid == int(constructor.Id) {
+				amIInQrm = true
+				break
+			}
+		}
+	}
 	if len(acc) < 2*constructor.F+1 {
 		panic("Acceptor group is too small to tolerate this number of failures")
 	}
@@ -33,8 +43,9 @@ func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) Sy
 		p2size:           constructor.F + 1,
 		thrifty:          constructor.Thrifty,
 		Replica:          constructor.Replica,
-		allAids:          acc,
+		possibleAids:     acc,
 		broadcastFastest: constructor.BroadcastFastest,
+		amIInQrm:         amIInQrm,
 	}
 }
 
@@ -83,10 +94,14 @@ func (constructor *SynodGridQuorumSystemConstructor) Construct(acc []int) SynodQ
 		//log.Println(row)
 		rows[i] = row
 	}
+	all := make([]int, len(acc))
+	for i, aid := range acc {
+		all[i] = aid
+	}
 	return &GridQuorumSynodQuorumSystem{
-		cols: cols,
-		rows: rows,
-		//	all:     acc,
+		cols:             cols,
+		rows:             rows,
+		all:              all,
 		thrifty:          constructor.Thrifty,
 		Replica:          constructor.Replica,
 		broadcastFastest: constructor.BroadcastFastest,
@@ -99,43 +114,44 @@ type SynodTringleGridQuorumSystemConstructor struct {
 	*genericsmr.Replica
 }
 
-// in this construction excess acceptors are simply discounted
-func (constructor *SynodTringleGridQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
-	sqrt := int(math.Ceil(math.Sqrt(float64(len(acc)))))
-	if sqrt < constructor.F+1 {
-		panic("Acceptor group is too small to tolerate this number of failures")
-	}
-	cols := make([][]int, sqrt)
-	rows := make([][]int, sqrt)
-
-	j := 0
-	k := 0
-	colLen := sqrt + 1
-	for i := 0; i < len(cols); i++ {
-		j = k + colLen
-		a := acc[k:j]
-		k = j
-		//log.Println(a)
-		cols[i] = a
-		colLen--
-	}
-
-	for i := 0; i < len(rows); i++ {
-		rowLen := i + 1
-		row := make([]int, rowLen)
-		for l := 0; l < rowLen; l++ {
-			row[l] = cols[l][i-l]
-		}
-	}
-
-	return &GridQuorumSynodQuorumSystem{
-		cols: cols,
-		rows: rows,
-		//all:     acc,
-		thrifty: constructor.Thrifty,
-		Replica: constructor.Replica,
-	}
-}
+//
+//// in this construction excess acceptors are simply discounted
+//func (constructor *SynodTringleGridQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
+//	sqrt := int(math.Ceil(math.Sqrt(float64(len(acc)))))
+//	if sqrt < constructor.F+1 {
+//		panic("Acceptor group is too small to tolerate this number of failures")
+//	}
+//	cols := make([][]int, sqrt)
+//	rows := make([][]int, sqrt)
+//
+//	j := 0
+//	k := 0
+//	colLen := sqrt + 1
+//	for i := 0; i < len(cols); i++ {
+//		j = k + colLen
+//		a := acc[k:j]
+//		k = j
+//		//log.Println(a)
+//		cols[i] = a
+//		colLen--
+//	}
+//
+//	for i := 0; i < len(rows); i++ {
+//		rowLen := i + 1
+//		row := make([]int, rowLen)
+//		for l := 0; l < rowLen; l++ {
+//			row[l] = cols[l][i-l]
+//		}
+//	}
+//
+//	return &GridQuorumSynodQuorumSystem{
+//		cols: cols,
+//		rows: rows,
+//		//all:     acc,
+//		thrifty: constructor.Thrifty,
+//		Replica: constructor.Replica,
+//	}
+//}
 
 type Phase int
 
@@ -160,16 +176,17 @@ type SynodQuorumSystem interface {
 }
 
 type CountingQuorumSynodQuorumSystem struct {
-	p1size  int
-	p2size  int
-	crtQrm  quorum.CountingQuorumTally
-	thrifty bool
-	allAids []int
+	p1size       int
+	p2size       int
+	crtQrm       quorum.CountingQuorumTally
+	thrifty      bool
+	possibleAids []int
 	*genericsmr.Replica
 	Phase
 	crtQrmSize       int
 	bcastAttempts    int
 	broadcastFastest bool
+	amIInQrm         bool
 }
 
 func (qrmSys *CountingQuorumSynodQuorumSystem) QuorumReached() bool {
@@ -207,36 +224,41 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
 	qrmSys.Phase = ACCEPTANCE
 }
 
+func (qrmSys *CountingQuorumSynodQuorumSystem) amInQrm() {
+
+}
+
 func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("Prepare bcast failed:", err)
 		}
 	}()
-
-	qrmSys.Replica.CalculateAlive()
-	sentTo := make([]int, 0, qrmSys.Replica.N-1)
-
+	sendSize := qrmSys.crtQrmSize
+	if qrmSys.amIInQrm {
+		sendSize--
+	}
+	sentTo := make([]int, 0, qrmSys.crtQrmSize)
 	if qrmSys.thrifty { //&& qrmSys.bcastAttempts < 2 {
-		groupSize := qrmSys.crtQrmSize - 1
-		numSent := 0
-		// find out which quorums are alive
-
+		var peerList []int32
 		if qrmSys.broadcastFastest {
-			qrmSys.Replica.SortPeerOrderByLatency()
+			peerList = qrmSys.Replica.GetLatencyPeerOrder()
 		} else {
-			rand.Shuffle(len(qrmSys.PreferredPeerOrder), func(i, j int) {
-				qrmSys.PreferredPeerOrder[i], qrmSys.PreferredPeerOrder[j] = qrmSys.PreferredPeerOrder[j], qrmSys.PreferredPeerOrder[i]
-			})
+			peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
 		}
 
-		for _, a := range qrmSys.PreferredPeerOrder {
-			if qrmSys.Alive[a] {
-				qrmSys.Replica.SendMsg(int32(a), code, msg)
-				sentTo = append(sentTo, int(a))
-				numSent++
+		for _, a := range peerList {
+			numSent := 0
+			for _, pa := range qrmSys.possibleAids {
+				if int32(pa) == a && int32(pa) != qrmSys.Id {
+					qrmSys.Replica.SendMsg(a, code, msg)
+					//	log.Println("sent to ", a, "I am ", qrmSys.Id)
+					sentTo = append(sentTo, int(a))
+					numSent++
+					break
+				}
 			}
-			if numSent == groupSize {
+			if numSent == sendSize {
 				qrmSys.bcastAttempts++
 				return sentTo // we managed to send to a quorum so can return
 			}
@@ -244,21 +266,23 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		qrmSys.bcastAttempts++
 	}
 	// send to all
-	println("sending to all")
-	sendToAll(qrmSys.PreferredPeerOrder, qrmSys.Replica, code, msg)
+	//log.Println("sending to all")
+	sendToAll(qrmSys.possibleAids, qrmSys.Replica, code, msg)
+	qrmSys.Replica.Mutex.Lock()
 	for i := 0; i < qrmSys.N; i++ {
 		if i == int(qrmSys.Id) || !qrmSys.Alive[i] {
 			continue
 		}
 		sentTo = append(sentTo, i)
 	}
+	qrmSys.Replica.Mutex.Unlock()
 	return sentTo
 }
 
 type GridQuorumSynodQuorumSystem struct {
-	cols [][]int
-	rows [][]int
-	//all     []int
+	cols    [][]int
+	rows    [][]int
+	all     []int
 	crtQrm  quorum.SpecificQuorumTally
 	thrifty bool
 	*genericsmr.Replica
@@ -303,81 +327,55 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 	}()
 
 	possibleQrms := qrmSys.rows
-
-	sentTo := make([]int, 0, qrmSys.Replica.N-1)
-
 	if qrmSys.Phase == ACCEPTANCE {
-		//log.Println("Acceptance broadcast")
 		possibleQrms = qrmSys.cols
 	}
 
-	qrmSys.Replica.CalculateAlive()
-	if qrmSys.thrifty && qrmSys.bcastAttempts < 2 {
-		// find out which quorums are alive
-		livingQuorums := make([]int, 0, len(possibleQrms))
-		for i, qrm := range possibleQrms {
-			for j := 0; j < len(qrm); j++ {
-				if !qrmSys.Replica.Alive[qrm[j]] && int32(qrm[j]) != qrmSys.Replica.Id { // we will always appear dead
-					break
-				}
-			}
-			livingQuorums = append(livingQuorums, i)
+	sentTo := make([]int, 0, qrmSys.Replica.N-1)
+	if qrmSys.thrifty { //qrmSys.bcastAttempts < 2 {
+		var selectedQrm []int
+		if qrmSys.broadcastFastest {
+			selectedQrm = qrmSys.Replica.FromCandidatesSelectBestLatency(possibleQrms)
+		} else {
+			selectedQrm = qrmSys.Replica.FromCandidatesSelectRandom(possibleQrms)
 		}
-
-		if len(livingQuorums) > 0 {
-			qrmSelected := -1
-			// choose a random qrm that is alive
-			if qrmSys.broadcastFastest {
-				bestQrm := -1
-				bestScore := int32(math.MaxInt32)
-				for qrm := range livingQuorums {
-					crtScore := int32(0)
-					for acc := range possibleQrms[qrm] {
-						crtScore += qrmSys.Replica.ReplicasLatenciesOrders[acc]
-					}
-					if crtScore < bestScore {
-						bestScore = crtScore
-						bestQrm = qrm
-					}
-				}
-				qrmSelected = bestQrm
-			} else {
-				qrmSelected = rand.Intn(len(livingQuorums))
-			}
-
-			for _, a := range possibleQrms[livingQuorums[qrmSelected]] {
-				// don't need to send to self, just need to record our acknowledgement
-				if a32 := int32(a); qrmSys.Replica.Id != a32 {
+		if len(selectedQrm) > 0 {
+			for _, aid := range selectedQrm {
+				if a32 := int32(aid); qrmSys.Replica.Id != a32 {
 					//log.Println("Sending to %d", a32)
 					qrmSys.Replica.SendMsg(a32, code, msg)
-					sentTo = append(sentTo, a)
-
+					sentTo = append(sentTo, aid)
 				}
 			}
+			qrmSys.bcastAttempts++
 			return sentTo
 		}
-		qrmSys.bcastAttempts++
 		// fall back on sending to all
 	}
-	// send to allAids
-	sendToAll(qrmSys.PreferredPeerOrder, qrmSys.Replica, code, msg)
+	qrmSys.bcastAttempts++
+	// send to possibleAids
+	sendToAll(qrmSys.all, qrmSys.Replica, code, msg)
+	qrmSys.Mutex.Lock()
 	for i := 0; i < qrmSys.N; i++ {
 		if i == int(qrmSys.Id) || !qrmSys.Alive[i] {
 			continue
 		}
 		sentTo = append(sentTo, i)
 	}
+	qrmSys.Mutex.Unlock()
 	return sentTo
 }
 
-func sendToAll(all []int32, replica *genericsmr.Replica, code uint8, msg fastrpc.Serializable) {
-	// send to allAids
+func sendToAll(all []int, replica *genericsmr.Replica, code uint8, msg fastrpc.Serializable) {
+	// send to possibleAids
 	replica.CalculateAlive()
+	//replica.Mutex.Lock()
 	for _, aid := range all {
-		if replica.Alive[aid] && int32(aid) != replica.Id {
+		if int32(aid) != replica.Id {
 			replica.SendMsg(int32(aid), code, msg)
 		}
 	}
+	//replica.Mutex.Unlock()
 }
 
 //type BetterGridQuorumSynodQuorumSystem struct {
@@ -465,6 +463,6 @@ func sendToAll(all []int32, replica *genericsmr.Replica, code uint8, msg fastrpc
 //		qrmSys.bcastAttempts++
 //		// fall back on sending to all
 //	}
-//	// send to allAids
+//	// send to possibleAids
 //	sendToAll(qrmSys.all, qrmSys.Replica, code, msg)
 //}
