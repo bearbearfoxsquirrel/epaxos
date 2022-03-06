@@ -102,7 +102,6 @@ func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *gene
 }
 
 /* Utils */
-
 func (r *Replica) FastQuorumSize() int {
 	return r.F + (r.F+1)/2
 }

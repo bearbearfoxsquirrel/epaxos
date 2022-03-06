@@ -331,7 +331,7 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 		possibleQrms = qrmSys.cols
 	}
 
-	sentTo := make([]int, 0, qrmSys.Replica.N-1)
+	sentTo := make([]int, 0, qrmSys.Replica.N)
 	if qrmSys.thrifty { //qrmSys.bcastAttempts < 2 {
 		var selectedQrm []int
 		if qrmSys.broadcastFastest {
@@ -341,11 +341,11 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 		}
 		if len(selectedQrm) > 0 {
 			for _, aid := range selectedQrm {
-				if a32 := int32(aid); qrmSys.Replica.Id != a32 {
-					//log.Println("Sending to %d", a32)
-					qrmSys.Replica.SendMsg(a32, code, msg)
-					sentTo = append(sentTo, aid)
+				sentTo = append(sentTo, aid)
+				if aid == int(qrmSys.Replica.Id) {
+					continue
 				}
+				qrmSys.Replica.SendMsg(int32(aid), code, msg)
 			}
 			qrmSys.bcastAttempts++
 			return sentTo
