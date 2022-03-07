@@ -235,10 +235,11 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		}
 	}()
 	sendSize := qrmSys.crtQrmSize
+	sentTo := make([]int, 0, qrmSys.crtQrmSize)
 	if qrmSys.amIInQrm {
 		sendSize--
+		sentTo = append(sentTo, int(qrmSys.Id))
 	}
-	sentTo := make([]int, 0, qrmSys.crtQrmSize)
 	if qrmSys.thrifty { //&& qrmSys.bcastAttempts < 2 {
 		var peerList []int32
 		if qrmSys.broadcastFastest {
