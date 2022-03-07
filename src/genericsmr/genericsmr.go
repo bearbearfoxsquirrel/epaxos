@@ -784,12 +784,16 @@ func (r *Replica) GetAliveRandomPeerOrder() []int32 {
 // returns all alive acceptors ordered by latency (including self)
 func (r *Replica) GetLatencyPeerOrder() []int32 {
 	r.Mutex.Lock()
-	aliveReps := r.getAlivePeers()
-	sort.Slice(aliveReps, func(i, j int) bool {
+	//aliveReps := r.getAlivePeers()
+	peers := make([]int32, r.N)
+	for i, _ := range peers {
+		peers[i] = int32(i)
+	}
+	sort.Slice(peers, func(i, j int) bool {
 		return r.Ewma[i] < r.Ewma[j]
 	})
 	r.Mutex.Unlock()
-	return aliveReps
+	return peers
 }
 
 func (r *Replica) getAlivePeers() []int32 {
