@@ -180,13 +180,13 @@ func (r *LWPReplica) recordNewConfig(config int32) {
 
 	var b [4]byte
 	binary.LittleEndian.PutUint32(b[0:4], uint32(config))
-	r.StableStore.WriteAt(b[:], 0)
+	r.StableStorage.WriteAt(b[:], 0)
 }
 
 func (r *LWPReplica) recordExecutedUpTo() {
 	var b [4]byte
 	binary.LittleEndian.PutUint32(b[0:4], uint32(r.executedUpTo))
-	r.StableStore.WriteAt(b[:], 4)
+	r.StableStorage.WriteAt(b[:], 4)
 }
 
 //append a log entry to stable storage
@@ -199,7 +199,7 @@ func (r *LWPReplica) recordInstanceMetadata(inst *Instance) {
 	binary.LittleEndian.PutUint32(b[0:4], uint32(r.crtConfig))
 	binary.LittleEndian.PutUint32(b[4:8], uint32(inst.abk.curBal.Number))
 	binary.LittleEndian.PutUint32(b[8:12], uint32(inst.abk.curBal.PropID))
-	_, _ = r.StableStore.Write(b[:])
+	_, _ = r.StableStorage.Write(b[:])
 }
 
 //write a sequence of commands to stable storage
@@ -212,7 +212,7 @@ func (r *LWPReplica) recordCommands(cmds []state.Command) {
 		return
 	}
 	for i := 0; i < len(cmds); i++ {
-		cmds[i].Marshal(io.Writer(r.StableStore))
+		cmds[i].Marshal(io.Writer(r.StableStorage))
 	}
 }
 
@@ -225,7 +225,7 @@ func (r *LWPReplica) sync() {
 	if r.emulatedSS {
 		time.Sleep(r.emulatedWriteTime)
 	} else {
-		_ = r.StableStore.Sync()
+		_ = r.StableStorage.Sync()
 	}
 }
 

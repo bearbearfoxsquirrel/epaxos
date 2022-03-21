@@ -42,7 +42,7 @@ func TimeseriesStatsNew(initalRegisters []string, loc string, tick time.Duration
 	}
 
 	str := strings.Builder{}
-	str.WriteString("Date, Time, Microsecond")
+	str.WriteString("Date, Time")
 	for i := 0; i < len(initalRegisters); i++ {
 		str.WriteString(fmt.Sprintf(", %s", initalRegisters[i]))
 	}

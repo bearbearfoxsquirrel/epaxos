@@ -14,6 +14,7 @@ import (
 	"lwcpatient"
 	"lwcspeculative"
 	"masterproto"
+	"math/rand"
 	"mencius"
 	"net"
 	"net/http"
@@ -118,6 +119,12 @@ var sendFastestQrm *bool = flag.Bool("sendfastestqrm", false, "Send to fastest t
 
 var tsStatsFilename *string = flag.String("tsstatsfilename", "", "Name for timeseries stats file")
 var instStatsFilename *string = flag.String("inststatsfilename", "", "Name for instance stats file")
+var proposalStatsFilename *string = flag.String("proposalstatsfilename", "", "Name for proposal stats file")
+
+var sendProposerState *bool = flag.Bool("sendproposerstate", false, "Proposers periodically send their current state to each other")
+var proactivePrepareOnPreempt *bool = flag.Bool("proactivePrepareOnPreempt", false, "Upon being preempted, the proposer prepares on the preempting ballot")
+var batchingAcceptor *bool = flag.Bool("batchingacceptor", false, "Acceptor batches responses and disk writes")
+var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 10, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
 
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
@@ -125,6 +132,7 @@ var instStatsFilename *string = flag.String("inststatsfilename", "", "Name for i
 
 func main() {
 	flag.Parse()
+	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
 
 	if *maxInitBackoff == 0 {
 		*maxInitBackoff = int(float64(*minBackoff) * 1.2)
@@ -350,20 +358,24 @@ func main() {
 				Balloter:                     balloter,
 			}
 		}
+
+		acceptorMaxBatchWait := time.Duration(time.Duration(*accMaxBatchWaitMs) * time.Millisecond)
 		if *doELP {
-			rep := twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
-				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
-				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
-				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
-			runnable = rep
-			rpc.Register(rep)
+			//rep := twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+			//	int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+			//	*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
+			//	int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
+			//	*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
+			//runnable = rep
+			//rpc.Register(rep)
 		} else {
 			rep := twophase.NewBaselineTwoPhaseReplica(initialtor, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *tsStatsFilename, *instStatsFilename)
+				int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt,
+				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait)
 			runnable = rep
 			rpc.Register(rep)
 		}

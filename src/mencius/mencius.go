@@ -151,7 +151,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	binary.LittleEndian.PutUint32(b[1:5], uint32(inst.nbInstSkipped))
 	binary.LittleEndian.PutUint32(b[5:9], uint32(inst.ballot))
 	b[9] = byte(inst.status)
-	r.StableStore.Write(b[:])
+	r.StableStorage.Write(b[:])
 }
 
 //write a sequence of commands to stable storage
@@ -164,7 +164,7 @@ func (r *Replica) recordCommand(cmd []state.Command) {
 		return
 	}
 	for i := 0; i < len(cmd); i++ {
-		cmd[i].Marshal(io.Writer(r.StableStore))
+		cmd[i].Marshal(io.Writer(r.StableStorage))
 	}
 }
 
@@ -180,7 +180,7 @@ func (r *Replica) sync() {
 	if r.emulatedSS {
 		time.Sleep(r.emulatedWriteTime)
 	} else {
-		_ = r.StableStore.Sync()
+		_ = r.StableStorage.Sync()
 	}
 }
 

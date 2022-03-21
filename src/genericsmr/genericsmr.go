@@ -5,6 +5,7 @@ import (
 	"dlog"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fastrpc"
 	"fmt"
 	"genericsmrproto"
@@ -14,6 +15,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"reflect"
 	"sort"
 	"state"
 	"sync"
@@ -70,13 +72,15 @@ type Replica struct {
 
 	F int
 
-	Durable     bool     // log to a stable store?
-	StableStore *os.File // file support for the persistent log
+	Durable bool // log to a stable store?
+
+	StableStorage *os.File // file support for the persistent log
 
 	PreferredPeerOrder []int32 // replicas in the preferred order of communication
 
 	rpcTable   map[uint8]*RPCPair
 	maxRpcCode uint8
+	rpcCodes   map[reflect.Type]uint8
 
 	Ewma                    []float64
 	ReplicasLatenciesOrders []int32
@@ -99,6 +103,14 @@ func (r *Replica) Ping(args *genericsmrproto.PingArgs, reply *genericsmrproto.Pi
 
 func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *genericsmrproto.BeTheLeaderReply) error {
 	return nil
+}
+
+func (r *Replica) GetRPCode(serializable fastrpc.Serializable) (uint8, error) {
+	if c, exists := r.rpcCodes[reflect.TypeOf(serializable)]; exists {
+		return c, nil
+	} else {
+		return 0, errors.New("No rpc code found for serializable")
+	}
 }
 
 /* Utils */
@@ -411,10 +423,13 @@ func (r *Replica) clientListener(conn net.Conn) {
 }
 
 func (r *Replica) RegisterRPC(msgObj fastrpc.Serializable, notify chan fastrpc.Serializable) uint8 {
+	//	r.Mutex.Lock()
 	code := r.maxRpcCode
 	r.maxRpcCode++
 	r.rpcTable[code] = &RPCPair{msgObj, notify}
+	r.rpcCodes[reflect.TypeOf(msgObj)] = code
 	dlog.Println("registering RPC ", r.maxRpcCode)
+	//	r.Mutex.Unlock()
 	return code
 }
 
@@ -577,6 +592,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		make([]int32, len(peerAddrList)),
 		make(map[uint8]*RPCPair),
 		genericsmrproto.GENERIC_SMR_BEACON_REPLY + 1,
+		make(map[reflect.Type]uint8),
 		make([]float64, len(peerAddrList)),
 		make([]int32, len(peerAddrList)),
 		sync.Mutex{},
@@ -590,21 +606,19 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	storage = storageParentDir
 
 	var err error
-	r.StableStore, err =
-		os.Create(fmt.Sprintf("%v/stable-store-replica%d", storage, r.Id))
-		//		os.OpenFile(fmt.Sprintf("%v/stable-store-replica%d", storage, r.Id), os.O_RDWR|os.O_CREATE, 0755)
+	r.StableStorage, err =
+		os.Create(fmt.Sprintf("%vstable-store-replica%d", storage, r.Id))
+	//		os.OpenFile(fmt.Sprintf("%v/stable-store-replica%d", storage, r.Id), os.O_RDWR|os.O_CREATE, 0755)
 
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	for i := int32(0); i < int32(r.N); i++ {
 		if r.Id == i {
 			r.Alive[i] = true
 		}
 		r.Ewma[i] = 0.0
 		r.ReplicasLatenciesOrders[i] = i
-
 	}
 
 	return r

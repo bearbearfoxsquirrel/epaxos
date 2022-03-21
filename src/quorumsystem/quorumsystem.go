@@ -183,7 +183,6 @@ type CountingQuorumSynodQuorumSystem struct {
 	possibleAids []int
 	*genericsmr.Replica
 	Phase
-	crtQrmSize       int
 	bcastAttempts    int
 	broadcastFastest bool
 	amIInQrm         bool
@@ -211,7 +210,6 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) StartPromiseQuorum() {
 		Threshold:      qrmSys.p1size,
 		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
 	}
-	qrmSys.crtQrmSize = qrmSys.p1size
 	qrmSys.Phase = PROMISE
 }
 
@@ -220,12 +218,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
 		Threshold:      qrmSys.p2size,
 		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
 	}
-	qrmSys.crtQrmSize = qrmSys.p2size
 	qrmSys.Phase = ACCEPTANCE
-}
-
-func (qrmSys *CountingQuorumSynodQuorumSystem) amInQrm() {
-
 }
 
 func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int {
@@ -234,8 +227,8 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 			dlog.Println("Prepare bcast failed:", err)
 		}
 	}()
-	sendSize := qrmSys.crtQrmSize
-	sentTo := make([]int, 0, qrmSys.crtQrmSize)
+	sendSize := qrmSys.crtQrm.Threshold
+	sentTo := make([]int, 0, qrmSys.crtQrm.Threshold)
 	if qrmSys.amIInQrm {
 		sendSize--
 		sentTo = append(sentTo, int(qrmSys.Id))

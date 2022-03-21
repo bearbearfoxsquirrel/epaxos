@@ -137,7 +137,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 
 	var b [1]byte
 	b[0] = byte(inst.status)
-	r.StableStore.Write(b[:])
+	r.StableStorage.Write(b[:])
 }
 
 //write a sequence of commands to stable storage
@@ -150,7 +150,7 @@ func (r *Replica) recordCommands(cmds []state.Command) {
 		return
 	}
 	for i := 0; i < len(cmds); i++ {
-		cmds[i].Marshal(io.Writer(r.StableStore))
+		cmds[i].Marshal(io.Writer(r.StableStorage))
 	}
 }
 
@@ -164,7 +164,7 @@ func (r *Replica) sync() {
 	if r.emulatedSS {
 		time.Sleep(r.emulatedWriteTime)
 	} else {
-		_ = r.StableStore.Sync()
+		_ = r.StableStorage.Sync()
 	}
 }
 

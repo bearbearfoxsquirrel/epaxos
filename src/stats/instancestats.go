@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"stdpaxosproto"
 	"strings"
 	"time"
 )
@@ -25,6 +26,7 @@ func (d DefaultIMetrics) Get() []string {
 		"I Chose",
 		"Timeout triggered Phase 1",
 		"Timeout triggered Phase 2",
+		"Ballot choosing attempts",
 	}
 }
 
@@ -266,11 +268,163 @@ func (stat *MultiOutcomeStat) RecordOutcome(outcome string) {
 	}
 }
 
+type WhyClosedProposal int
+
+const (
+	UNKNOWN WhyClosedProposal = iota
+	ITWASCHOSEN
+	HIGHERPROPOSALONGOING
+	LOWERPROPOSALCHOSEN
+)
+
+func (why WhyClosedProposal) String() string {
+	switch why {
+	case ITWASCHOSEN:
+		return "it was chosen"
+	case HIGHERPROPOSALONGOING:
+		return "higher proposal ongoing"
+	case LOWERPROPOSALCHOSEN:
+		return "lower proposal chosen"
+	default:
+		panic("What is happening?!?!?!")
+	}
+}
+
+func (why WhyClosedProposal) Int() int {
+	return int(why)
+}
+
+func ProposalStatsNew(addtitionalOrderedKeys []string, outputLoc string) *ProposalStats {
+	file, _ := os.Create(outputLoc)
+
+	whyClosedOptions := ITWASCHOSEN.String() + "; " + HIGHERPROPOSALONGOING.String() + "; " + LOWERPROPOSALCHOSEN.String()
+	addtitionalOrderedKeys = append(addtitionalOrderedKeys, "Opened time",
+		"Closed (proposal) time",
+		"Why closed? ("+whyClosedOptions+")",
+		"Client values proposed",
+		"Noop proposed")
+	proposalStats := ProposalStats{
+		outputFile:       file,
+		orderdKeys:       addtitionalOrderedKeys,
+		whyClosedOptions: whyClosedOptions,
+		keyedStats:       make(map[InstanceID]map[stdpaxosproto.Ballot]*keyedStats),
+	}
+
+	str := strings.Builder{}
+	str.WriteString("Log ID, Log Seq No, Ballot Number")
+	for _, key := range addtitionalOrderedKeys {
+		str.WriteString(fmt.Sprintf(", %s", key))
+	}
+	str.WriteString("\n")
+	file.WriteString(str.String())
+	return &proposalStats
+}
+
+type ProposalStats struct {
+	outputFile       *os.File
+	orderdKeys       []string
+	keyedStats       map[InstanceID]map[stdpaxosproto.Ballot]*keyedStats
+	whyClosedOptions string
+}
+
+func (stat *ProposalStats) checkAndInitialise(id InstanceID, ballot stdpaxosproto.Ballot) {
+	if _, exists := stat.keyedStats[id]; !exists {
+		stat.keyedStats[id] = make(map[stdpaxosproto.Ballot]*keyedStats)
+	}
+	if _, exists := stat.keyedStats[id][ballot]; !exists {
+		stat.keyedStats[id][ballot] = keyedStatsNew(&stat.orderdKeys)
+	}
+}
+
+func (stat *ProposalStats) Open(id InstanceID, ballot stdpaxosproto.Ballot) {
+	stat.checkAndInitialise(id, ballot)
+	stat.RecordOccurence(id, ballot, "Opened time", int(time.Now().UnixNano())) //todo bad convert map to int64
+}
+
+//tuesdat 29th 3:45
+func (stat *ProposalStats) CloseAndOutput(id InstanceID, ballot stdpaxosproto.Ballot, why WhyClosedProposal) {
+	stat.RecordOccurence(id, ballot, "Closed (proposal) time", int(time.Now().UnixNano()))
+	stat.RecordOccurence(id, ballot, "Why closed ("+stat.whyClosedOptions+")", why.Int())
+	stat.output(id, ballot)
+}
+
+func (stat *ProposalStats) output(id InstanceID, ballot stdpaxosproto.Ballot) {
+	if _, exists := stat.keyedStats[id][ballot]; !exists {
+		panic("Cannot output instance proposal stat when instance not began")
+	}
+	str := strings.Builder{}
+	str.WriteString(fmt.Sprintf("%s ", stat.keyedStats[id][ballot].register[stat.orderdKeys[0]]))
+	for _, k := range stat.orderdKeys[1:] {
+		if k == "Why closed ("+stat.whyClosedOptions+")" {
+			str.WriteString(fmt.Sprintf(", %s", WhyClosedProposal(stat.keyedStats[id][ballot].register[k]).String()))
+		}
+		str.WriteString(fmt.Sprintf(", %s", stat.keyedStats[id][ballot].register[k]))
+	}
+}
+
+func (stat *ProposalStats) CloseOutput() {
+	stat.outputFile.Close()
+}
+
+func (stat *ProposalStats) RecordOccurence(id InstanceID, ballot stdpaxosproto.Ballot, key string, num int) {
+	stat.checkAndInitialise(id, ballot)
+	stat.keyedStats[id][ballot].recordOccurence(key, num)
+}
+
+func (stat *ProposalStats) RecordClientValuesProposed(id InstanceID, ballot stdpaxosproto.Ballot, num int) {
+	stat.checkAndInitialise(id, ballot)
+	stat.keyedStats[id][ballot].recordOccurence("Client values proposed", num)
+}
+
+func (stat *ProposalStats) RecordNoopProposed(id InstanceID, ballot stdpaxosproto.Ballot) {
+	stat.checkAndInitialise(id, ballot)
+	stat.keyedStats[id][ballot].recordOccurence("Noop proposed", 1)
+}
+
+func keyedStatsNew(orderedKeys *[]string) *keyedStats {
+	instanceRegister := make(map[string]int)
+	for i := 0; i < len(*orderedKeys); i++ {
+		instanceRegister[(*orderedKeys)[i]] = 0
+	}
+	return &keyedStats{
+		register:    instanceRegister,
+		orderedKeys: orderedKeys,
+	}
+}
+
+type keyedStats struct {
+	register    map[string]int
+	orderedKeys *[]string
+}
+
+func (ks *keyedStats) getKeys() string {
+	str := strings.Builder{}
+	for i := 0; i < len(*ks.orderedKeys); i++ {
+		str.WriteString(fmt.Sprintf(", %s", (*ks.orderedKeys)[i]))
+	}
+	return str.String()
+}
+
+func (ks *keyedStats) recordOccurence(key string, occurances int) {
+	ks.register[key] = ks.register[key] + occurances
+}
+
+func (ks *keyedStats) outputStats() string {
+	str := strings.Builder{}
+	str.WriteString(fmt.Sprintf("%d ", ks.register[(*ks.orderedKeys)[0]]))
+	for i := 1; i < len(*ks.orderedKeys); i++ {
+		k := (*ks.orderedKeys)[i]
+		v := ks.register[k]
+		str.WriteString(fmt.Sprintf(", %d", v))
+	}
+	return str.String()
+}
+
 type InstanceStats struct {
 	outputFile *os.File
 	*commitExecutionComparator
-	register                map[InstanceID]map[string]int
-	orderedKeys             []string
+	keyedStats              map[InstanceID]*keyedStats
+	keyedStatsKeys          []string
 	complexStatIDs          map[string]int
 	complexStats            map[InstanceID][]*MutliStartMultiOutcomeStat
 	complexStatConstructors []MultiStartMultiOutStatConstructor
@@ -279,7 +433,6 @@ type InstanceStats struct {
 func InstanceStatsNew(outputLoc string, registerIDs []string, complexStatsConstructors []MultiStartMultiOutStatConstructor) *InstanceStats {
 	file, _ := os.Create(outputLoc)
 
-	registerIDs = append(registerIDs, "Ballot Choosing Attempts")
 	statNames := make(map[string]int)
 	for i, complexStat := range complexStatsConstructors {
 		statNames[complexStat.Name] = i
@@ -287,19 +440,19 @@ func InstanceStatsNew(outputLoc string, registerIDs []string, complexStatsConstr
 	instanceStats := &InstanceStats{
 		outputFile:                file,
 		commitExecutionComparator: commitExecutionComparatorNew(),
-		orderedKeys:               registerIDs,
-		register:                  make(map[InstanceID]map[string]int),
+		keyedStats:                make(map[InstanceID]*keyedStats),
+		keyedStatsKeys:            registerIDs,
 		complexStatIDs:            statNames,
 		complexStatConstructors:   complexStatsConstructors,
 		complexStats:              make(map[InstanceID][]*MutliStartMultiOutcomeStat),
 	}
 
 	str := strings.Builder{}
-	str.WriteString("Log ID, Log Seq No")
-	for i := 0; i < len(registerIDs); i++ {
-		str.WriteString(fmt.Sprintf(", %s", registerIDs[i]))
+	str.WriteString("Log ID, Log Seq No, ")
+	for _, key := range registerIDs {
+		str.WriteString(fmt.Sprintf("%s ,", key))
 	}
-	str.WriteString(", ")
+	//str.WriteString(", ")
 	for _, cStat := range instanceStats.complexStatConstructors {
 		for _, start := range cStat.Starts {
 			for _, end := range cStat.Outcomes[start] {
@@ -315,12 +468,8 @@ func InstanceStatsNew(outputLoc string, registerIDs []string, complexStatsConstr
 }
 
 func (stats *InstanceStats) checkAndInitialiseInstance(inst InstanceID) {
-	if _, exists := stats.register[inst]; !exists {
-		instanceRegister := make(map[string]int)
-		for i := 0; i < len(stats.orderedKeys); i++ {
-			instanceRegister[stats.orderedKeys[i]] = 0
-		}
-		stats.register[inst] = instanceRegister
+	if _, exists := stats.keyedStats[inst]; !exists {
+		stats.keyedStats[inst] = keyedStatsNew(&stats.keyedStatsKeys)
 		stats.complexStats[inst] = make([]*MutliStartMultiOutcomeStat, len(stats.complexStatConstructors))
 		for _, statConstructor := range stats.complexStatConstructors {
 			stats.complexStats[inst][stats.complexStatIDs[statConstructor.Name]] = statConstructor.Construct()
@@ -342,7 +491,7 @@ func (stat *InstanceStats) RecordComplexStatEnd(inst InstanceID, statName, end s
 
 func (stats *InstanceStats) RecordOccurrence(inst InstanceID, stat string, count int) {
 	stats.checkAndInitialiseInstance(inst)
-	stats.register[inst][stat] = stats.register[inst][stat] + count
+	stats.keyedStats[inst].recordOccurence(stat, count)
 }
 
 func (stats *InstanceStats) RecordOpened(id InstanceID, time time.Time) {
@@ -352,12 +501,12 @@ func (stats *InstanceStats) RecordOpened(id InstanceID, time time.Time) {
 
 func (stats *InstanceStats) RecordCommitted(id InstanceID, atmts int, time time.Time) {
 	stats.checkAndInitialiseInstance(id)
-	stats.register[id]["Ballot Choosing Attempts"] = atmts
+	stats.keyedStats[id].recordOccurence("Ballot Choosing Attempts", atmts)
 	stats.commitExecutionComparator.recordCommit(id, time)
 }
 
 func (stats *InstanceStats) RecordExecuted(id InstanceID, time time.Time) {
-	if _, exists := stats.register[id]; !exists {
+	if _, exists := stats.keyedStats[id]; !exists {
 		panic("Oh no, we have executed without committing apparently! Maybe we just forgot to record it??")
 	}
 	stats.commitExecutionComparator.recordExecution(id, time)
@@ -368,11 +517,7 @@ func (stats *InstanceStats) OutputRecord(id InstanceID) {
 	//can rely on the fact that inst i can only call exec if all j < i are also executed
 	str := strings.Builder{}
 	str.WriteString(fmt.Sprintf("%d, %d, ", id.Log, id.Seq))
-	for i := 0; i < len(stats.orderedKeys); i++ {
-		k := stats.orderedKeys[i]
-		v := stats.register[id][k]
-		str.WriteString(fmt.Sprintf("%d, ", v))
-	}
+	str.WriteString(stats.keyedStats[id].outputStats())
 	for _, cStat := range stats.complexStats[id] {
 		str.WriteString(cStat.OutputResult() + ", ")
 	}
@@ -380,7 +525,7 @@ func (stats *InstanceStats) OutputRecord(id InstanceID) {
 	str.WriteString(cmtExecCmpStr)
 	str.WriteString("\n")
 	stats.outputFile.WriteString(str.String())
-	delete(stats.register, id)
+	delete(stats.keyedStats, id)
 	delete(stats.commitExecutionComparator.cmdsTimes, id)
 	delete(stats.complexStats, id)
 }
