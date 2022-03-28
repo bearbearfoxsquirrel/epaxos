@@ -10,7 +10,6 @@ import (
 	"genericsmr"
 	"genericsmrproto"
 	"io"
-	"log"
 	"state"
 	"sync"
 	"time"
@@ -296,7 +295,7 @@ func (r *Replica) stopAdapting() {
 		r.PreferredPeerOrder[i] = r.PreferredPeerOrder[min]
 		r.PreferredPeerOrder[min] = aux
 	}
-	log.Println(r.PreferredPeerOrder)
+	//log.Println(r.PreferredPeerOrder)
 	r.Mutex.Unlock()
 }
 
@@ -410,7 +409,7 @@ func (r Replica) replicaLoop() {
 
 		case <-slowClockChan:
 			if r.Beacon {
-				log.Printf("weird %d; conflicted %d; slow %d; fast %d\n", r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"])
+				dlog.Printf("weird %d; conflicted %d; slow %d; fast %d\n", r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"])
 				for q := int32(0); q < int32(r.N); q++ {
 					if q == r.Id {
 						continue
@@ -444,9 +443,9 @@ func (r *Replica) run() {
 		go r.fastClock()
 	}
 
-	if r.Beacon {
-		go r.stopAdapting()
-	}
+	//if r.Beacon {
+	//	go r.stopAdapting()
+	//}
 
 	go r.WaitForClientConnections()
 

@@ -244,13 +244,14 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		for _, a := range peerList {
 			numSent := 0
 			for _, pa := range qrmSys.possibleAids {
-				if int32(pa) == a { //&& int32(pa) != qrmSys.Id {
+				if int32(pa) == a && int32(pa) != qrmSys.Id {
 					qrmSys.Replica.SendMsg(a, code, msg)
 					//	log.Println("sent to ", a, "I am ", qrmSys.Id)
 					sentTo = append(sentTo, int(a))
 					numSent++
 					break
 				}
+
 			}
 			if numSent == sendSize {
 				qrmSys.bcastAttempts++
@@ -336,9 +337,9 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 		if len(selectedQrm) > 0 {
 			for _, aid := range selectedQrm {
 				sentTo = append(sentTo, aid)
-				//if aid == int(qrmSys.Replica.Id) {
-				//	continue
-				//
+				if aid == int(qrmSys.Replica.Id) {
+					continue
+				}
 				qrmSys.Replica.SendMsg(int32(aid), code, msg)
 			}
 			qrmSys.bcastAttempts++

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"genericsmr"
 	"genericsmrproto"
-	"log"
 	"math"
 	"math/rand"
 	"proposerstate"
@@ -771,7 +770,7 @@ func (r *ELPReplica) run() {
 		case prepareS := <-r.prepareChan:
 			prepare := prepareS.(*stdpaxosproto.Prepare)
 			//got a Prepare message
-			log.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
+			dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
 			//if !r.checkAndHandleCatchUpRequest(prepare) {
 			r.handlePrepare(prepare)
 			//}
@@ -779,7 +778,7 @@ func (r *ELPReplica) run() {
 		case acceptS := <-r.acceptChan:
 			accept := acceptS.(*stdpaxosproto.Accept)
 			//got an Accept message
-			log.Printf("Received Accept Request from replica %d, for instance %d\n", accept.LeaderId, accept.Instance)
+			dlog.Printf("Received Accept Request from replica %d, for instance %d\n", accept.LeaderId, accept.Instance)
 			r.handleAccept(accept)
 			break
 		case commitS := <-r.commitChan:
@@ -798,13 +797,13 @@ func (r *ELPReplica) run() {
 		case prepareReplyS := <-r.prepareReplyChan:
 			prepareReply := prepareReplyS.(*stdpaxosproto.PrepareReply)
 			//got a Prepare reply
-			log.Printf("Received PrepareReply for instance %d\n", prepareReply.Instance)
+			dlog.Printf("Received PrepareReply for instance %d\n", prepareReply.Instance)
 			r.handlePrepareReply(prepareReply)
 			break
 		case acceptReplyS := <-r.acceptReplyChan:
 			acceptReply := acceptReplyS.(*stdpaxosproto.AcceptReply)
 			//got an Accept reply
-			log.Printf("Received AcceptReply for instance %d\n", acceptReply.Instance)
+			dlog.Printf("Received AcceptReply for instance %d\n", acceptReply.Instance)
 			r.handleAcceptReply(acceptReply)
 			break
 		}
@@ -1366,11 +1365,11 @@ func (r *ELPReplica) propose(inst int32) {
 				r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
 				r.TimeseriesStats.Update("Times Client Values Proposed", 1)
 			}
-			log.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals.getCmds()), inst)
+			dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals.getCmds()), inst)
 			break
 		default:
 			if r.noopWaitUs > 0 {
-				log.Printf("Ready to tryPropose in instance %d but awaiting a full batch of values", inst)
+				dlog.Printf("Ready to tryPropose in instance %d but awaiting a full batch of values", inst)
 				time.AfterFunc(r.noopWait, func() {
 					r.proposableInstances <- ProposalInfo{
 						inst:         inst,
@@ -1455,11 +1454,11 @@ func (r *ELPReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 				r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, proposalInfo.inst}, pbk.propCurBal, len(pbk.cmds))
 				r.TimeseriesStats.Update("Times Client Values Proposed", 1)
 			}
-			log.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals.getCmds()), inst)
+			dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals.getCmds()), inst)
 			break
 		default:
 			if r.noopWaitUs > 0 {
-				log.Printf("Ready to tryPropose in instance %d but awaiting a full batch of values", inst)
+				dlog.Printf("Ready to tryPropose in instance %d but awaiting a full batch of values", inst)
 				time.AfterFunc(r.noopWait, func() {
 					r.proposableInstances <- ProposalInfo{
 						inst:         proposalInfo.inst,

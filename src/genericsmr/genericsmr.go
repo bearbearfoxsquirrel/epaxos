@@ -787,8 +787,14 @@ func (r *Replica) GetAliveRandomPeerOrder() []int32 {
 	// returns a random preference order for sending messages, except we are always first
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
-	aliveReps := r.getAlivePeers()
+	aliveReps := make([]int32, 1, r.N)
 	aliveReps[0] = r.Id
+	for i, isAlive := range r.Alive {
+		if !isAlive || int(r.Id) == i {
+			continue
+		}
+		aliveReps = append(aliveReps, int32(i))
+	}
 	rand.Shuffle(len(aliveReps[1:]), func(i, j int) {
 		aliveReps[i], aliveReps[j] = aliveReps[j], aliveReps[i]
 	})

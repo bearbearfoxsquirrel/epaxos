@@ -1,7 +1,6 @@
 package instanceagentmapper
 
 import (
-	"log"
 	"math/rand"
 )
 
@@ -27,7 +26,7 @@ func (mapper *InstanceNegativeAcceptorSetMapper) GetGroup(inst int) []int {
 	rem := make([]int, len(mapper.Acceptors))
 	copy(rem, mapper.Acceptors)
 	group = getGroup(inst, mapper.F+1, mapper.N, rem, group)
-	log.Println("got negative group for instance", inst, "group is", group)
+	//log.Println("got negative group for instance", inst, "group is", group)
 	return group
 }
 
@@ -55,7 +54,7 @@ func (mapper *InstanceAcceptorSetMapper) GetGroup(inst int) []int {
 	rem := make([]int, len(mapper.Acceptors))
 	copy(rem, mapper.Acceptors)
 	group = getGroup(inst, 2*mapper.F+1, mapper.N, rem, group)
-	log.Println("got group for instance", inst, "group is", group)
+	//log.Println("got group for instance", inst, "group is", group)
 	return group
 }
 
