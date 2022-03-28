@@ -1,6 +1,7 @@
-package instanceacceptormapper
+package instanceagentmapper
 
 import (
+	"log"
 	"math/rand"
 )
 
@@ -14,15 +15,30 @@ type InstanceAcceptorSetMapper struct {
 	N         int
 }
 
-func (mapper *InstanceAcceptorSetMapper) GetGroup(inst int) []int {
-	group := make([]int, 2*mapper.F+1)
+type InstanceNegativeAcceptorSetMapper struct {
+	Acceptors []int
+	F         int
+	N         int
+}
+
+func (mapper *InstanceNegativeAcceptorSetMapper) GetGroup(inst int) []int {
+	// will pick from the same group as the acceptor group mapper as uses same function
+	group := make([]int, mapper.F+1)
 	rem := make([]int, len(mapper.Acceptors))
 	copy(rem, mapper.Acceptors)
+	group = getGroup(inst, mapper.F+1, mapper.N, rem, group)
+	log.Println("got negative group for instance", inst, "group is", group)
+	return group
+}
 
-	for i := 0; i < 2*mapper.F+1; i++ {
+func getGroup(inst int, numToGet int, numAgents int, rem []int, group []int) []int {
+	if numToGet > numAgents {
+		panic("Too many agents to get for how many agents provided")
+	}
+	for i := 0; i < numToGet; i++ {
 		//get hashed aid from rank
 		random := rand.New(rand.NewSource(int64(inst + i)))
-		selectedRank := random.Int() % (mapper.N - i)
+		selectedRank := random.Int() % (numAgents - i)
 		selectedAid := rem[selectedRank]
 
 		// add to group
@@ -31,6 +47,15 @@ func (mapper *InstanceAcceptorSetMapper) GetGroup(inst int) []int {
 		// do not consider aid any more
 		rem = remove(rem, selectedRank)
 	}
+	return group
+}
+
+func (mapper *InstanceAcceptorSetMapper) GetGroup(inst int) []int {
+	group := make([]int, 2*mapper.F+1)
+	rem := make([]int, len(mapper.Acceptors))
+	copy(rem, mapper.Acceptors)
+	group = getGroup(inst, 2*mapper.F+1, mapper.N, rem, group)
+	log.Println("got group for instance", inst, "group is", group)
 	return group
 }
 
@@ -64,19 +89,4 @@ func (mapper *InstanceAcceptorGridMapper) GetGroup(inst int) []int {
 		rem = remove(rem, selectedRank)
 	}
 	return group
-}
-
-func main() {
-	mapper := InstanceAcceptorGridMapper{
-		Acceptors: []int{0, 1, 2, 3, 4, 5, 6},
-		F:         1,
-		N:         6,
-	}
-
-	x := make([][]int, 100)
-	for i := 0; i < 100; i++ {
-		x[i] = mapper.GetGroup(i)
-		//		log.Println(x[i])
-	}
-
 }

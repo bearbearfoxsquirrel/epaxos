@@ -1,12 +1,12 @@
 package state
 
 import (
-	"sync"
-	"github.com/emirpasic/gods/maps/treemap"
-	"encoding/hex"
-	"strconv"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"github.com/emirpasic/gods/maps/treemap"
+	"strconv"
+	"sync"
 )
 
 type Operation uint8
@@ -20,7 +20,7 @@ const (
 
 type Value []byte
 
-func NIL() Value {return Value([]byte{})}
+func NIL() Value { return Value([]byte{}) }
 
 type Key int64
 
@@ -30,7 +30,9 @@ type Command struct {
 	V  Value
 }
 
-func NOOP() []Command {return []Command {{NONE, 0, NIL()}}}
+func NOOP() []Command { return []Command{{NONE, 0, NIL()}} }
+
+func NOOPP() []*Command { return []*Command{{NONE, 0, NIL()}} }
 
 type State struct {
 	mutex *sync.Mutex
@@ -50,7 +52,7 @@ func KeyComparator(a, b interface{}) int {
 	}
 }
 
-func concat(slices []Value) Value{
+func concat(slices []Value) Value {
 	var totalLen int
 	for _, s := range slices {
 		totalLen += len(s)
@@ -63,9 +65,8 @@ func concat(slices []Value) Value{
 	return tmp
 }
 
-
 func InitState() *State {
-	return &State{new(sync.Mutex), 	treemap.NewWith(KeyComparator)}
+	return &State{new(sync.Mutex), treemap.NewWith(KeyComparator)}
 }
 
 func Conflict(gamma *Command, delta *Command) bool {
@@ -92,7 +93,6 @@ func IsRead(command *Command) bool {
 	return command.Op == GET
 }
 
-
 func (c *Command) Execute(st *State) Value {
 
 	st.mutex.Lock()
@@ -100,7 +100,7 @@ func (c *Command) Execute(st *State) Value {
 
 	switch c.Op {
 	case PUT:
-		st.Store.Put(c.K,c.V)
+		st.Store.Put(c.K, c.V)
 
 	case GET:
 		if value, present := st.Store.Get(c.K); present {
@@ -109,11 +109,11 @@ func (c *Command) Execute(st *State) Value {
 		}
 
 	case SCAN:
-		found := make([]Value,0)
+		found := make([]Value, 0)
 		count := binary.LittleEndian.Uint64(c.V)
 		it := st.Store.Select(func(index interface{}, value interface{}) bool {
 			keyAsserted := index.(Key)
-			return keyAsserted >= c.K && keyAsserted <= c.K + Key(count)
+			return keyAsserted >= c.K && keyAsserted <= c.K+Key(count)
 		}).Iterator()
 		for it.Next() {
 			valAsserted := it.Value().(Value)
@@ -126,26 +126,25 @@ func (c *Command) Execute(st *State) Value {
 	return NIL()
 }
 
-func (t *Value) String() string{
+func (t *Value) String() string {
 	return hex.EncodeToString(*t)
 }
 
-func (t *Key) String() string{
+func (t *Key) String() string {
 	return strconv.FormatInt(int64(*t), 16)
 }
 
-func (t *Command) String() string{
+func (t *Command) String() string {
 	ret := ""
-	if t.Op==PUT {
+	if t.Op == PUT {
 		ret = "PUT( " + t.K.String() + " , " + t.V.String() + " )"
-	} else if t.Op==GET {
-		ret="GET( "+t.K.String()+" )"
-	} else if t.Op==SCAN {
+	} else if t.Op == GET {
+		ret = "GET( " + t.K.String() + " )"
+	} else if t.Op == SCAN {
 		count := binary.LittleEndian.Uint64(t.V)
-		ret="SCAN( " + t.K.String() + " , " +  fmt.Sprint(count) + " )"
+		ret = "SCAN( " + t.K.String() + " , " + fmt.Sprint(count) + " )"
 	} else {
-		ret="UNKNOWN( " + t.V.String() + " , " + t.K.String() + " )"
+		ret = "UNKNOWN( " + t.V.String() + " , " + t.K.String() + " )"
 	}
 	return ret
 }
-

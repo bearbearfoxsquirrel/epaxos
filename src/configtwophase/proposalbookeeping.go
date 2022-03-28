@@ -2,7 +2,7 @@ package configtwophase
 
 import (
 	"genericsmr"
-	"instanceacceptormapper"
+	"instanceagentmapper"
 	"lwcproto"
 	"quorumsystem"
 	"state"
@@ -37,7 +37,7 @@ type ProposalManager interface {
 }
 
 type ReducedQuorumProposalInitiator struct {
-	AcceptorMapper instanceacceptormapper.InstanceAcceptorMapper
+	AcceptorMapper instanceagentmapper.InstanceAcceptorMapper
 	quorumsystem.SynodQuorumSystemConstructor
 	Balloter
 }

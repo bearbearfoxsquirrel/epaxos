@@ -308,19 +308,19 @@ package twophase
 //	}
 //}
 //
-//func (r *LWPReplica) batching() {
+//func (r *LWPReplica) startBatching() {
 //	for !r.Shutdown {
 //		q := r.clientValueQueue.GetQueueChan()
 //		select {
-//		case v := <-q:
+//		case c := <-q:
 //			time.Sleep(time.Duration(r.batchWait) * time.Millisecond)
 //
 //			batchSize := min(r.batchSize, len(q)+1)
 //			clientProposals := make([]*genericsmr.Propose, batchSize)
-//			clientProposals[0] = v
+//			clientProposals[0] = c
 //			for i := 1; i < batchSize; i++ {
-//				v = <-q
-//				clientProposals[i] = v
+//				c = <-q
+//				clientProposals[i] = c
 //			}
 //
 //			<-r.openInst // await an open instance
@@ -453,10 +453,10 @@ package twophase
 //	r.RandomisePeerOrder()
 //
 //	fastClockChan = make(chan bool, 1)
-//	//Enabled fast clock when batching
+//	//Enabled fast clock when startBatching
 //	if r.BatchingEnabled() {
 //		//	go r.fastClock()
-//		go r.batching()
+//		go r.startBatching()
 //	}
 //	//	onOffProposeChan := r.ProposeChan
 //
@@ -682,7 +682,7 @@ package twophase
 //	}
 //
 //	if (r.BackoffManager.NoHigherBackoff(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
-//		r.ProposalManager.beginNewProposal(r, next.InstToPrep)
+//		r.ProposalManager.StartNewProposal(r, next.InstToPrep)
 //		nextBallot := r.instanceSpace[next.InstToPrep].pbk.propCurBal
 //		r.acceptorPrepareOnBallot(next.InstToPrep, nextBallot)
 //		inst.pbk.proposalInfos[nextBallot].AddToQuorum(int(r.Id))
@@ -728,9 +728,9 @@ package twophase
 //func (r *LWPReplica) isSlowestSlowerThanMedian(sent []int) bool {
 //	slowestLat := float64(-1)
 //	ewma := r.CopyEWMA()
-//	for _, v := range sent {
-//		if ewma[v] > slowestLat {
-//			slowestLat = ewma[v]
+//	for _, c := range sent {
+//		if ewma[c] > slowestLat {
+//			slowestLat = ewma[c]
 //		}
 //	}
 //
@@ -844,7 +844,7 @@ package twophase
 //			proposalInfos: make(map[stdpaxosproto.Ballot]quorumsystem.SynodQuorumSystem),
 //
 //			maxKnownBal:     stdpaxosproto.Ballot{-1, -1},
-//			maxAcceptedBal:  stdpaxosproto.Ballot{-1, -1},
+//			proposeValueBal:  stdpaxosproto.Ballot{-1, -1},
 //			whoseCmds:       -1,
 //			cmds:            nil,
 //			propCurBal:      stdpaxosproto.Ballot{-1, -1},
@@ -857,7 +857,7 @@ package twophase
 //	r.incToNextOpenInstance()
 //	r.instanceSpace[r.crtInstance] = r.proposerMakeEmptyInstance()
 //	curInst := r.instanceSpace[r.crtInstance]
-//	r.ProposalManager.beginNewProposal(r, r.crtInstance)
+//	r.ProposalManager.StartNewProposal(r, r.crtInstance)
 //
 //	for i := 0; i < len(r.crtOpenedInstances); i++ {
 //		if r.crtOpenedInstances[i] == -1 {
@@ -884,9 +884,9 @@ package twophase
 //	dlog.Printf("Opened new instance %d\n", r.crtInstance)
 //}
 //
-//func (r *LWPReplica) handlePropose(propose *genericsmr.Propose) {
+//func (r *LWPReplica) handlePropose(tryPropose *genericsmr.Propose) {
 //	dlog.Printf("Received new client value\n")
-//	r.clientValueQueue.TryEnqueue(propose)
+//	r.clientValueQueue.TryEnqueue(tryPropose)
 //	//check if any open instances
 //}
 //
@@ -939,7 +939,7 @@ package twophase
 //			}
 //		}
 //
-//		// if we are preparing for a new instance to propose in but are preempted
+//		// if we are preparing for a new instance to tryPropose in but are preempted
 //		if pbk.status == PREPARING && pbk.clientProposals != nil || pbk.status == PROPOSING && pbk.clientProposals != nil && preemterPhase == ACCEPTANCE {
 //			r.requeueClientProposals(inst)
 //			pbk.clientProposals = nil
@@ -1082,10 +1082,10 @@ package twophase
 //	if accepted.GreaterThan(pbk.maxKnownBal) {
 //		pbk.maxKnownBal = accepted
 //	}
-//	if accepted.GreaterThan(pbk.maxAcceptedBal) {
+//	if accepted.GreaterThan(pbk.proposeValueBal) {
 //		newVal = true
 //		pbk.whoseCmds = whoseCmds
-//		pbk.maxAcceptedBal = accepted
+//		pbk.proposeValueBal = accepted
 //		pbk.cmds = val
 //
 //		if r.whatHappenedToClientProposals(inst) == ProposedButNotChosen {
@@ -1107,7 +1107,7 @@ package twophase
 //	dlog.Printf("Acceptance on instance %d at conf-round %d.%d by acceptor %d", inst, accepted.Number, accepted.PropID, aid)
 //	// not assumed local acceptor has accepted it
 //	if pbk.proposalInfos[accepted].QuorumReached() {
-//		//	if pbk.maxAcceptedBal.GreaterThan(accepted) && pbk.whoseCmds != whoseCmds && pbk.proposalInfos[pbk.propCurBal].qrmType == ACCEPTANCE {
+//		//	if pbk.proposeValueBal.GreaterThan(accepted) && pbk.whoseCmds != whoseCmds && pbk.proposalInfos[pbk.propCurBal].qrmType == ACCEPTANCE {
 //		//		panic("break in safety!!!")
 //		//	}
 //		r.bcastCommitToAll(inst, accepted, val)
@@ -1176,21 +1176,21 @@ package twophase
 //		}
 //		r.InstanceStats.RecordComplexStatEnd(id, "Phase 1", "Success")
 //
-//		r.propose(preply.Instance)
+//		r.tryPropose(preply.Instance)
 //	}
 //}
 //
-//func (r *LWPReplica) propose(inst int32) {
+//func (r *LWPReplica) tryPropose(inst int32) {
 //	instance := r.instanceSpace[inst]
 //	pbk := instance.pbk
 //
 //	pbk.status = READY_TO_PROPOSE
-//	dlog.Println("Can now propose in instance", inst)
+//	dlog.Println("Can now tryPropose in instance", inst)
 //	qrm := pbk.proposalInfos[pbk.propCurBal]
 //	qrm.StartAcceptanceQuorum()
 //
 //	whoseCmds := int32(-1)
-//	if pbk.maxAcceptedBal.IsZero() {
+//	if pbk.proposeValueBal.IsZero() {
 //		whoseCmds = r.Id
 //		if pbk.clientProposals != nil {
 //			pbk.cmds = make([]state.Command, len(pbk.clientProposals))
@@ -1202,17 +1202,17 @@ package twophase
 //
 //			q := r.clientValueQueue.GetQueueChan()
 //			select {
-//			case v := <-q:
+//			case c := <-q:
 //				batchSize := min(r.batchSize, len(q)+1)
 //				clientProposals := make([]*genericsmr.Propose, batchSize)
 //				cmds := make([]state.Command, batchSize)
-//				clientProposals[0] = v
-//				cmds[0] = v.Command
+//				clientProposals[0] = c
+//				cmds[0] = c.Command
 //
 //				for i := 1; i < batchSize; i++ {
-//					v = <-q
-//					clientProposals[i] = v
-//					cmds[i] = v.Command
+//					c = <-q
+//					clientProposals[i] = c
+//					cmds[i] = c.Command
 //				}
 //				dlog.Println("Client value(s) received beginning new instance")
 //				pbk.clientProposals = clientProposals
@@ -1365,9 +1365,9 @@ package twophase
 //	if r.batchWait > 0 {
 //		prop := make([]*genericsmr.Propose, len(inst.pbk.clientProposals))
 //		copy(prop, inst.pbk.clientProposals)
-//		go func(propose []*genericsmr.Propose) {
+//		go func(tryPropose []*genericsmr.Propose) {
 //			<-r.openInst
-//			r.batchedProps <- propose
+//			r.batchedProps <- tryPropose
 //		}(prop)
 //	} else {
 //		for i := 0; i < len(inst.pbk.clientProposals); i++ {
@@ -1396,7 +1396,7 @@ package twophase
 //	instance := r.instanceSpace[inst]
 //	pbk := instance.pbk
 //
-//	attempts := pbk.maxAcceptedBal.Number / r.maxBalInc
+//	attempts := pbk.proposeValueBal.Number / r.maxBalInc
 //	dlog.Printf("Attempts to chose instance %d: %d", inst, attempts)
 //}
 //
@@ -1429,7 +1429,7 @@ package twophase
 //		r.InstanceStats.RecordComplexStatEnd(stats.InstanceID{0, inst}, "Phase 2", "Success")
 //	}
 //
-//	pbk.maxAcceptedBal = chosenAt
+//	pbk.proposeValueBal = chosenAt
 //	pbk.cmds = chosenVal
 //	pbk.whoseCmds = whoseCmd
 //

@@ -1,43 +1,35 @@
 package twophase
 
 import (
-	"genericsmr"
-	"instanceacceptormapper"
+	"instanceagentmapper"
 	"quorumsystem"
 	"state"
 	"stdpaxosproto"
 )
 
-//
-//type BallotlotProposingBookkeeping struct {
-//	status ProposerStatus
-//	ProposalTracking
-//	//BallotlotTracker
-//	ValueTracker
-//	maxAccepted stdpaxosproto.Ballot
-//	maxKnown    stdpaxosproto.Ballot
-//}
-
 type ProposingBookkeeping struct {
 	status        ProposerStatus
 	proposalInfos map[stdpaxosproto.Ballot]quorumsystem.SynodQuorumSystem
 	//proposalInfos      map[stdpaxosproto.Ballot]*QuorumInfo
-	maxAcceptedBal  stdpaxosproto.Ballot // highest maxAcceptedBal at which a command was accepted
+	proposeValueBal stdpaxosproto.Ballot // highest proposeValueBal at which a command was accepted
 	whoseCmds       int32
-	cmds            []state.Command      // the accepted command
-	propCurBal      stdpaxosproto.Ballot // highest this replica maxAcceptedBal tried so far
-	clientProposals []*genericsmr.Propose
+	cmds            []*state.Command     // the accepted command
+	propCurBal      stdpaxosproto.Ballot // highest this replica proposeValueBal tried so far
+	clientProposals proposalBatch
 	maxKnownBal     stdpaxosproto.Ballot
 }
 
 type ProposalManager interface {
-	beginNewProposal(replica ConfigRoundProposable, inst int32)
+	StartNewProposal(replica ConfigRoundProposable, inst int32)
 	trackProposalAcceptance(replica ConfigRoundProposable, inst int32, bal stdpaxosproto.Ballot)
 	getBalloter() Balloter
+	IsInQrm(inst int32, aid int32) bool
+	//Close(inst int32)
 }
 
 type ReducedQuorumProposalInitiator struct {
-	AcceptorMapper instanceacceptormapper.InstanceAcceptorMapper
+	AcceptorMapper instanceagentmapper.InstanceAcceptorMapper
+	MapperCache    map[int32][]int
 	quorumsystem.SynodQuorumSystemConstructor
 	Balloter
 }
@@ -65,7 +57,11 @@ type ConfigRoundProposable interface {
 //	return r.instanceSpace[inst].pbk
 //}
 
-func (proposalConstructor *NormalQuorumProposalInitiator) beginNewProposal(r ConfigRoundProposable, inst int32) {
+func (proposalConstructor *NormalQuorumProposalInitiator) IsInQrm(inst int32, aid int32) bool {
+	return true
+}
+
+func (proposalConstructor *NormalQuorumProposalInitiator) StartNewProposal(r ConfigRoundProposable, inst int32) {
 	pbk := r.GetPBK(inst)
 	beginPreparingBallot(pbk, proposalConstructor.Balloter)
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(proposalConstructor.Aids)
@@ -84,11 +80,14 @@ func (proposalConstructor *NormalQuorumProposalInitiator) getBalloter() Balloter
 	return proposalConstructor.Balloter
 }
 
-func (proposalConstructor *ReducedQuorumProposalInitiator) beginNewProposal(r ConfigRoundProposable, inst int32) {
+func (proposalConstructor *ReducedQuorumProposalInitiator) StartNewProposal(r ConfigRoundProposable, inst int32) {
 	pbk := r.GetPBK(inst)
 	beginPreparingBallot(pbk, proposalConstructor.Balloter)
 	//make quorum
-	group := proposalConstructor.AcceptorMapper.GetGroup(int(inst))
+	if _, exists := proposalConstructor.MapperCache[inst]; !exists {
+		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
+	}
+	group := proposalConstructor.MapperCache[inst]
 	//log.Println("group for instance", inst, ":", group)
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[pbk.propCurBal] = quorumaliser
@@ -98,7 +97,11 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) beginNewProposal(r Co
 func (proposalConstructor *ReducedQuorumProposalInitiator) trackProposalAcceptance(r ConfigRoundProposable, inst int32, bal stdpaxosproto.Ballot) {
 	pbk := r.GetPBK(inst)
 	//make quorum
-	group := proposalConstructor.AcceptorMapper.GetGroup(int(inst))
+	if _, exists := proposalConstructor.MapperCache[inst]; !exists {
+		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
+	}
+	group := proposalConstructor.MapperCache[inst]
+
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[bal] = quorumaliser
 	quorumaliser.StartAcceptanceQuorum()
@@ -106,4 +109,18 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) trackProposalAcceptan
 
 func (proposalConstructor *ReducedQuorumProposalInitiator) getBalloter() Balloter {
 	return proposalConstructor.Balloter
+}
+
+func (proposalConstructor *ReducedQuorumProposalInitiator) IsInQrm(inst int32, aid int32) bool {
+	if _, exists := proposalConstructor.MapperCache[inst]; !exists {
+		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
+	}
+
+	for _, aidInQrm := range proposalConstructor.MapperCache[inst] {
+		if int(aid) == aidInQrm {
+			return true
+		}
+	}
+
+	return false
 }

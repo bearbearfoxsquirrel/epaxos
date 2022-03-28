@@ -19,6 +19,17 @@ func (bal Ballot) IsZero() bool {
 	})
 }
 
+type Phase int32
+
+const (
+	PROMISE Phase = iota
+	ACCEPTANCE
+)
+
+func (p Phase) int32() int32 {
+	return int32(p)
+}
+
 type Ballot struct {
 	Number int32
 	PropID int16
@@ -31,11 +42,13 @@ type Prepare struct {
 }
 type PrepareReply struct {
 	Instance   int32
-	Bal        Ballot
+	Req        Ballot
+	Cur        Ballot
+	CurPhase   Phase
 	VBal       Ballot
 	AcceptorId int32
 	WhoseCmd   int32
-	Command    []state.Command
+	Command    []*state.Command
 }
 
 type Accept struct {
@@ -43,7 +56,7 @@ type Accept struct {
 	Instance int32
 	Ballot
 	WhoseCmd int32
-	Command  []state.Command
+	Command  []*state.Command
 }
 
 type AcceptReply struct {
@@ -51,6 +64,7 @@ type AcceptReply struct {
 	AcceptorId int32
 	Cur        Ballot
 	Req        Ballot
+	CurPhase   Phase
 	WhoseCmd   int32
 }
 
@@ -60,7 +74,7 @@ type Commit struct {
 	Ballot
 	WhoseCmd   int32
 	MoreToCome int32
-	Command    []state.Command
+	Command    []*state.Command
 }
 
 type CommitShort struct {

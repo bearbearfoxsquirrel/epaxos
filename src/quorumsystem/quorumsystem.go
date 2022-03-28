@@ -244,7 +244,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		for _, a := range peerList {
 			numSent := 0
 			for _, pa := range qrmSys.possibleAids {
-				if int32(pa) == a && int32(pa) != qrmSys.Id {
+				if int32(pa) == a { //&& int32(pa) != qrmSys.Id {
 					qrmSys.Replica.SendMsg(a, code, msg)
 					//	log.Println("sent to ", a, "I am ", qrmSys.Id)
 					sentTo = append(sentTo, int(a))
@@ -263,8 +263,8 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	//log.Println("sending to all")
 	sendToAll(qrmSys.possibleAids, qrmSys.Replica, code, msg)
 	qrmSys.Replica.Mutex.Lock()
-	for i := 0; i < qrmSys.N; i++ {
-		if i == int(qrmSys.Id) || !qrmSys.Alive[i] {
+	for _, i := range qrmSys.possibleAids {
+		if !qrmSys.Alive[i] {
 			continue
 		}
 		sentTo = append(sentTo, i)
@@ -336,9 +336,9 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 		if len(selectedQrm) > 0 {
 			for _, aid := range selectedQrm {
 				sentTo = append(sentTo, aid)
-				if aid == int(qrmSys.Replica.Id) {
-					continue
-				}
+				//if aid == int(qrmSys.Replica.Id) {
+				//	continue
+				//
 				qrmSys.Replica.SendMsg(int32(aid), code, msg)
 			}
 			qrmSys.bcastAttempts++
@@ -350,8 +350,8 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 	// send to possibleAids
 	sendToAll(qrmSys.all, qrmSys.Replica, code, msg)
 	qrmSys.Mutex.Lock()
-	for i := 0; i < qrmSys.N; i++ {
-		if i == int(qrmSys.Id) || !qrmSys.Alive[i] {
+	for _, i := range qrmSys.all {
+		if !qrmSys.Alive[i] {
 			continue
 		}
 		sentTo = append(sentTo, i)
@@ -371,92 +371,3 @@ func sendToAll(all []int, replica *genericsmr.Replica, code uint8, msg fastrpc.S
 	}
 	//replica.Mutex.Unlock()
 }
-
-//type BetterGridQuorumSynodQuorumSystem struct {
-//	cols    [][]int
-//	rows    [][]int
-//	all     []int
-//	crtQrm  quorum.SpecificQuorumTally
-//	thrifty bool
-//	*genericsmr.Replica
-//	Phase
-//	bcastAttempts int
-//
-//	whichRowPromised int
-//}
-//
-//func (qrmSys *BetterGridQuorumSynodQuorumSystem) QuorumReached() bool {
-//	return qrmSys.crtQrm.Reached()
-//}
-//
-//func (qrmSys *BetterGridQuorumSynodQuorumSystem) AddToQuorum(i int) {
-//	qrmSys.crtQrm.Add(i)
-//}
-//
-//func (qrmSys *BetterGridQuorumSynodQuorumSystem) HasAcknowledged(i int) bool {
-//	return qrmSys.crtQrm.Acknowledged(i)
-//}
-//
-//func (qrmSys *BetterGridQuorumSynodQuorumSystem) StartPromiseQuorum() {
-//	qrmSys.crtQrm = quorum.SpecificQuorumTally{
-//		Qrms:           qrmSys.rows,
-//		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
-//	}
-//	qrmSys.Phase = PROMISE
-//}
-//
-//func (qrmSys *BetterGridQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
-//	qrmSys.crtQrm = quorum.SpecificQuorumTally{
-//		Qrms:           qrmSys.cols,
-//		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
-//	}
-//	qrmSys.Phase = ACCEPTANCE
-//}
-//
-//func (qrmSys *BetterGridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) {
-//	defer func() {
-//		if err := recover(); err != nil {
-//			dlog.Println("Prepare bcast failed:", err)
-//		}
-//	}()
-//
-//	possibleQrms := qrmSys.rows
-//	if qrmSys.Phase == ACCEPTANCE {
-//		//log.Println("Acceptance broadcast")
-//		possibleQrms = qrmSys.cols
-//	}
-//
-//	qrmSys.Replica.CalculateAlive()
-//	if qrmSys.thrifty && qrmSys.bcastAttempts < 2 {
-//		// find out which quorums are alive
-//		livingQuorums := make([]int, 0, len(possibleQrms))
-//		for i, qrm := range possibleQrms {
-//			for j := 0; j < len(qrm); j++ {
-//				if !qrmSys.Replica.Alive[qrm[j]] && int32(qrm[j]) != qrmSys.Replica.Id { // we will always appear dead
-//					break
-//				}
-//			}
-//			livingQuorums = append(livingQuorums, i)
-//		}
-//
-//		if len(livingQuorums) > 0 {
-//			// choose a random qrm that is alive
-//			qrmSelected := rand.Intn(len(livingQuorums))
-//
-//			for _, a := range possibleQrms[livingQuorums[qrmSelected]] {
-//				// don't need to send to self, just need to record our acknowledgement
-//				if a32 := int32(a); qrmSys.Replica.Id != a32 {
-//					//log.Println("Sending to %d", a32)
-//					qrmSys.Replica.SendMsg(a32, code, msg)
-//				} // else {
-//				//	qrmSys.crtQrm.Add(a)
-//				//}
-//			}
-//			return
-//		}
-//		qrmSys.bcastAttempts++
-//		// fall back on sending to all
-//	}
-//	// send to possibleAids
-//	sendToAll(qrmSys.all, qrmSys.Replica, code, msg)
-//}

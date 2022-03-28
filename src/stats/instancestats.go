@@ -302,18 +302,21 @@ func ProposalStatsNew(addtitionalOrderedKeys []string, outputLoc string) *Propos
 		"Closed (proposal) time",
 		"Why closed? ("+whyClosedOptions+")",
 		"Client values proposed",
-		"Noop proposed")
+		"Noop proposed",
+		"Previous value proposed")
 	proposalStats := ProposalStats{
 		outputFile:       file,
 		orderdKeys:       addtitionalOrderedKeys,
 		whyClosedOptions: whyClosedOptions,
 		keyedStats:       make(map[InstanceID]map[stdpaxosproto.Ballot]*keyedStats),
+		keyExists:        make(map[string]struct{}),
 	}
 
 	str := strings.Builder{}
 	str.WriteString("Log ID, Log Seq No, Ballot Number")
 	for _, key := range addtitionalOrderedKeys {
 		str.WriteString(fmt.Sprintf(", %s", key))
+		proposalStats.keyExists[key] = struct{}{}
 	}
 	str.WriteString("\n")
 	file.WriteString(str.String())
@@ -324,6 +327,7 @@ type ProposalStats struct {
 	outputFile       *os.File
 	orderdKeys       []string
 	keyedStats       map[InstanceID]map[stdpaxosproto.Ballot]*keyedStats
+	keyExists        map[string]struct{}
 	whyClosedOptions string
 }
 
@@ -341,11 +345,11 @@ func (stat *ProposalStats) Open(id InstanceID, ballot stdpaxosproto.Ballot) {
 	stat.RecordOccurence(id, ballot, "Opened time", int(time.Now().UnixNano())) //todo bad convert map to int64
 }
 
-//tuesdat 29th 3:45
 func (stat *ProposalStats) CloseAndOutput(id InstanceID, ballot stdpaxosproto.Ballot, why WhyClosedProposal) {
 	stat.RecordOccurence(id, ballot, "Closed (proposal) time", int(time.Now().UnixNano()))
-	stat.RecordOccurence(id, ballot, "Why closed ("+stat.whyClosedOptions+")", why.Int())
+	stat.RecordOccurence(id, ballot, "Why closed? ("+stat.whyClosedOptions+")", why.Int())
 	stat.output(id, ballot)
+
 }
 
 func (stat *ProposalStats) output(id InstanceID, ballot stdpaxosproto.Ballot) {
@@ -353,13 +357,18 @@ func (stat *ProposalStats) output(id InstanceID, ballot stdpaxosproto.Ballot) {
 		panic("Cannot output instance proposal stat when instance not began")
 	}
 	str := strings.Builder{}
-	str.WriteString(fmt.Sprintf("%s ", stat.keyedStats[id][ballot].register[stat.orderdKeys[0]]))
+	str.WriteString(fmt.Sprintf("%d, %d, ", id.Log, id.Seq))
+	str.WriteString(fmt.Sprintf("%d.%d, ", ballot.Number, ballot.PropID))
+	str.WriteString(fmt.Sprintf("%d", stat.keyedStats[id][ballot].register[stat.orderdKeys[0]]))
 	for _, k := range stat.orderdKeys[1:] {
 		if k == "Why closed ("+stat.whyClosedOptions+")" {
 			str.WriteString(fmt.Sprintf(", %s", WhyClosedProposal(stat.keyedStats[id][ballot].register[k]).String()))
 		}
-		str.WriteString(fmt.Sprintf(", %s", stat.keyedStats[id][ballot].register[k]))
+		str.WriteString(fmt.Sprintf(", %d", stat.keyedStats[id][ballot].register[k]))
 	}
+	str.WriteString("\n")
+	stat.outputFile.WriteString(str.String())
+	delete(stat.keyedStats, id)
 }
 
 func (stat *ProposalStats) CloseOutput() {
@@ -367,6 +376,9 @@ func (stat *ProposalStats) CloseOutput() {
 }
 
 func (stat *ProposalStats) RecordOccurence(id InstanceID, ballot stdpaxosproto.Ballot, key string, num int) {
+	if _, exists := stat.keyExists[key]; !exists {
+		panic("key does not exist in proposal stats")
+	}
 	stat.checkAndInitialise(id, ballot)
 	stat.keyedStats[id][ballot].recordOccurence(key, num)
 }
@@ -374,6 +386,11 @@ func (stat *ProposalStats) RecordOccurence(id InstanceID, ballot stdpaxosproto.B
 func (stat *ProposalStats) RecordClientValuesProposed(id InstanceID, ballot stdpaxosproto.Ballot, num int) {
 	stat.checkAndInitialise(id, ballot)
 	stat.keyedStats[id][ballot].recordOccurence("Client values proposed", num)
+}
+
+func (stat *ProposalStats) RecordPreviousValueProposed(id InstanceID, ballot stdpaxosproto.Ballot) {
+	stat.checkAndInitialise(id, ballot)
+	stat.keyedStats[id][ballot].recordOccurence("Previous value proposed", 1)
 }
 
 func (stat *ProposalStats) RecordNoopProposed(id InstanceID, ballot stdpaxosproto.Ballot) {

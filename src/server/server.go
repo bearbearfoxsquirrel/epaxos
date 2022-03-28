@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"genericsmr"
 	"gpaxos"
-	"instanceacceptormapper"
+	"instanceagentmapper"
 	"io/ioutil"
 	"log"
 	"lwcglobalspec"
@@ -25,11 +25,9 @@ import (
 	"quorumsystem"
 	"runnable"
 	"runtime/pprof"
-	"stdpaxosglobalspec"
-	"stdpaxospatient"
-	"stdpaxosspeculative"
 	"time"
 	"twophase"
+	"twophase/aceptormessagefilter"
 )
 
 var portnum *int = flag.Int("port", 7070, "Port # to listen on. Defaults to 7070")
@@ -124,7 +122,9 @@ var proposalStatsFilename *string = flag.String("proposalstatsfilename", "", "Na
 var sendProposerState *bool = flag.Bool("sendproposerstate", false, "Proposers periodically send their current state to each other")
 var proactivePrepareOnPreempt *bool = flag.Bool("proactivePrepareOnPreempt", false, "Upon being preempted, the proposer prepares on the preempting ballot")
 var batchingAcceptor *bool = flag.Bool("batchingacceptor", false, "Acceptor batches responses and disk writes")
-var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 10, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
+var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 5, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
+
+var minimalAcceptorNegatives *bool = flag.Bool("minimalaccnegatives", false, "Only the minimal number (at most F+1) of acceptors will respond negatively in each quorum")
 
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
@@ -210,19 +210,19 @@ func main() {
 		runnable = rep
 	} else if *doSTDSpec {
 		log.Println("Starting Standard Paxos (speculative) replica...")
-		rep := stdpaxosspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs)
-		rpc.Register(rep)
-		runnable = rep
+		//rep := stdpaxosspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs)
+		//rpc.Register(rep)
+		//runnable = rep
 	} else if *doSTDGlobalSpec {
 		log.Println("Starting Standard Paxos (speculative) replica...")
-		rep := stdpaxosglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, int32(*deadTime))
-		rpc.Register(rep)
-		runnable = rep
+		//rep := stdpaxosglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, int32(*deadTime))
+		//rpc.Register(rep)
+		//runnable = rep
 	} else if *doSTDPatient {
 		log.Println("Starting LWC replica...")
-		rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt)
-		rpc.Register(rep)
-		runnable = rep
+		//rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt)
+		//rpc.Register(rep)
+		//runnable = rep
 
 	} else if *doELP || *doLessWriteyNonEager {
 
@@ -263,15 +263,15 @@ func main() {
 		}
 
 		if *reducedQrmSize {
-			var mapper instanceacceptormapper.InstanceAcceptorMapper
+			var mapper instanceagentmapper.InstanceAcceptorMapper
 			if *gridQrms {
-				mapper = &instanceacceptormapper.InstanceAcceptorGridMapper{
+				mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
 					Acceptors: aids,
 					F:         *maxfailures,
 					N:         len(nodeList),
 				}
 			} else {
-				mapper = &instanceacceptormapper.InstanceAcceptorSetMapper{
+				mapper = &instanceagentmapper.InstanceAcceptorSetMapper{
 					Acceptors: aids,
 					F:         *maxfailures,
 					N:         len(nodeList),
@@ -337,15 +337,15 @@ func main() {
 		}
 
 		if *reducedQrmSize {
-			var mapper instanceacceptormapper.InstanceAcceptorMapper
+			var mapper instanceagentmapper.InstanceAcceptorMapper
 			if *gridQrms {
-				mapper = &instanceacceptormapper.InstanceAcceptorGridMapper{
+				mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
 					Acceptors: aids,
 					F:         *maxfailures,
 					N:         len(nodeList),
 				}
 			} else {
-				mapper = &instanceacceptormapper.InstanceAcceptorSetMapper{
+				mapper = &instanceagentmapper.InstanceAcceptorSetMapper{
 					Acceptors: aids,
 					F:         *maxfailures,
 					N:         len(nodeList),
@@ -356,18 +356,33 @@ func main() {
 				AcceptorMapper:               mapper,
 				SynodQuorumSystemConstructor: qrm,
 				Balloter:                     balloter,
+				MapperCache:                  make(map[int32][]int),
 			}
 		}
 
 		acceptorMaxBatchWait := time.Duration(time.Duration(*accMaxBatchWaitMs) * time.Millisecond)
+
+		var amf aceptormessagefilter.AcceptorMessageFilter = nil // aceptormessagefilter.NoFilterNew()
+		if *minimalAcceptorNegatives {
+			if *gridQrms {
+				panic("incompatible options")
+			}
+			amf = aceptormessagefilter.MinimalAcceptorFilterNew(&instanceagentmapper.InstanceNegativeAcceptorSetMapper{
+				Acceptors: aids,
+				F:         *maxfailures,
+				N:         len(nodeList),
+			})
+		}
+
 		if *doELP {
-			//rep := twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
-			//	int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
-			//	*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
-			//	int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-			//	*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
-			//runnable = rep
-			//rpc.Register(rep)
+			rep := twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
+				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
+				*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf)
+			runnable = rep
+			rpc.Register(rep)
 		} else {
 			rep := twophase.NewBaselineTwoPhaseReplica(initialtor, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
@@ -375,7 +390,7 @@ func main() {
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt,
 				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf)
 			runnable = rep
 			rpc.Register(rep)
 		}
