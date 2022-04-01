@@ -67,7 +67,7 @@ package twophase
 //	counter                       int
 //	flush                         bool
 //	executedUpTo                  int32
-//	batchWait                     int
+//	maxBatchWait                     int
 //	maxBalInc                     int32
 //	maxOpenInstances              int32
 //	crtOpenedInstances            []int32
@@ -96,7 +96,7 @@ package twophase
 //	nextRecoveryBatchPoint        int32
 //	recoveringFrom                int32
 //	commitCatchUp                 bool
-//	batchSize                     int
+//	maxBatchSize                     int
 //	requeueOnPreempt              bool
 //	doStats                  bool
 //	TimeseriesStats          *stats.TimeseriesStats
@@ -109,11 +109,11 @@ package twophase
 //}
 //
 //
-//func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *genericsmr.Replica, durable bool, batchWait int, storageLoc string, maxOpenInstances int32,
+//func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *genericsmr.Replica, durable bool, maxBatchWait int, storageLoc string, maxOpenInstances int32,
 //	minBackoff int32, maxInitBackoff int32, maxBackoff int32, noopwait int32, alwaysNoop bool, factor float64,
 //	whoCrash int32, whenCrash time.Duration, howlongCrash time.Duration, emulatedSS bool, emulatedWriteTime time.Duration,
 //	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, doStats bool,
-//	statsParentLoc string, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool,
+//	statsParentLoc string, commitCatchup bool, deadTime int32, maxBatchSize int, constBackoff bool, requeueOnPreempt bool,
 //	tsStatsFilename string, instStatsFilename string, propsStatsFilename string, sendProposerState bool,
 //	minimalProposerNumbers bool, bcastOnProposalsSatiated bool) *LWPReplica {
 //	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
@@ -140,7 +140,7 @@ package twophase
 //		counter:             0,
 //		flush:               true,
 //		executedUpTo:        -1, //get from storage
-//		batchWait:           batchWait,
+//		maxBatchWait:           maxBatchWait,
 //		maxBalInc:           10000,
 //		maxOpenInstances:    maxOpenInstances,
 //		crtOpenedInstances:  make([]int32, maxOpenInstances),
@@ -162,7 +162,7 @@ package twophase
 //		catchingUp:               false,
 //		flushCommit:              flushCommit,
 //		commitCatchUp:            commitCatchup,
-//		batchSize:                batchSize,
+//		maxBatchSize:                maxBatchSize,
 //		requeueOnPreempt:         requeueOnPreempt,
 //		doStats:                  doStats,
 //		batchedProps:             make(chan []*genericsmr.Propose, 500),
@@ -302,7 +302,7 @@ package twophase
 //
 //func (r *LWPReplica) fastClock() {
 //	for !r.Shutdown {
-//		time.Sleep(time.Duration(r.batchWait) * time.Millisecond) // ms
+//		time.Sleep(time.Duration(r.maxBatchWait) * time.Millisecond) // ms
 //		dlog.Println("sending fast clock")
 //		fastClockChan <- true
 //	}
@@ -313,12 +313,12 @@ package twophase
 //		q := r.clientValueQueue.GetQueueChan()
 //		select {
 //		case c := <-q:
-//			time.Sleep(time.Duration(r.batchWait) * time.Millisecond)
+//			time.Sleep(time.Duration(r.maxBatchWait) * time.Millisecond)
 //
-//			batchSize := min(r.batchSize, len(q)+1)
-//			clientProposals := make([]*genericsmr.Propose, batchSize)
+//			maxBatchSize := min(r.maxBatchSize, len(q)+1)
+//			clientProposals := make([]*genericsmr.Propose, maxBatchSize)
 //			clientProposals[0] = c
-//			for i := 1; i < batchSize; i++ {
+//			for i := 1; i < maxBatchSize; i++ {
 //				c = <-q
 //				clientProposals[i] = c
 //			}
@@ -331,7 +331,7 @@ package twophase
 //}
 //
 //func (r *LWPReplica) BatchingEnabled() bool {
-//	return r.batchWait > 0
+//	return r.maxBatchWait > 0
 //}
 //
 ///* ============= */
@@ -632,11 +632,11 @@ package twophase
 //			switch cliProp := r.clientValueQueue.TryDequeue(); {
 //			case cliProp != nil:
 //				numEnqueued := r.clientValueQueue.Len() + 1
-//				batchSize := min(numEnqueued, r.batchSize)
-//				clientProposals := make([]*genericsmr.Propose, batchSize)
+//				maxBatchSize := min(numEnqueued, r.maxBatchSize)
+//				clientProposals := make([]*genericsmr.Propose, maxBatchSize)
 //				clientProposals[0] = cliProp
 //
-//				for i := 1; i < batchSize; i++ {
+//				for i := 1; i < maxBatchSize; i++ {
 //					cliProp = r.clientValueQueue.TryDequeue()
 //					if cliProp == nil {
 //						clientProposals = clientProposals[:i]
@@ -681,7 +681,7 @@ package twophase
 //		}
 //	}
 //
-//	if (r.BackoffManager.NoHigherBackoff(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
+//	if (r.BackoffManager.StillRelevant(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
 //		r.ProposalManager.StartNewProposal(r, next.InstToPrep)
 //		nextBallot := r.instanceSpace[next.InstToPrep].pbk.propCurBal
 //		r.acceptorPrepareOnBallot(next.InstToPrep, nextBallot)
@@ -1203,13 +1203,13 @@ package twophase
 //			q := r.clientValueQueue.GetQueueChan()
 //			select {
 //			case c := <-q:
-//				batchSize := min(r.batchSize, len(q)+1)
-//				clientProposals := make([]*genericsmr.Propose, batchSize)
-//				cmds := make([]state.Command, batchSize)
+//				maxBatchSize := min(r.maxBatchSize, len(q)+1)
+//				clientProposals := make([]*genericsmr.Propose, maxBatchSize)
+//				cmds := make([]state.Command, maxBatchSize)
 //				clientProposals[0] = c
 //				cmds[0] = c.Command
 //
-//				for i := 1; i < batchSize; i++ {
+//				for i := 1; i < maxBatchSize; i++ {
 //					c = <-q
 //					clientProposals[i] = c
 //					cmds[i] = c.Command
@@ -1362,7 +1362,7 @@ package twophase
 //		r.TimeseriesStats.Update("Requeued Client Values", 1)
 //	}
 //
-//	if r.batchWait > 0 {
+//	if r.maxBatchWait > 0 {
 //		prop := make([]*genericsmr.Propose, len(inst.pbk.clientProposals))
 //		copy(prop, inst.pbk.clientProposals)
 //		go func(tryPropose []*genericsmr.Propose) {

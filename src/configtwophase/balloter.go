@@ -27,10 +27,12 @@ func (balloter *Balloter) getNextProposingBal(maxPrevRoundNum int32) lwcproto.Ba
 		max = mini + balloter.MaxInc
 	}
 
-	next := int32(math.Floor(rand.Float64()*float64(max-mini+1) + float64(mini)))
-	if balloter.PropID == -1 || next == -1 {
+	//next := int32(math.Floor(rand.Float64()*float64(max-mini+1) + float64(mini)))
+	next := int32(math.Floor(float64(rand.Int31()*(max-mini+1) + mini)))
+	if balloter.PropID < 0 || next < mini {
 		panic("bad round num")
 	}
+	//log.Println()
 	return lwcproto.Ballot{next - balloter.PropID, int16(balloter.PropID)}
 
 }

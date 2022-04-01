@@ -317,7 +317,7 @@ package stdpaxosspeculative
 //	}(inst, attemptedConfBal, preempter, prempterPhase, next, preemptNum)
 //}
 //
-//func (bm *BackoffManager) NoHigherBackoff(backoff RetryInfo) bool {
+//func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
 //	curBackoff, exists := bm.currentBackoffs[backoff.InstToPrep]
 //
 //	if !exists {
@@ -747,7 +747,7 @@ package stdpaxosspeculative
 //		}
 //	}
 //
-//	if (r.BackoffManager.NoHigherBackoff(next) && inst.pbk.status == BACKING_OFF) || !next.backedoff {
+//	if (r.BackoffManager.StillRelevant(next) && inst.pbk.status == BACKING_OFF) || !next.backedoff {
 //		r.proposerBeginNextConfBal(next.InstToPrep)
 //		nextConfBal := r.instanceSpace[next.InstToPrep].pbk.curBal
 //		r.acceptorPrepareOnConfBal(next.InstToPrep, nextConfBal)

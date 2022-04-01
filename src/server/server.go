@@ -98,7 +98,7 @@ var nothreadexec *bool = flag.Bool("nothreadexec", false, "optional turning off 
 var catchUpFallenBehind *bool = flag.Bool("catchupfallenbehind", false, "catch up those who send messages for instances fallen behind")
 
 var deadTime *int = flag.Int("deadtime", 60000, "time to take replica out of quorum (default 60 seconds)")
-var batchsize *int = flag.Int("batchsize", 1024, "max vals held in a proposal")
+var maxBatchSizeBytes *int = flag.Int("maxbatchsize", 100000, "max vals held in a proposal")
 
 var skipwaitms *int = flag.Int("skipwaitms", 350, "ms to wait before mencius skips")
 var maxoutstandingskips *int = flag.Int("maxoskips", 300, "max outstanding skips")
@@ -125,6 +125,7 @@ var batchingAcceptor *bool = flag.Bool("batchingacceptor", false, "Acceptor batc
 var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 5, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
 
 var minimalAcceptorNegatives *bool = flag.Bool("minimalaccnegatives", false, "Only the minimal number (at most F+1) of acceptors will respond negatively in each quorum")
+var timeBasedBallots *bool = flag.Bool("timebasedballots", false, "The maximum ballot available to proposers is dictated by the time since they last chose a ballot")
 
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
@@ -132,7 +133,11 @@ var minimalAcceptorNegatives *bool = flag.Bool("minimalaccnegatives", false, "On
 
 func main() {
 	flag.Parse()
+
+	//go func() {
+	//time.Sleep(time.Second)
 	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
+	//}()
 
 	if *maxInitBackoff == 0 {
 		*maxInitBackoff = int(float64(*minBackoff) * 1.2)
@@ -195,7 +200,7 @@ func main() {
 		runnable = rep
 	} else if *doLWCSpec {
 		log.Println("Starting LWC replica...")
-		rep := lwcspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
+		rep := lwcspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
 		runnable = rep
 		rpc.Register(rep)
 	} else if *doLWCGlobalSpec {
@@ -205,12 +210,12 @@ func main() {
 		runnable = rep
 	} else if *doLWCPatient {
 		log.Println("Starting LWC replica...")
-		rep := lwcpatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt)
+		rep := lwcpatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doSTDSpec {
 		log.Println("Starting Standard Paxos (speculative) replica...")
-		//rep := stdpaxosspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs)
+		//rep := stdpaxosspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs)
 		//rpc.Register(rep)
 		//runnable = rep
 	} else if *doSTDGlobalSpec {
@@ -220,7 +225,7 @@ func main() {
 		//runnable = rep
 	} else if *doSTDPatient {
 		log.Println("Starting LWC replica...")
-		//rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt)
+		//rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
 		//rpc.Register(rep)
 		//runnable = rep
 
@@ -254,6 +259,7 @@ func main() {
 			PropID: int32(replicaId),
 			N:      int32(smrReplica.N),
 			MaxInc: 10000,
+			//DoTimeBasedBallots: timebasedBallots
 		}
 		var initialtor configtwophase.ProposalManager
 		initialtor = &configtwophase.NormalQuorumProposalInitiator{
@@ -289,7 +295,7 @@ func main() {
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
+				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
 			runnable = rep
 			rpc.Register(rep)
 		} else {
@@ -297,7 +303,7 @@ func main() {
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*batchsize, *constBackoff, *requeueOnPreempt, *tsStatsFilename, *instStatsFilename)
+				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *tsStatsFilename, *instStatsFilename)
 			runnable = rep
 			rpc.Register(rep)
 		}
@@ -325,9 +331,10 @@ func main() {
 		}
 
 		balloter := twophase.Balloter{
-			PropID: int32(replicaId),
-			N:      int32(smrReplica.N),
-			MaxInc: 10000,
+			PropID:            int32(replicaId),
+			N:                 int32(smrReplica.N),
+			MaxInc:            10000,
+			DoTimeBasedBallot: *timeBasedBallots,
 		}
 		var initialtor twophase.ProposalManager
 		initialtor = &twophase.NormalQuorumProposalInitiator{
@@ -379,7 +386,7 @@ func main() {
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*batchsize, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
+				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
 				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf)
 			runnable = rep
 			rpc.Register(rep)
@@ -388,7 +395,7 @@ func main() {
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				int32(*deadTime), *batchsize, *constBackoff, *requeueOnPreempt,
+				int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
 				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf)
 			runnable = rep

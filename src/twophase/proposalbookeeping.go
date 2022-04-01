@@ -5,6 +5,7 @@ import (
 	"quorumsystem"
 	"state"
 	"stdpaxosproto"
+	"time"
 )
 
 type ProposingBookkeeping struct {
@@ -24,6 +25,7 @@ type ProposalManager interface {
 	trackProposalAcceptance(replica ConfigRoundProposable, inst int32, bal stdpaxosproto.Ballot)
 	getBalloter() Balloter
 	IsInQrm(inst int32, aid int32) bool
+	ValueChosen()
 	//Close(inst int32)
 }
 
@@ -56,6 +58,10 @@ type ConfigRoundProposable interface {
 //func (r *ELPReplica) GetPBK(inst int32) *ProposingBookkeeping {
 //	return r.instanceSpace[inst].pbk
 //}
+
+func (proposalConstructor *NormalQuorumProposalInitiator) ValueChosen() {
+	proposalConstructor.timeSinceValueLastSelected = time.Now()
+}
 
 func (proposalConstructor *NormalQuorumProposalInitiator) IsInQrm(inst int32, aid int32) bool {
 	return true
@@ -123,4 +129,8 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) IsInQrm(inst int32, a
 	}
 
 	return false
+}
+
+func (proposalConstructor *ReducedQuorumProposalInitiator) ValueChosen() {
+	proposalConstructor.timeSinceValueLastSelected = time.Now()
 }

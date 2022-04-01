@@ -314,7 +314,7 @@ package stdpaxospatient
 //	}(inst, attemptedConfBal, preempter, prempterPhase, next, preemptNum)
 //}
 //
-//func (bm *BackoffManager) NoHigherBackoff(backoff RetryInfo) bool {
+//func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
 //	curBackoff, exists := bm.currentBackoffs[backoff.InstToPrep]
 //
 //	if !exists {
@@ -754,7 +754,7 @@ package stdpaxospatient
 //		}
 //	}
 //
-//	if (r.BackoffManager.NoHigherBackoff(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
+//	if (r.BackoffManager.StillRelevant(next) || !next.backedoff) && inst.pbk.status == BACKING_OFF {
 //		r.proposerBeginNextConfBal(next.InstToPrep)
 //		nextConfBal := r.instanceSpace[next.InstToPrep].pbk.curBal
 //

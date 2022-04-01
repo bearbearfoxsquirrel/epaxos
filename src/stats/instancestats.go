@@ -388,9 +388,9 @@ func (stat *ProposalStats) RecordClientValuesProposed(id InstanceID, ballot stdp
 	stat.keyedStats[id][ballot].recordOccurence("Client values proposed", num)
 }
 
-func (stat *ProposalStats) RecordPreviousValueProposed(id InstanceID, ballot stdpaxosproto.Ballot) {
+func (stat *ProposalStats) RecordPreviousValueProposed(id InstanceID, ballot stdpaxosproto.Ballot, num int) {
 	stat.checkAndInitialise(id, ballot)
-	stat.keyedStats[id][ballot].recordOccurence("Previous value proposed", 1)
+	stat.keyedStats[id][ballot].recordOccurence("Previous value proposed", num)
 }
 
 func (stat *ProposalStats) RecordNoopProposed(id InstanceID, ballot stdpaxosproto.Ballot) {
@@ -428,7 +428,7 @@ func (ks *keyedStats) recordOccurence(key string, occurances int) {
 
 func (ks *keyedStats) outputStats() string {
 	str := strings.Builder{}
-	str.WriteString(fmt.Sprintf("%d ", ks.register[(*ks.orderedKeys)[0]]))
+	str.WriteString(fmt.Sprintf("%d", ks.register[(*ks.orderedKeys)[0]]))
 	for i := 1; i < len(*ks.orderedKeys); i++ {
 		k := (*ks.orderedKeys)[i]
 		v := ks.register[k]
@@ -465,11 +465,11 @@ func InstanceStatsNew(outputLoc string, registerIDs []string, complexStatsConstr
 	}
 
 	str := strings.Builder{}
-	str.WriteString("Log ID, Log Seq No, ")
+	str.WriteString("Log ID, Log Seq No,")
 	for _, key := range registerIDs {
-		str.WriteString(fmt.Sprintf("%s ,", key))
+		str.WriteString(fmt.Sprintf(" %s,", key))
 	}
-	//str.WriteString(", ")
+	str.WriteString(" ")
 	for _, cStat := range instanceStats.complexStatConstructors {
 		for _, start := range cStat.Starts {
 			for _, end := range cStat.Outcomes[start] {
@@ -535,9 +535,11 @@ func (stats *InstanceStats) OutputRecord(id InstanceID) {
 	str := strings.Builder{}
 	str.WriteString(fmt.Sprintf("%d, %d, ", id.Log, id.Seq))
 	str.WriteString(stats.keyedStats[id].outputStats())
+	str.WriteString(", ")
 	for _, cStat := range stats.complexStats[id] {
-		str.WriteString(cStat.OutputResult() + ", ")
+		str.WriteString(fmt.Sprintf("%s", cStat.OutputResult()))
 	}
+	//21, 26
 	cmtExecCmpStr := stats.commitExecutionComparator.outputInstanceTimes(id)
 	str.WriteString(cmtExecCmpStr)
 	str.WriteString("\n")
