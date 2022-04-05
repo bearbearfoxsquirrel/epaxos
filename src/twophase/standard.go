@@ -113,6 +113,7 @@ type LWPReplica struct {
 	isAccMsgFilter              bool
 	expectedBatchedRequest      int32
 	chosenBatches               map[int32]struct{}
+	sendPreparesToAllAcceptors  bool
 }
 
 type messageFilterComm struct {
@@ -142,7 +143,8 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 	catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool, softFac bool, doStats bool,
 	statsParentLoc string, commitCatchup bool, deadTime int32, batchSize int, constBackoff bool, requeueOnPreempt bool,
 	tsStatsFilename string, instStatsFilename string, propsStatsFilename string, sendProposerState bool,
-	proactivePrepareOnPreempt bool, batchingAcceptor bool, maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter) *LWPReplica {
+	proactivePrepareOnPreempt bool, batchingAcceptor bool, maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter,
+	sendPreparesToAllAcceptors bool) *LWPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 	r := &LWPReplica{
 		ProposalManager:             propMan,
@@ -198,7 +200,9 @@ func NewBaselineTwoPhaseReplica(propMan ProposalManager, id int, replica *generi
 		isAccMsgFilter:              filter != nil,
 		expectedBatchedRequest:      100,
 		chosenBatches:               make(map[int32]struct{}),
+		sendPreparesToAllAcceptors:  sendPreparesToAllAcceptors,
 	}
+
 	if filter != nil {
 		messageFilter := messageFilterRoutine{
 			AcceptorMessageFilter: filter,
@@ -338,66 +342,86 @@ func (p *batch) getUID() int32 {
 	return p.uid
 }
 
+type proposalBatcher struct {
+	curBatchCmds            []*state.Command
+	curBatchProposals       []*genericsmr.Propose
+	curBatchSize            int
+	curUID                  int32
+	curTimeout              *time.Timer
+	maxBatchWait            time.Duration
+	maxBatchBytes           int
+	expectedBatchedRequests int
+	q                       <-chan *genericsmr.Propose
+}
+
 func (r *LWPReplica) startBatching() {
-	q := r.clientValueQueue.GetQueueChan()
-	curBatchProposals := make([]*genericsmr.Propose, 0, r.expectedBatchedRequest)
-	curBatchCmds := make([]*state.Command, 0, r.expectedBatchedRequest)
-	batchSize := 0
-	curUID := int32(0)
-	timeout := time.NewTimer(time.Duration(r.maxBatchWait) * time.Millisecond)
+	batcher := proposalBatcher{
+		q:                 r.clientValueQueue.GetQueueChan(),
+		curBatchProposals: make([]*genericsmr.Propose, 0, r.expectedBatchedRequest),
+		curBatchCmds:      make([]*state.Command, 0, r.expectedBatchedRequest),
+		curBatchSize:      0,
+		curUID:            int32(0),
+		curTimeout:        time.NewTimer(time.Duration(r.maxBatchWait) * time.Millisecond),
+		maxBatchWait:      time.Duration(r.maxBatchWait) * time.Millisecond,
+	}
 	for !r.Shutdown {
-
 		select {
-		case v := <-q:
-			curBatchProposals = append(curBatchProposals, v)
-			curBatchCmds = append(curBatchCmds, &v.Command)
-			batchSize += len(v.Command.V) + 16 + 2
-
-			if batchSize < r.maxBatchSize {
+		case v := <-batcher.q:
+			batcher.addToBatch(v)
+			if !batcher.isBatchSizeMet() {
 				break
 			}
-
-			batchC := &batch{
-				proposals: curBatchProposals,
-				cmds:      curBatchCmds,
-				uid:       curUID,
-			}
-			curBatchProposals = make([]*genericsmr.Propose, 0, r.expectedBatchedRequest)
-			curBatchCmds = make([]*state.Command, 0, r.expectedBatchedRequest)
-			batchSize = 0
-			curUID += 1
-			//	go func() {
-			//<-r.openInst
+			batchC := batcher.getBatch()
 			r.batchedProps <- batchC
-			//}()
 			dlog.Println("Client value(s) received beginning new instance")
-			timeout.Reset(time.Duration(r.maxBatchWait) * time.Millisecond)
+			batcher.startNextBatch()
 			break
-		case <-timeout.C:
-			if len(curBatchCmds) == 0 {
-				timeout.Reset(time.Duration(r.maxBatchWait) * time.Millisecond)
+		case <-batcher.curTimeout.C:
+			if !batcher.hasBatch() {
+				batcher.resetTimeout()
 				break
 			}
-			batchC := &batch{
-				proposals: curBatchProposals,
-				cmds:      curBatchCmds,
-				uid:       curUID,
-			}
-
-			curBatchProposals = make([]*genericsmr.Propose, 0, r.expectedBatchedRequest)
-			curBatchCmds = make([]*state.Command, 0, r.expectedBatchedRequest)
-			batchSize = 0
-			curUID += 1
-			//go func() {
-
-			//<-r.openInst
+			batchC := batcher.getBatch()
 			r.batchedProps <- batchC
-
-			//}()
-			timeout.Reset(time.Duration(r.maxBatchWait) * time.Millisecond)
+			batcher.startNextBatch()
 			break
 		}
 	}
+}
+
+func (b *proposalBatcher) hasBatch() bool {
+	return b.curBatchSize > 0
+}
+
+func (b *proposalBatcher) resetTimeout() {
+	b.curTimeout.Reset(b.maxBatchWait)
+}
+
+func (b *proposalBatcher) isBatchSizeMet() bool {
+	return b.curBatchSize >= b.maxBatchBytes
+}
+
+func (b *proposalBatcher) addToBatch(v *genericsmr.Propose) {
+	b.curBatchProposals = append(b.curBatchProposals, v)
+	b.curBatchCmds = append(b.curBatchCmds, &v.Command)
+	b.curBatchSize += len(v.Command.V) + 16 + 2
+}
+
+func (b *proposalBatcher) startNextBatch() {
+	b.curBatchProposals = make([]*genericsmr.Propose, 0, b.expectedBatchedRequests)
+	b.curBatchCmds = make([]*state.Command, 0, b.expectedBatchedRequests)
+	b.curBatchSize = 0
+	b.curUID += 1
+	b.resetTimeout()
+}
+
+func (b *proposalBatcher) getBatch() *batch {
+	batchC := &batch{
+		proposals: b.curBatchProposals,
+		cmds:      b.curBatchCmds,
+		uid:       b.curUID,
+	}
+	return batchC
 }
 
 func (r *LWPReplica) BatchingEnabled() bool {
@@ -527,27 +551,28 @@ func (r *LWPReplica) run() {
 		c = make(chan struct{})
 	}
 
-	var stateGo time.Timer
+	var stateGo *time.Timer
+	var stateGoC <-chan time.Time
 	if r.sendProposerState {
-		stateGo = *time.NewTimer(50 * time.Millisecond)
+		stateGo = time.NewTimer(50 * time.Millisecond)
+		stateGoC = stateGo.C
 	}
 
 	startNewInstanceChan := make(chan proposalBatch, r.maxOpenInstances)
 	go func() {
 		for {
 			<-r.openInst
-			dlog.Println("got signal to open new instance")
+			dlog.AgentPrintfN(r.Id, "Got signal to open new instance")
 			b := <-r.batchedProps
-			dlog.Println("got a batch")
+			dlog.AgentPrintfN(r.Id, "Got a batch to start a new instance with")
 			startNewInstanceChan <- b
-			dlog.Println("piped it to open new instance")
 		}
 	}()
 
 	if r.BatchingEnabled() {
 		for !r.Shutdown {
 			select {
-			case <-stateGo.C:
+			case <-stateGoC:
 				for i := int32(0); i < int32(r.N); i++ {
 					if i == r.Id {
 						continue
@@ -556,17 +581,18 @@ func (r *LWPReplica) run() {
 						ProposerID:      r.Id,
 						CurrentInstance: r.crtInstance,
 					}
+					dlog.AgentPrintfN(r.Id, "Sending current state %d to all other proposers", r.crtInstance)
 					r.SendMsg(i, r.stateChanRPC, &msg)
 				}
+				stateGo.Reset(time.Duration(50) * time.Millisecond)
 				break
 			case stateS := <-r.stateChan:
 				recvState := stateS.(*proposerstate.State)
 				r.handleState(recvState)
 				break
 			case props := <-startNewInstanceChan: // <-r.batchedProps:
-				dlog.Println("Got client proposals")
 				if _, exists := r.chosenBatches[props.getUID()]; exists {
-					dlog.Println("chosen batch being thrown out")
+					dlog.Println("Batch received to start instance with has been chosen so now throwing out")
 					break
 				}
 				r.beginNextInstance(props)
@@ -795,6 +821,16 @@ func (r *LWPReplica) bcastPrepare(instance int32) {
 
 	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
 
+	if r.sendPreparesToAllAcceptors {
+		for i := 0; i < r.N; i++ {
+			if i == int(r.Id) {
+				continue
+			}
+			r.Replica.SendMsg(int32(i), r.prepareRPC, args)
+		}
+		return
+	}
+
 	if r.doStats {
 		instID := stats.InstanceID{
 			Log: 0,
@@ -845,11 +881,8 @@ func (r *LWPReplica) bcastAccept(instance int32) {
 	pa.Ballot = r.instanceSpace[instance].pbk.propCurBal
 	pa.Command = r.instanceSpace[instance].pbk.cmds
 	pa.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
-	//log.Printf("accept msg for instance ", instance, "whose cmds = ", pa.WhoseCmd)
-
-	dlog.Println("sending accept for instance", instance, "and ballot", pa.Number, pa.PropID)
+	dlog.AgentPrintfN(r.Id, " Broadcasting accept for instance ", instance, "with whose commands chosen", pa.WhoseCmd, "at ballot", pa.Number, pa.PropID)
 	args := &pa
-
 	pbk := r.instanceSpace[instance].pbk
 	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, args)
 
@@ -861,7 +894,6 @@ func (r *LWPReplica) bcastAccept(instance int32) {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
 		r.beginTracking(instID, args.Ballot, sentTo, "Phase 2", "Phase 2")
 	}
-
 	r.beginTimeout(args.Instance, args.Ballot, PROPOSING, r.timeout, r.acceptRPC, args)
 }
 
@@ -884,7 +916,7 @@ func (r *LWPReplica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballo
 	pcs.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
 	pcs.Count = int32(len(command))
 	argsShort := pcs
-	dlog.Println("commit for instance", instance, "whose cmds =", pcs.WhoseCmd, "ballot", pcs.Number, pcs.PropID)
+	dlog.AgentPrintfN(r.Id, "Broadcasting commit for instance", instance, "with whose commands chosen", pcs.WhoseCmd, "at ballot", pcs.Number, pcs.PropID)
 	r.CalculateAlive()
 	sent := 0
 	for q := int32(0); q < int32(r.N); q++ {
@@ -941,7 +973,6 @@ func (r *LWPReplica) beginNextInstance(valsToPropose proposalBatch) {
 		r.ProposalStats.Open(stats.InstanceID{0, r.crtInstance}, curInst.pbk.propCurBal)
 	}
 
-	//log.Printf("Set client value in begin next instance")
 	r.instanceSpace[r.crtInstance].pbk.clientProposals = valsToPropose
 	prepMsg := &stdpaxosproto.Prepare{
 		LeaderId: r.Id,
@@ -969,7 +1000,7 @@ func (r *LWPReplica) beginNextInstance(valsToPropose proposalBatch) {
 		r.prepareReplyChan <- prepResp
 	}(prepMsg, resp)
 
-	dlog.Printf("Opened new instance %d\n", r.crtInstance)
+	dlog.AgentPrintfN(r.Id, "Opened new instance %d, with ballot %d.%d \n", r.crtInstance, prepMsg.Number, prepMsg.PropID)
 }
 
 func (r *LWPReplica) tryNextAttempt(next RetryInfo) {

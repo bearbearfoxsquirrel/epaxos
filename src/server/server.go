@@ -126,6 +126,7 @@ var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 5, "Max time in ms th
 
 var minimalAcceptorNegatives *bool = flag.Bool("minimalaccnegatives", false, "Only the minimal number (at most F+1) of acceptors will respond negatively in each quorum")
 var timeBasedBallots *bool = flag.Bool("timebasedballots", false, "The maximum ballot available to proposers is dictated by the time since they last chose a ballot")
+var sendPreparesAllAcceptors *bool = flag.Bool("sendpreparesallacceptors", false, "if using minimal quorums, send prepares to all acceptors - passive observation")
 
 //var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
 
@@ -308,13 +309,22 @@ func main() {
 			rpc.Register(rep)
 		}
 	} else if *dostdEager || *doBaselineTwoPhase {
+
+		aids := make([]int, len(nodeList))
+		for i, _ := range aids {
+			aids[i] = i
+		}
+
 		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
+
 		var qrm quorumsystem.SynodQuorumSystemConstructor
 		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
 			F:                *maxfailures,
-			Replica:          smrReplica,
 			Thrifty:          *thrifty,
+			Replica:          smrReplica,
 			BroadcastFastest: *sendFastestQrm,
+			AllAids:          aids,
+			SendAllAcceptors: false,
 		}
 		if *gridQrms {
 			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
@@ -323,11 +333,6 @@ func main() {
 				Thrifty:          *thrifty,
 				BroadcastFastest: *sendFastestQrm,
 			}
-		}
-
-		aids := make([]int, len(nodeList))
-		for i, _ := range aids {
-			aids[i] = i
 		}
 
 		balloter := twophase.Balloter{
@@ -397,7 +402,7 @@ func main() {
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors)
 			runnable = rep
 			rpc.Register(rep)
 		}

@@ -1,6 +1,9 @@
 package dlog
 
-import "log"
+import (
+	"log"
+	"time"
+)
 
 const DLOG = false
 
@@ -16,4 +19,8 @@ func Println(v ...interface{}) {
 		return
 	}
 	log.Println(v...)
+}
+
+func AgentPrintfN(aid int32, format string, v ...interface{}) {
+	log.Printf("%s, %d, Agent %d, "+format+"\n", time.Now().Format("2006/01/02, 15:04:05 .000"), time.Now().UnixNano(), aid, v)
 }

@@ -21,6 +21,8 @@ type SynodCountingQuorumSystemConstructor struct {
 	*genericsmr.Replica
 	BroadcastFastest bool
 	//broadcastStrat BroadcastStrat
+	AllAids          []int
+	SendAllAcceptors bool
 }
 
 func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
@@ -39,13 +41,15 @@ func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) Sy
 		panic("Acceptor group is too small to tolerate this number of failures")
 	}
 	return &CountingQuorumSynodQuorumSystem{
-		p1size:           len(acc) - constructor.F,
-		p2size:           constructor.F + 1,
-		thrifty:          constructor.Thrifty,
-		Replica:          constructor.Replica,
-		possibleAids:     acc,
-		broadcastFastest: constructor.BroadcastFastest,
-		amIInQrm:         amIInQrm,
+		p1size:             len(acc) - constructor.F,
+		p2size:             constructor.F + 1,
+		thrifty:            constructor.Thrifty,
+		Replica:            constructor.Replica,
+		possibleAids:       acc,
+		broadcastFastest:   constructor.BroadcastFastest,
+		amIInQrm:           amIInQrm,
+		sendToAllAcceptors: constructor.SendAllAcceptors,
+		allAids:            constructor.AllAids,
 	}
 }
 
@@ -183,9 +187,11 @@ type CountingQuorumSynodQuorumSystem struct {
 	possibleAids []int
 	*genericsmr.Replica
 	Phase
-	bcastAttempts    int
-	broadcastFastest bool
-	amIInQrm         bool
+	bcastAttempts      int
+	broadcastFastest   bool
+	amIInQrm           bool
+	sendToAllAcceptors bool
+	allAids            []int
 }
 
 func (qrmSys *CountingQuorumSynodQuorumSystem) QuorumReached() bool {
@@ -227,6 +233,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 			dlog.Println("Prepare bcast failed:", err)
 		}
 	}()
+
 	sendSize := qrmSys.crtQrm.Threshold
 	sentTo := make([]int, 0, qrmSys.crtQrm.Threshold)
 	if qrmSys.amIInQrm {
