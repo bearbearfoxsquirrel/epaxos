@@ -4,6 +4,7 @@ import (
 	"dlog"
 	"fastrpc"
 	"genericsmr"
+	"log"
 	"math"
 	"quorum"
 )
@@ -232,43 +233,54 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		if err := recover(); err != nil {
 			dlog.Println("Prepare bcast failed:", err)
 		}
+		qrmSys.bcastAttempts++
 	}()
 
-	sendSize := qrmSys.crtQrm.Threshold
-	sentTo := make([]int, 0, qrmSys.crtQrm.Threshold)
-	if qrmSys.amIInQrm {
-		sendSize--
-		sentTo = append(sentTo, int(qrmSys.Id))
+	sentTo := make([]int, 0, qrmSys.N)
+	if !qrmSys.thrifty { // || bcastatmpts > 0
+		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
 	}
-	if qrmSys.thrifty { //&& qrmSys.bcastAttempts < 2 {
-		var peerList []int32
-		if qrmSys.broadcastFastest {
-			peerList = qrmSys.Replica.GetLatencyPeerOrder()
-		} else {
-			peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
+
+	//if qrmSys.amIInQrm {
+	//sendSize--
+	//sentTo = append(sentTo, int(qrmSys.Id))
+	//}
+	var peerList []int32
+	if qrmSys.broadcastFastest {
+		peerList = qrmSys.Replica.GetLatencyPeerOrder()
+	} else {
+		peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
+	}
+
+	if len(peerList) < qrmSys.crtQrm.Threshold {
+		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
+	}
+
+	for _, preferredAcceptor := range peerList {
+		for _, quorumableAcceptor := range qrmSys.possibleAids {
+			if int32(quorumableAcceptor) == preferredAcceptor {
+				qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
+				log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.Id)
+				sentTo = append(sentTo, int(preferredAcceptor))
+				break
+			}
 		}
 
-		for _, a := range peerList {
-			numSent := 0
-			for _, pa := range qrmSys.possibleAids {
-				if int32(pa) == a && int32(pa) != qrmSys.Id {
-					qrmSys.Replica.SendMsg(a, code, msg)
-					//	log.Println("sent to ", a, "I am ", qrmSys.Id)
-					sentTo = append(sentTo, int(a))
-					numSent++
-					break
-				}
-
-			}
-			if numSent == sendSize {
-				qrmSys.bcastAttempts++
-				return sentTo // we managed to send to a quorum so can return
-			}
-		} // if fail to find a quorum, just fall back on sending to all
-		qrmSys.bcastAttempts++
-	}
+		if len(sentTo) == qrmSys.crtQrm.Threshold {
+			break
+		}
+		//}
+	} // if fail to find preferredAcceptor quorum, just fall back on sending to all
 	// send to all
-	//log.Println("sending to all")
+
+	if len(sentTo) < qrmSys.crtQrm.Threshold {
+		panic("Not sent to enough acceptors")
+	}
+	return sentTo // we managed to send to preferredAcceptor quorum so can return
+}
+
+func (qrmSys *CountingQuorumSynodQuorumSystem) bcastMsgToAllAlive(code uint8, msg fastrpc.Serializable, sentTo []int) []int {
+	log.Println("Broadcasting to all")
 	sendToAll(qrmSys.possibleAids, qrmSys.Replica, code, msg)
 	qrmSys.Replica.Mutex.Lock()
 	for _, i := range qrmSys.possibleAids {

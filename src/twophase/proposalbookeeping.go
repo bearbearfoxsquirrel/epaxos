@@ -1,6 +1,7 @@
 package twophase
 
 import (
+	"dlog"
 	"instanceagentmapper"
 	"quorumsystem"
 	"state"
@@ -94,6 +95,7 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) StartNewProposal(r Co
 		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
 	}
 	group := proposalConstructor.MapperCache[inst]
+	dlog.AgentPrintfN(proposalConstructor.PropID, "Minimal acceptor group for instance %d is %v", inst, group)
 	//log.Println("group for instance", inst, ":", group)
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[pbk.propCurBal] = quorumaliser
@@ -107,6 +109,7 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) trackProposalAcceptan
 		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
 	}
 	group := proposalConstructor.MapperCache[inst]
+	dlog.AgentPrintfN(proposalConstructor.PropID, "Minimal acceptor group for instance %d is %v", group)
 
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[bal] = quorumaliser

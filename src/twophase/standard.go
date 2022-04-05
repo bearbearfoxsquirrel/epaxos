@@ -759,7 +759,12 @@ func (r *LWPReplica) retryBallot(maybeTimedout TimeoutInfo) {
 			}
 		}
 		//log.Println("resending")
-		inst.pbk.proposalInfos[inst.pbk.propCurBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
+		group := inst.pbk.proposalInfos[inst.pbk.propCurBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
+		phase := "prepare"
+		if maybeTimedout.phase == PROPOSING {
+			phase = "accept request"
+		}
+		dlog.AgentPrintfN(r.Id, "Broadcasted %s message in instance %d at ballot %d.%d to %v", phase, maybeTimedout.inst, inst.pbk.propCurBal.Number, inst.pbk.propCurBal.PropID, group)
 		r.beginTimeout(maybeTimedout.inst, maybeTimedout.proposingBal, maybeTimedout.phase, r.timeout, maybeTimedout.msgCode, maybeTimedout.msg)
 	}
 }
@@ -818,19 +823,22 @@ func (r *LWPReplica) beginTracking(instID stats.InstanceID, ballot stdpaxosproto
 func (r *LWPReplica) bcastPrepare(instance int32) {
 	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.propCurBal}
 	pbk := r.instanceSpace[instance].pbk
-	dlog.Println("sending prepare for instance", instance, "and ballot", pbk.propCurBal.Number, pbk.propCurBal.PropID)
-
-	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
-
+	//dlog.Println("sending prepare for instance", instance, "and ballot", pbk.propCurBal.Number, pbk.propCurBal.PropID)
+	var sentTo []int
 	if r.sendPreparesToAllAcceptors {
+		sentTo = make([]int, 0, r.N)
 		for i := 0; i < r.N; i++ {
 			if i == int(r.Id) {
+				sentTo = append(sentTo, i)
 				continue
 			}
 			r.Replica.SendMsg(int32(i), r.prepareRPC, args)
+			sentTo = append(sentTo, i)
 		}
 		return
 	}
+	sentTo = pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
+	dlog.AgentPrintfN(r.Id, " Broadcasted prepare for instance %d at ballot %d.%d to replicas %v", pa.Instance, pa.Number, pa.PropID, sentTo)
 
 	if r.doStats {
 		instID := stats.InstanceID{
@@ -843,38 +851,38 @@ func (r *LWPReplica) bcastPrepare(instance int32) {
 	r.beginTimeout(args.Instance, args.Ballot, PREPARING, r.timeout, r.prepareRPC, args)
 }
 
-func (r *LWPReplica) bcastPrepareMsg(prepare *stdpaxosproto.Prepare) {
-	pbk := r.instanceSpace[prepare.Instance].pbk
-	dlog.Println("sending prepare")
+//func (r *LWPReplica) bcastPrepareMsg(prepare *stdpaxosproto.Prepare) {
+//	pbk := r.instanceSpace[prepare.Instance].pbk
+//	dlog.Println("sending prepare")
+//
+//	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, prepare)
+//
+//	if r.doStats {
+//		instID := stats.InstanceID{
+//			Log: 0,
+//			Seq: prepare.Instance,
+//		}
+//		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
+//		r.beginTracking(instID, prepare.Ballot, sentTo, "Phase 1", "Phase 1")
+//	}
+//	r.beginTimeout(prepare.Instance, prepare.Ballot, PREPARING, r.timeout, r.prepareRPC, prepare)
+//}
 
-	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, prepare)
-
-	if r.doStats {
-		instID := stats.InstanceID{
-			Log: 0,
-			Seq: prepare.Instance,
-		}
-		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
-		r.beginTracking(instID, prepare.Ballot, sentTo, "Phase 1", "Phase 1")
-	}
-	r.beginTimeout(prepare.Instance, prepare.Ballot, PREPARING, r.timeout, r.prepareRPC, prepare)
-}
-
-func (r *LWPReplica) bcastAcceptMsg(accept *stdpaxosproto.Accept) {
-	pbk := r.instanceSpace[accept.Instance].pbk
-	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, accept)
-
-	if r.doStats {
-		instID := stats.InstanceID{
-			Log: 0,
-			Seq: accept.Instance,
-		}
-		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
-		r.beginTracking(instID, accept.Ballot, sentTo, "Phase 2", "Phase 2")
-	}
-
-	r.beginTimeout(accept.Instance, accept.Ballot, PROPOSING, r.timeout, r.acceptRPC, accept)
-}
+//func (r *LWPReplica) bcastAcceptMsg(accept *stdpaxosproto.Accept) {
+//	pbk := r.instanceSpace[accept.Instance].pbk
+//	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, accept)
+//
+//	if r.doStats {
+//		instID := stats.InstanceID{
+//			Log: 0,
+//			Seq: accept.Instance,
+//		}
+//		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
+//		r.beginTracking(instID, accept.Ballot, sentTo, "Phase 2", "Phase 2")
+//	}
+//
+//	r.beginTimeout(accept.Instance, accept.Ballot, PROPOSING, r.timeout, r.acceptRPC, accept)
+//}
 
 func (r *LWPReplica) bcastAccept(instance int32) {
 	pa.LeaderId = r.Id
@@ -884,9 +892,9 @@ func (r *LWPReplica) bcastAccept(instance int32) {
 	pa.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
 	args := &pa
 	pbk := r.instanceSpace[instance].pbk
-	dlog.AgentPrintfN(r.Id, " Broadcasting accept for instance %d with whose commands %d, at ballot %d.%d", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID)
 	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, args)
 
+	dlog.AgentPrintfN(r.Id, " Broadcasting accept for instance %d with whose commands %d, at ballot %d.%d to Replicas %v", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo)
 	if r.doStats {
 		instID := stats.InstanceID{
 			Log: 0,
@@ -921,7 +929,7 @@ func (r *LWPReplica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballo
 	r.CalculateAlive()
 	sent := 0
 	for q := int32(0); q < int32(r.N); q++ {
-		if q == r.Id { //todo update others with this
+		if q == r.Id {
 			continue
 		}
 		inQrm := r.instanceSpace[instance].pbk.proposalInfos[Ballot].HasAcknowledged(int(q))
@@ -1223,17 +1231,19 @@ func (r *LWPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	valWhatDone := r.proposerCheckAndHandleAcceptedValue(preply.Instance, int32(preply.VBal.PropID), preply.VBal, preply.Command, preply.WhoseCmd)
 
 	if valWhatDone == NEW_VAL {
-		dlog.Printf("Promise from %d in instance %d has new value at Config-Ballot %d.%d", preply.AcceptorId,
+		dlog.Printf("Prepare Reply from %d in instance %d has new value at ballot %d.%d", preply.AcceptorId,
 			preply.Instance, preply.VBal.Number, preply.VBal.PropID)
 	} else if valWhatDone == CHOSEN {
-		dlog.Printf("Preparing instance recognised as chosen (instance %d), returning commit \n", preply.Instance)
+		dlog.Printf("Prepare Reply from %d in instance %d received. Recognised max accepted value as chosen at ballot %d.%d", preply.AcceptorId, preply.Instance, preply.VBal.Number, preply.VBal.PropID)
+		r.bcastCommitToAll(preply.Instance, preply.VBal, preply.Command)
 		return
 	}
 
 	if pbk.propCurBal.GreaterThan(preply.Req) || pbk.status != PREPARING {
 		r.proposerCheckAndHandlePreempt(preply.Instance, preply.Cur, preply.CurPhase)
 		// even if late check if our cur proposal is preempted
-		dlog.Printf("Message in late \n")
+		dlog.AgentPrintfN(r.Id, "Prepare Reply for instance %d with current ballot %d.%d and requested ballot %d.%d in late, either because we are now at %d.%d or aren't preparing any more",
+			preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.Req.Number, preply.Req.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 		return
 	}
 
@@ -1247,6 +1257,7 @@ func (r *LWPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 
 	if preply.Cur.GreaterThan(preply.Req) {
 		isNewPreempted := r.proposerCheckAndHandlePreempt(preply.Instance, preply.Cur, stdpaxosproto.PROMISE)
+		//todo fixme
 		if r.proactivelyPrepareOnPreempt && isNewPreempted && int32(preply.Req.PropID) != r.Id {
 			newPrep := &stdpaxosproto.Prepare{
 				LeaderId: int32(preply.Cur.PropID),
@@ -1456,8 +1467,8 @@ func (r *LWPReplica) checkAndHandleNewlyReceivedInstance(instance int32) {
 
 func (r *LWPReplica) handleAccept(accept *stdpaxosproto.Accept) {
 	//start := time.Now()
+	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	if r.ProposalManager.IsInQrm(accept.Instance, r.Id) {
-		r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 		responseC := r.Acceptor.RecvAcceptRemote(accept)
 
 		go func(responseC <-chan acceptor.Response) {
