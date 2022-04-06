@@ -209,13 +209,13 @@ func (bm *BackoffManager) ShouldBackoff(inst int32, preempter stdpaxosproto.Ball
 		return false
 	}
 }
-func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxosproto.Ballot, preempter stdpaxosproto.Ballot, prempterPhase stdpaxosproto.Phase) {
+func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxosproto.Ballot, preempter stdpaxosproto.Ballot, prempterPhase stdpaxosproto.Phase) (bool, int32) {
 	// if we give this a pointer to the timer we could stop the previous backoff before it gets pinged
 	curBackoffInfo, exists := bm.currentBackoffs[inst]
 
 	if !bm.ShouldBackoff(inst, preempter, prempterPhase) {
 		dlog.Println("Ignoring backoff request as already backing off instance for this conf-bal or a greater one")
-		return
+		return false, -1
 	}
 
 	var preemptNum int32
@@ -273,6 +273,8 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxo
 			timesPreempted: numTimesBackedOff,
 		}
 	}(inst, attemptedBal, preempter, prempterPhase, next, preemptNum)
+
+	return true, next
 }
 
 func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {

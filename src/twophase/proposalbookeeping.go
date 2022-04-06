@@ -109,7 +109,7 @@ func (proposalConstructor *ReducedQuorumProposalInitiator) trackProposalAcceptan
 		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
 	}
 	group := proposalConstructor.MapperCache[inst]
-	dlog.AgentPrintfN(proposalConstructor.PropID, "Minimal acceptor group for instance %d is %v", group)
+	dlog.AgentPrintfN(proposalConstructor.PropID, "Minimal acceptor group for instance %d is %v", inst, group)
 
 	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
 	pbk.proposalInfos[bal] = quorumaliser

@@ -795,9 +795,11 @@ func (r *Replica) GetAliveRandomPeerOrder() []int32 {
 		}
 		aliveReps = append(aliveReps, int32(i))
 	}
-	rand.Shuffle(len(aliveReps[1:]), func(i, j int) {
-		aliveReps[i], aliveReps[j] = aliveReps[j], aliveReps[i]
+	toShuff := aliveReps[1:]
+	rand.Shuffle(len(toShuff), func(i, j int) {
+		toShuff[i], toShuff[j] = toShuff[j], toShuff[i]
 	})
+
 	return aliveReps
 }
 

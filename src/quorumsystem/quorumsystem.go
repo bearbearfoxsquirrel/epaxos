@@ -241,16 +241,14 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
 	}
 
-	//if qrmSys.amIInQrm {
-	//sendSize--
-	//sentTo = append(sentTo, int(qrmSys.Id))
-	//}
 	var peerList []int32
 	if qrmSys.broadcastFastest {
 		peerList = qrmSys.Replica.GetLatencyPeerOrder()
 	} else {
 		peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
 	}
+
+	//log.Println("peer list ", peerList)
 
 	if len(peerList) < qrmSys.crtQrm.Threshold {
 		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
@@ -259,19 +257,18 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	for _, preferredAcceptor := range peerList {
 		for _, quorumableAcceptor := range qrmSys.possibleAids {
 			if int32(quorumableAcceptor) == preferredAcceptor {
-				qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
-				log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.Id)
+				if preferredAcceptor != qrmSys.Id {
+					qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
+				}
+				//log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.Id)
 				sentTo = append(sentTo, int(preferredAcceptor))
 				break
 			}
 		}
-
 		if len(sentTo) == qrmSys.crtQrm.Threshold {
 			break
 		}
-		//}
-	} // if fail to find preferredAcceptor quorum, just fall back on sending to all
-	// send to all
+	}
 
 	if len(sentTo) < qrmSys.crtQrm.Threshold {
 		panic("Not sent to enough acceptors")
