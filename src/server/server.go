@@ -118,6 +118,7 @@ var sendFastestQrm *bool = flag.Bool("sendfastestqrm", false, "Send to fastest t
 var tsStatsFilename *string = flag.String("tsstatsfilename", "", "Name for timeseries stats file")
 var instStatsFilename *string = flag.String("inststatsfilename", "", "Name for instance stats file")
 var proposalStatsFilename *string = flag.String("proposalstatsfilename", "", "Name for proposal stats file")
+var logFilename *string = flag.String("logfilename", "", "Name for log file")
 
 var sendProposerState *bool = flag.Bool("sendproposerstate", false, "Proposers periodically send their current state to each other")
 var proactivePrepareOnPreempt *bool = flag.Bool("proactivePrepareOnPreempt", false, "Upon being preempted, the proposer prepares on the preempting ballot")
@@ -148,6 +149,11 @@ func main() {
 	//	runtime.mg
 	if *quiet == true {
 		log.SetOutput(ioutil.Discard)
+	}
+
+	if *dostdEager || *doBaselineTwoPhase && *logFilename != "" {
+		file, _ := os.Create(*statsLoc + fmt.Sprintf("/%s", *logFilename))
+		log.SetOutput(file)
 	}
 
 	//if *doMencius && *thrifty {
@@ -392,7 +398,7 @@ func main() {
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors)
 			runnable = rep
 			rpc.Register(rep)
 		} else {

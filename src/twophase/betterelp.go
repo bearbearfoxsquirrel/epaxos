@@ -116,6 +116,7 @@ type ELPReplica struct {
 	isAccMsgFilter              bool
 	expectedBatchedRequest      int32
 	chosenBatches               map[int32]struct{}
+	sendPreparesToAllAcceptors  bool
 }
 
 type TimeoutInfo struct {
@@ -307,7 +308,7 @@ func NewBaselineEagerReplica(smrReplica *genericsmr.Replica, id int, durable boo
 	statsParentLoc string, commitCatchUp bool, maxProposalVals int, constBackoff bool, requeueOnPreempt bool, reducePropConfs bool, bcastAcceptance bool,
 	minBatchSize int32, initiator ProposalManager, tsStatsFilename string, instStatsFilename string,
 	propsStatsFilename string, sendProposerState bool, proactivePrepareOnPreempt bool, batchingAcceptor bool,
-	maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter) *ELPReplica {
+	maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter, sendPreparesToAllAcceptors bool) *ELPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &ELPReplica{
@@ -368,8 +369,9 @@ func NewBaselineEagerReplica(smrReplica *genericsmr.Replica, id int, durable boo
 		sendProposerState:   sendProposerState,
 		//	sendProposalsSatiated: minimalProposerNumbers,
 		proactivelyPrepareOnPreempt: proactivePrepareOnPreempt,
-		expectedBatchedRequest:      100,
+		expectedBatchedRequest:      200,
 		chosenBatches:               make(map[int32]struct{}),
+		sendPreparesToAllAcceptors:  sendPreparesToAllAcceptors,
 	}
 
 	r.prepareRPC = r.RegisterRPC(new(stdpaxosproto.Prepare), r.prepareChan)
@@ -450,9 +452,11 @@ func NewBaselineEagerReplica(smrReplica *genericsmr.Replica, id int, durable boo
 }
 
 func (r *ELPReplica) CloseUp() {
-	r.TimeseriesStats.Close()
-	r.InstanceStats.Close()
-	r.ProposalStats.CloseOutput()
+	if r.doStats {
+		r.TimeseriesStats.Close()
+		r.InstanceStats.Close()
+		r.ProposalStats.CloseOutput()
+	}
 }
 
 func (r *ELPReplica) recordExecutedUpTo() {
@@ -655,8 +659,10 @@ func (r *ELPReplica) startBatching() {
 			curBatchCmds = make([]*state.Command, 0, r.expectedBatchedRequest)
 			batchSize = 0
 			curUID += 1
+			//	go func() {
 			//<-r.openInst
 			r.batchedProps <- batchC
+			//}()
 			dlog.Println("Client value(s) received beginning new instance")
 			timeout.Reset(time.Duration(r.maxBatchWait) * time.Millisecond)
 			break
@@ -675,8 +681,12 @@ func (r *ELPReplica) startBatching() {
 			curBatchCmds = make([]*state.Command, 0, r.expectedBatchedRequest)
 			batchSize = 0
 			curUID += 1
+			//go func() {
+
 			//<-r.openInst
 			r.batchedProps <- batchC
+
+			//}()
 			timeout.Reset(time.Duration(r.maxBatchWait) * time.Millisecond)
 			break
 		}
@@ -760,6 +770,20 @@ func (r *ELPReplica) run() {
 			r.tryNextAttempt(next)
 			break
 		case retry := <-r.proposableInstances:
+			inst := r.instanceSpace[retry.inst]
+			pbk := inst.pbk
+			if pbk == nil {
+				return
+			}
+
+			dlog.AgentPrintfN(r.Id, "Rechecking whether to propose in instance %d", retry.inst)
+			if pbk.propCurBal.GreaterThan(retry.proposingBal) || pbk.status == READY_TO_PROPOSE {
+				dlog.AgentPrintfN(r.Id, "Decided to not propose in instance %d as we are no longer on ballot %d.%d"+
+					" and are now on %d.%d or ballot is no longer in proposable state", retry.inst, retry.proposingBal.Number, retry.proposingBal.PropID,
+					pbk.propCurBal.Number, pbk.propCurBal.PropID)
+				return
+			}
+
 			r.recheckForValueToPropose(retry)
 			break
 		case prepareS := <-r.prepareChan:
@@ -810,9 +834,24 @@ func (r *ELPReplica) retryBallot(maybeTimedout TimeoutInfo) {
 	if inst.pbk.propCurBal.Equal(maybeTimedout.proposingBal) && inst.pbk.status == maybeTimedout.phase {
 		if r.doStats {
 			r.TimeseriesStats.Update("Message Timeouts", 1)
+			id := stats.InstanceID{
+				Log: 0,
+				Seq: maybeTimedout.inst,
+			}
+			if maybeTimedout.phase == PREPARING {
+				r.InstanceStats.RecordOccurrence(id, "Phase 1 Timeout", 1)
+			} else if maybeTimedout.phase == PROPOSING {
+				r.InstanceStats.RecordOccurrence(id, "Phase 2 Timeout", 1)
+			}
 		}
-
-		inst.pbk.proposalInfos[inst.pbk.propCurBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
+		//log.Println("resending")
+		group := inst.pbk.proposalInfos[inst.pbk.propCurBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
+		phase := "prepare"
+		if maybeTimedout.phase == PROPOSING {
+			phase = "accept request"
+		}
+		dlog.AgentPrintfN(r.Id, "Broadcasted %s message in instance %d at ballot %d.%d to %v", phase, maybeTimedout.inst, inst.pbk.propCurBal.Number, inst.pbk.propCurBal.PropID, group)
+		r.beginTimeout(maybeTimedout.inst, maybeTimedout.proposingBal, maybeTimedout.phase, r.timeout, maybeTimedout.msgCode, maybeTimedout.msg)
 	}
 }
 
@@ -835,9 +874,22 @@ func (r *ELPReplica) sendSinglePrepare(instance int32, to int32) {
 func (r *ELPReplica) bcastPrepare(instance int32) {
 	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.propCurBal}
 	pbk := r.instanceSpace[instance].pbk
-	dlog.Println("sending prepare")
-
-	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
+	//dlog.Println("sending prepare for instance", instance, "and ballot", pbk.propCurBal.Number, pbk.propCurBal.PropID)
+	var sentTo []int
+	if r.sendPreparesToAllAcceptors {
+		sentTo = make([]int, 0, r.N)
+		for i := 0; i < r.N; i++ {
+			if i == int(r.Id) {
+				sentTo = append(sentTo, i)
+				continue
+			}
+			r.Replica.SendMsg(int32(i), r.prepareRPC, args)
+			sentTo = append(sentTo, i)
+		}
+		return
+	}
+	sentTo = pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, args)
+	dlog.AgentPrintfN(r.Id, "Broadcasted prepare for instance %d at ballot %d.%d to replicas %v", args.Instance, args.Number, args.PropID, sentTo)
 
 	if r.doStats {
 		instID := stats.InstanceID{
@@ -848,23 +900,6 @@ func (r *ELPReplica) bcastPrepare(instance int32) {
 		r.beginTracking(instID, args.Ballot, sentTo, "Phase 1", "Phase 1")
 	}
 	r.beginTimeout(args.Instance, args.Ballot, PREPARING, r.timeout, r.prepareRPC, args)
-}
-
-func (r *ELPReplica) bcastPrepareMsg(prepare *stdpaxosproto.Prepare) {
-	pbk := r.instanceSpace[prepare.Instance].pbk
-	dlog.Println("sending prepare")
-
-	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.prepareRPC, prepare)
-
-	if r.doStats {
-		instID := stats.InstanceID{
-			Log: 0,
-			Seq: prepare.Instance,
-		}
-		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
-		r.beginTracking(instID, prepare.Ballot, sentTo, "Phase 1", "Phase 1")
-	}
-	r.beginTimeout(prepare.Instance, prepare.Ballot, PREPARING, r.timeout, r.prepareRPC, prepare)
 }
 
 func (r *ELPReplica) beginTimeout(inst int32, attempted stdpaxosproto.Ballot, onWhatPhase ProposerStatus, timeout time.Duration, msgcode uint8, msg fastrpc.Serializable) {
@@ -899,28 +934,14 @@ func (r *ELPReplica) isSlowestSlowerThanMedian(sent []int) bool {
 
 func (r *ELPReplica) beginTracking(instID stats.InstanceID, ballot stdpaxosproto.Ballot, sentTo []int, trackingName string, proposalTrackingName string) {
 	if len(sentTo) == r.N || r.isSlowestSlowerThanMedian(sentTo) {
+		dlog.AgentPrintfN(r.Id, "Broadcasted instance %d to a slow quorum in %s", instID.Seq, trackingName)
 		r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Slow Quorum")
 		r.ProposalStats.RecordOccurence(instID, ballot, proposalTrackingName+" Slow Quorum", 1)
 	} else {
+		dlog.AgentPrintfN(r.Id, "Broadcasted instance %d to a fast quorum in %s", instID.Seq, trackingName)
 		r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Fast Quorum")
 		r.ProposalStats.RecordOccurence(instID, ballot, proposalTrackingName+" Fast Quorum", 1)
 	}
-}
-
-func (r *ELPReplica) bcastAcceptMsg(accept *stdpaxosproto.Accept) {
-	pbk := r.instanceSpace[accept.Instance].pbk
-	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, accept)
-
-	if r.doStats {
-		instID := stats.InstanceID{
-			Log: 0,
-			Seq: accept.Instance,
-		}
-		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
-		r.beginTracking(instID, accept.Ballot, sentTo, "Phase 2", "Phase 2")
-	}
-
-	r.beginTimeout(accept.Instance, accept.Ballot, PROPOSING, r.timeout, r.acceptRPC, accept)
 }
 
 func (r *ELPReplica) bcastAccept(instance int32) {
@@ -930,10 +951,10 @@ func (r *ELPReplica) bcastAccept(instance int32) {
 	pa.Command = r.instanceSpace[instance].pbk.cmds
 	pa.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
 	args := &pa
-
 	pbk := r.instanceSpace[instance].pbk
 	sentTo := pbk.proposalInfos[pbk.propCurBal].Broadcast(r.acceptRPC, args)
 
+	dlog.AgentPrintfN(r.Id, "Broadcasting accept for instance %d with whose commands %d, at ballot %d.%d to Replicas %v", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo)
 	if r.doStats {
 		instID := stats.InstanceID{
 			Log: 0,
@@ -942,9 +963,7 @@ func (r *ELPReplica) bcastAccept(instance int32) {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
 		r.beginTracking(instID, args.Ballot, sentTo, "Phase 2", "Phase 2")
 	}
-
 	r.beginTimeout(args.Instance, args.Ballot, PROPOSING, r.timeout, r.acceptRPC, args)
-
 }
 
 var pc stdpaxosproto.Commit
@@ -968,16 +987,20 @@ func (r *ELPReplica) bcastCommitToAll(instance int32, Bal stdpaxosproto.Ballot, 
 	pcs.Ballot = Bal
 	pcs.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
 	pcs.Count = int32(len(command))
-	argsShort := &pcs
-
+	argsShort := pcs
+	dlog.AgentPrintfN(r.Id, "Broadcasting commit for instance %d with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
 	r.CalculateAlive()
 	sent := 0
-	for q := 0; q < r.N; q++ {
-		inQrm := r.instanceSpace[instance].pbk.proposalInfos[Bal].HasAcknowledged(q) //pbk.proposalInfos[Bal].Broadcast//.aids[r.PreferredPeerOrder[q]]
+	for q := int32(0); q < int32(r.N); q++ {
+		if q == r.Id {
+			continue
+		}
+		inQrm := r.instanceSpace[instance].pbk.proposalInfos[Bal].HasAcknowledged(int(q))
 		if inQrm {
-			r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+			r.SendMsg(q, r.commitShortRPC, &argsShort)
 		} else {
-			r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+
+			r.SendMsg(q, r.commitRPC, &pc)
 		}
 		sent++
 	}
@@ -1013,18 +1036,27 @@ func (r *ELPReplica) proposerCheckAndHandlePreempt(inst int32, preemptingBallot 
 			r.ProposalStats.CloseAndOutput(id, pbk.propCurBal, stats.HIGHERPROPOSALONGOING)
 		}
 	}
-
 	pbk.status = BACKING_OFF
 	if preemptingBallot.GreaterThan(pbk.maxKnownBal) {
+		dlog.AgentPrintfN(r.Id, "Witnessed new maximum ballot %d.%d for instance %d", preemptingBallot.Number, preemptingBallot.PropID, inst)
 		pbk.maxKnownBal = preemptingBallot
 	}
-	r.BackoffManager.CheckAndHandleBackoff(inst, pbk.propCurBal, preemptingBallot, preemptingPhase)
 
-	if (pbk.status == PREPARING || pbk.status == PROPOSING) && pbk.clientProposals != nil {
-		r.requeueClientProposals(inst)
-		//	pbk.clientProposals = nil
+	backedOff, botime := r.BackoffManager.CheckAndHandleBackoff(inst, pbk.propCurBal, preemptingBallot, preemptingPhase)
+	if backedOff {
+		dlog.AgentPrintfN(r.Id, "Backing off instance %d in for %d microseconds because our current ballot %d.%d is preempted by ballot %d.%d",
+			inst, botime, pbk.propCurBal.Number, pbk.propCurBal.PropID, preemptingBallot.Number, preemptingBallot.PropID)
 	}
 
+	if pbk.status == PREPARING && pbk.clientProposals != nil {
+		r.requeueClientProposals(inst)
+		r.checkAndOpenNewInstances(inst)
+	}
+
+	if pbk.status == PROPOSING && pbk.clientProposals != nil {
+		r.requeueClientProposals(inst)
+		r.checkAndOpenNewInstances(inst)
+	}
 	return true
 }
 
@@ -1059,32 +1091,32 @@ func (r *ELPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 		return CHOSEN
 	}
 
+	if accepted.GreaterThan(pbk.maxKnownBal) {
+		pbk.maxKnownBal = accepted
+		dlog.AgentPrintfN(r.Id, "New max accepted value in message received from Replica %d in instance %d at ballot %d.%d with whose commands %d",
+			accepted.PropID, inst, accepted.Number, accepted.PropID, whoseCmds)
+	}
 	_, exists := pbk.proposalInfos[accepted]
 	if !exists {
 		r.ProposalManager.trackProposalAcceptance(r, inst, accepted)
 	}
-	pbk.proposalInfos[accepted].AddToQuorum(int(aid))
-	dlog.Printf("Acceptance on instance %d at conf-round %d.%d by acceptor %d", inst, accepted.Number, accepted.PropID, aid)
 
-	if accepted.GreaterThan(pbk.maxKnownBal) {
-		pbk.maxKnownBal = accepted
-	}
+	pbk.proposalInfos[accepted].AddToQuorum(int(aid))
+	dlog.AgentPrintfN(r.Id, "Recording Acceptance on instance %d at round %d.%d by Replica %d with whose commands %d", inst, accepted.Number, accepted.PropID, aid, whoseCmds)
 
 	newVal := false
 	if accepted.GreaterThan(pbk.proposeValueBal) {
+		//if whoseCmds != r.Id && pbk.clientProposals != nil {
+		//	r.requeueClientProposals(inst)
+		//}
 		newVal = true
 		pbk.whoseCmds = whoseCmds
 		pbk.proposeValueBal = accepted
 		pbk.cmds = val
-
-		if r.whatHappenedToClientProposals(inst) == ProposedButNotChosen {
-			//log.Println("requeued client values but not set them in ", inst)
-			r.requeueClientProposals(inst)
-			pbk.clientProposals = nil
-		}
 	}
 
 	if pbk.proposalInfos[accepted].QuorumReached() {
+		dlog.AgentPrintfN(r.Id, "Quorum reached on Acceptance on instance %d at round %d.%d with whose commands %d", inst, accepted.Number, accepted.PropID, whoseCmds)
 		r.bcastCommitToAll(inst, accepted, val)
 		if int32(accepted.PropID) != r.Id {
 			cmt := &stdpaxosproto.Commit{
@@ -1126,7 +1158,7 @@ func (r *ELPReplica) tryNextAttempt(next RetryInfo) {
 	}
 
 	if (!r.BackoffManager.StillRelevant(next) || inst.pbk.status != BACKING_OFF) && next.backedoff {
-		dlog.Printf("Skipping retry of instance %d due to preempted again or closed\n", next.InstToPrep)
+		dlog.AgentPrintfN(r.Id, "Skipping retry of instance %d due to preempted again or closed", next.InstToPrep)
 		return
 	}
 
@@ -1148,17 +1180,22 @@ func (r *ELPReplica) tryNextAttempt(next RetryInfo) {
 
 		respPrep := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
 		if respPrep.Cur.GreaterThan(req) {
+
 			return
 		}
+
+		dlog.AgentPrintfN(r.Id, "Promise by our Acceptor (Replica %d) on instance %d at round %d.%d with whose commands %d", r.Id, respPrep.Instance, respPrep.Cur.Number, respPrep.Cur.PropID, respPrep.WhoseCmd)
 
 		r.prepareReplyChan <- respPrep
 
 	}(next.InstToPrep, nextBallot, done)
-	dlog.Printf("Proposing next conf-bal %d.%d to instance %d\n", nextBallot.Number, nextBallot.PropID, next.InstToPrep)
+	dlog.AgentPrintfN(r.Id, "Preparing next ballot %d.%d to instance %d", nextBallot.Number, nextBallot.PropID, next.InstToPrep)
 	if r.doStats {
 		r.ProposalStats.Open(stats.InstanceID{0, r.crtInstance}, nextBallot)
 		r.InstanceStats.RecordOccurrence(stats.InstanceID{0, r.crtInstance}, "My Phase 1 Proposals", 1)
+		//r.TimeseriesStats.Update()
 	}
+
 }
 
 func (r *ELPReplica) beginNextInstance() {
@@ -1188,6 +1225,7 @@ func (r *ELPReplica) beginNextInstance() {
 		Instance: r.crtInstance,
 		Ballot:   curInst.pbk.propCurBal,
 	}
+	dlog.AgentPrintfN(r.Id, "Opened new instance %d, with ballot %d.%d \n", r.crtInstance, prepMsg.Number, prepMsg.PropID)
 	resp := r.Acceptor.RecvPrepareRemote(prepMsg)
 
 	go func(prepMsg *stdpaxosproto.Prepare, c <-chan acceptor.Response) {
@@ -1201,8 +1239,11 @@ func (r *ELPReplica) beginNextInstance() {
 
 		prepResp := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
 		if prepResp.Cur.GreaterThan(prepMsg.Ballot) {
+			dlog.AgentPrintfN(r.Id, "Preempt on Prepare by our Acceptor (Replica %d) on instance %d at round %d.%d with current round %d.%d with whose commands %d", r.Id, prepResp.Instance, prepResp.Req.Number, prepResp.Req.PropID, prepResp.Cur.Number, prepResp.Cur.PropID, prepResp.WhoseCmd)
+
 			return
 		}
+		dlog.AgentPrintfN(r.Id, "Promise by our Acceptor (Replica %d) on instance %d at round %d.%d with whose commands %d", r.Id, prepResp.Instance, prepResp.Cur.Number, prepResp.Cur.PropID, prepResp.WhoseCmd)
 
 		r.prepareReplyChan <- prepResp
 	}(prepMsg, resp)
@@ -1212,14 +1253,13 @@ func (r *ELPReplica) beginNextInstance() {
 
 func (r *ELPReplica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	r.checkAndHandleNewlyReceivedInstance(prepare.Instance)
+	dlog.AgentPrintfN(r.Id, "Received a Prepare from Replica %d in instance %d at ballot %d.%d", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
 	if r.ProposalManager.IsInQrm(prepare.Instance, r.Id) {
+		dlog.AgentPrintfN(r.Id, "Acceptor handing Prepare from Replica %d in instance %d at ballot %d.%d as it can form a quorum", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
 		response := r.Acceptor.RecvPrepareRemote(prepare)
 		go func(response <-chan acceptor.Response) {
 			for msg := range response {
-				if msg.GetType() == r.commitRPC {
-					cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
-					dlog.Println("sending commit for instance", cmt.Instance, "ballot", cmt.Number, cmt.PropID, "whose cmd", cmt.WhoseCmd)
-				}
+
 				if r.isAccMsgFilter {
 					if msg.IsNegative() {
 						c := make(chan bool, 1)
@@ -1228,42 +1268,73 @@ func (r *ELPReplica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 							ret:  c,
 						}
 						if yes := <-c; yes {
+							if msg.GetType() == r.commitRPC {
+								cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
+								dlog.AgentPrintfN(r.Id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+							}
+
+							if msg.GetType() == r.prepareReplyRPC {
+								preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
+								isPreempt := preply.Req.GreaterThan(preply.Cur) && preply.CurPhase == stdpaxosproto.PROMISE
+								isPreemptStr := "Preempting"
+								if !isPreempt {
+									isPreemptStr = "Promise"
+								}
+								dlog.AgentPrintfN(r.Id, "Filtered Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+									isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+							}
 							return
 						}
-						r.SendMsg(msg.ToWhom(), msg.GetType(), msg)
-						continue
+						//r.SendMsg(msg.ToWhom(), msg.GetType(), msg)
+						//continue
 					}
 				}
+				if msg.GetType() == r.commitRPC {
+					cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
+					dlog.AgentPrintfN(r.Id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+				}
+
+				if msg.GetType() == r.prepareReplyRPC {
+					preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
+					isPreempt := preply.Req.GreaterThan(preply.Cur) && preply.CurPhase == stdpaxosproto.PROMISE
+					isPreemptStr := "Preempting"
+					if !isPreempt {
+						isPreemptStr = "Promise"
+					}
+					dlog.AgentPrintfN(r.Id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+						isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+				}
+
 				r.SendMsg(msg.ToWhom(), msg.GetType(), msg)
 			}
 		}(response)
 	}
+
 	r.proposerCheckAndHandlePreempt(prepare.Instance, prepare.Ballot, stdpaxosproto.PROMISE)
 }
 
 func (r *ELPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	inst := r.instanceSpace[preply.Instance]
 	pbk := inst.pbk
+	dlog.AgentPrintfN(r.Id, "Received a Prepare Reply from Replica %d in instance %d at requested ballot %d.%d and current ballot %d.%d", preply.AcceptorId, preply.Instance, preply.Req.Number, preply.Req.PropID, preply.Cur.Number, preply.Cur.PropID)
+
 	if pbk.status == CLOSED {
+		dlog.AgentPrintfN(r.Id, "Discarding Prepare Reply in instance %d at requested ballot %d.%d because it's already chosen", preply.AcceptorId, preply.Instance, preply.Req.Number, preply.Req.PropID)
 		return
 	}
 
 	// check if there is a value and track it
 	//	r.proposerCheckAndHandleAcceptedValue(preply.Instance, preply.AcceptorId, preply.VBal, preply.Command, preply.WhoseCmd)
 	valWhatDone := r.proposerCheckAndHandleAcceptedValue(preply.Instance, int32(preply.VBal.PropID), preply.VBal, preply.Command, preply.WhoseCmd)
-
-	if valWhatDone == NEW_VAL {
-		dlog.Printf("Promise from %d in instance %d has new value at Config-Ballot %d.%d", preply.AcceptorId,
-			preply.Instance, preply.VBal.Number, preply.VBal.PropID)
-	} else if valWhatDone == CHOSEN {
-		dlog.Printf("Preparing instance recognised as chosen (instance %d), returning commit \n", preply.Instance)
+	if valWhatDone == CHOSEN {
 		return
 	}
 
 	if pbk.propCurBal.GreaterThan(preply.Req) || pbk.status != PREPARING {
 		r.proposerCheckAndHandlePreempt(preply.Instance, preply.Cur, preply.CurPhase)
 		// even if late check if our cur proposal is preempted
-		dlog.Printf("Message in late \n")
+		dlog.AgentPrintfN(r.Id, "Prepare Reply for instance %d with current ballot %d.%d and requested ballot %d.%d in late, either because we are now at %d.%d or aren't preparing any more",
+			preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.Req.Number, preply.Req.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 		return
 	}
 
@@ -1277,14 +1348,20 @@ func (r *ELPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 
 	if preply.Cur.GreaterThan(preply.Req) {
 		isNewPreempted := r.proposerCheckAndHandlePreempt(preply.Instance, preply.Cur, stdpaxosproto.PROMISE)
-		if r.proactivelyPrepareOnPreempt && isNewPreempted && int32(preply.Req.PropID) != r.Id {
+
+		if isNewPreempted {
+			pCurBal := r.GetPBK(preply.Instance).propCurBal
+			dlog.AgentPrintfN(r.Id, "Prepare Reply Received from Replica %d in instance %d at with current ballot %d.%d Preempted Previous Ballot we had at ballot %d.%d",
+				preply.AcceptorId, preply.Instance, preply.Cur.Number, preply.Cur.PropID, pCurBal.Number, pCurBal.PropID)
+		}
+		if r.ProposalManager.IsInQrm(preply.Instance, r.Id) && r.proactivelyPrepareOnPreempt && isNewPreempted && int32(preply.Req.PropID) != r.Id {
 			newPrep := &stdpaxosproto.Prepare{
 				LeaderId: int32(preply.Cur.PropID),
 				Instance: preply.Instance,
 				Ballot:   preply.Cur,
 			}
 			responseC := r.Acceptor.RecvPrepareRemote(newPrep)
-			dlog.Printf("Another active proposer using config-ballot %d.%d.%d greater than mine\n", preply.Cur)
+			//dlog.Printf("Another active proposer using config-ballot %d.%d.%d greater than mine\n", preply.Cur)
 			go func(responseC <-chan acceptor.Response) {
 				for msgResp := range responseC {
 					if r.isAccMsgFilter {
@@ -1295,11 +1372,43 @@ func (r *ELPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 								ret:  c,
 							}
 							if yes := <-c; yes {
-								continue
-							}
-							r.SendMsg(msgResp.ToWhom(), msgResp.GetType(), msgResp)
+								if msgResp.GetType() == r.commitRPC {
+									cmt := msgResp.GetSerialisable().(*stdpaxosproto.Commit)
+									dlog.AgentPrintfN(r.Id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", preply.Cur.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, preply.Instance, preply.Cur.Number, preply.Cur.PropID)
+								}
 
+								if msgResp.GetType() == r.prepareReplyRPC {
+									nextPreply := msgResp.GetSerialisable().(*stdpaxosproto.PrepareReply)
+									isPreempt := nextPreply.Req.GreaterThan(nextPreply.Cur) && nextPreply.CurPhase == stdpaxosproto.PROMISE
+									isPreemptStr := "Preempting"
+									if !isPreempt {
+										isPreemptStr = "Promise"
+									}
+									dlog.AgentPrintfN(r.Id, "Filtered Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+										isPreemptStr, preply.Cur.PropID, nextPreply.Instance, nextPreply.Cur.Number, nextPreply.Cur.PropID, nextPreply.VBal.Number, nextPreply.VBal.PropID, nextPreply.WhoseCmd, preply.Instance, preply.Cur.Number, preply.Cur.PropID)
+								}
+								return
+							}
+
+							//dlog.AgentPrintfN(r.Id, "Promise by our Acceptor (Replica %d) on instance %d at round %d.%d with whose commands %d", r.Id, respPrep.Instance, respPrep.Cur.Number, respPrep.Cur.PropID, respPrep.WhoseCmd)
+							//r.SendMsg(msgResp.ToWhom(), msgResp.GetType(), msgResp)
+							//continue
 						}
+					}
+					if msgResp.GetType() == r.commitRPC {
+						cmt := msgResp.GetSerialisable().(*stdpaxosproto.Commit)
+						dlog.AgentPrintfN(r.Id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", preply.Cur.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, preply.Instance, preply.Cur.Number, preply.Cur.PropID)
+					}
+
+					if msgResp.GetType() == r.prepareReplyRPC {
+						nextPreply := msgResp.GetSerialisable().(*stdpaxosproto.PrepareReply)
+						isPreempt := nextPreply.Req.GreaterThan(nextPreply.Cur) && nextPreply.CurPhase == stdpaxosproto.PROMISE
+						isPreemptStr := "Preempting"
+						if !isPreempt {
+							isPreemptStr = "Promise"
+						}
+						dlog.AgentPrintfN(r.Id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+							isPreemptStr, preply.Cur.PropID, nextPreply.Instance, nextPreply.Cur.Number, nextPreply.Cur.PropID, nextPreply.VBal.Number, nextPreply.VBal.PropID, nextPreply.WhoseCmd, preply.Instance, preply.Cur.Number, preply.Cur.PropID)
 					}
 					r.SendMsg(msgResp.ToWhom(), msgResp.GetType(), msgResp)
 				}
@@ -1308,6 +1417,8 @@ func (r *ELPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 		return
 	}
 
+	dlog.AgentPrintfN(r.Id, "Promise recorded on instance %d at ballot %d.%d from Replica %d with value ballot %d.%d and whose commands %d",
+		preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.AcceptorId, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd)
 	qrm := pbk.proposalInfos[pbk.propCurBal]
 	qrm.AddToQuorum(int(preply.AcceptorId))
 
@@ -1316,14 +1427,21 @@ func (r *ELPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 		return
 	}
 
-	dlog.Printf("Added replica's %d promise to qrm", preply.AcceptorId)
 	if qrm.QuorumReached() {
+		dlog.AgentPrintfN(r.Id, "Promise Quorum reached on instance %d at ballot %d.%d",
+			preply.Instance, preply.Cur.Number, preply.Cur.PropID)
 		id := stats.InstanceID{
 			Log: 0,
 			Seq: preply.Instance,
 		}
 		if r.doStats {
 			r.InstanceStats.RecordComplexStatEnd(id, "Phase 1", "Success")
+		}
+
+		if !pbk.proposeValueBal.IsZero() && pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
+			r.requeueClientProposals(preply.Instance)
+			pbk.clientProposals = nil //at this point, our client proposal will not be chosen
+			r.checkAndOpenNewInstances(preply.Instance)
 		}
 		r.propose(preply.Instance)
 	}
@@ -1341,66 +1459,68 @@ func (r *ELPReplica) propose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
 	pbk.status = READY_TO_PROPOSE
-	dlog.Println("Can now tryPropose in instance", inst)
+	dlog.AgentPrintfN(r.Id, "Attempting to propose value in instance %d", inst)
 	qrm := pbk.proposalInfos[pbk.propCurBal]
 	qrm.StartAcceptanceQuorum()
 
 	if pbk.proposeValueBal.IsZero() {
-		if r.initalProposalWait > 0 {
-			time.AfterFunc(r.initalProposalWait, func() {
-				r.proposableInstances <- ProposalInfo{
-					inst:         inst,
-					proposingBal: pbk.propCurBal,
-				}
-			})
-			return
+		if pbk.cmds != nil {
+			panic("there must be a previously chosen value")
 		}
 
-		for {
-			select {
-			case b := <-r.batchedProps: //v := <-q: //todo fixme
-				if _, exists := r.chosenBatches[b.getUID()]; exists {
-					dlog.Println("chosen batch being thrown out")
+		if pbk.clientProposals != nil {
+			pbk.whoseCmds = r.Id
+			pbk.cmds = pbk.clientProposals.getCmds()
+
+			dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d proposed in instance %d at ballot %d.%d", len(pbk.clientProposals.getCmds()), pbk.clientProposals.getUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+			if r.doStats {
+				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+				r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
+				r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+			}
+
+		} else {
+			done := false
+			for !done {
+				select {
+				case b := <-r.batchedProps:
+					if _, exists := r.chosenBatches[b.getUID()]; exists {
+						dlog.AgentPrintfN(r.Id, "Batch with UID %d received to propose in recovered instance %d has been chosen so now throwing out and trying again", b.getUID(), inst)
+						break
+					}
+					pbk.clientProposals = b
+					pbk.whoseCmds = r.Id
+					pbk.cmds = pbk.clientProposals.getCmds()
+
+					if r.doStats {
+						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+						r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
+						r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+					}
+
+					dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d received and proposed in recovered instance %d at ballot %d.%d \n", len(pbk.clientProposals.getCmds()), pbk.clientProposals.getUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+					done = true
 					break
-				}
-				pbk.clientProposals = b
-				pbk.whoseCmds = r.Id
-				pbk.cmds = pbk.clientProposals.getCmds()
-
-				if r.doStats {
-					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
-					r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
-					r.TimeseriesStats.Update("Times Client Values Proposed", 1)
-				}
-
-				dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals.getCmds()), inst)
-				break
-			default:
-				if r.noopWaitUs > 0 {
-					dlog.Printf("Ready to tryPropose in instance %d but awaiting a full batch of values", inst)
-					time.AfterFunc(r.noopWait, func() {
-						r.proposableInstances <- ProposalInfo{
-							inst:         inst,
-							proposingBal: pbk.propCurBal,
+				default:
+					if r.shouldNoop(inst) {
+						if r.doStats {
+							r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
+							r.TimeseriesStats.Update("Times Noops Proposed", 1)
+							r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
 						}
-					})
-					return
-				} else {
-					if !r.shouldNoop(inst) {
+						pbk.cmds = state.NOOPP()
+						dlog.AgentPrintfN(r.Id, "Proposing noop in recovered instance %d at ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+						done = true
+						break
+					} else {
 						time.AfterFunc(r.noopWait, func() {
 							r.proposableInstances <- ProposalInfo{
 								inst:         inst,
 								proposingBal: pbk.propCurBal,
 							}
 						})
+						dlog.AgentPrintfN(r.Id, "Decided there no need to propose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
 						return
-					}
-					pbk.cmds = state.NOOPP()
-					dlog.Println("Proposing noop")
-					if r.doStats {
-						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
-						r.TimeseriesStats.Update("Times Noops Proposed", 1)
-						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
 					}
 				}
 			}
@@ -1411,14 +1531,18 @@ func (r *ELPReplica) propose(inst int32) {
 			r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
 			r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
 		}
+		dlog.AgentPrintfN(r.Id, "Proposing previous value from ballot %.%d with whose command %d in instance %d at ballot %d.%d, waiting %d ms before checking again", pbk.proposeValueBal.Number, pbk.proposeValueBal.PropID, pbk.whoseCmds, inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
 	}
 
-	pbk.status = PROPOSING
-	pbk.proposeValueBal = pbk.propCurBal
+	//r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.propCurBal, pbk.cmds, pbk.whoseCmds)
+	// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
 
 	if pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
 		panic("alsdkfjal")
+		//pbk.clientProposals = nil
 	}
+	pbk.status = PROPOSING
+	pbk.proposeValueBal = pbk.propCurBal
 
 	acptMsg := &stdpaxosproto.Accept{
 		LeaderId: r.Id,
@@ -1436,89 +1560,99 @@ func (r *ELPReplica) propose(inst int32) {
 			}
 			acc := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 			if acc.Cur.GreaterThan(acc.Req) {
+				dlog.AgentPrintfN(r.Id, "Preempt by our Acceptor (Replica %d) on Accept in instance %d at round %d.%d with whose commands %d", r.Id, acc.Instance, acc.Cur.Number, acc.Cur.PropID, acc.WhoseCmd)
 				return
 			}
+
+			dlog.AgentPrintfN(r.Id, "Acceptance by our Acceptor (Replica %d) on instance %d at round %d.%d with whose commands %d", r.Id, acc.Instance, acc.Cur.Number, acc.Cur.PropID, acc.WhoseCmd)
+
 			r.acceptReplyChan <- acc
 		}
 	}(c, acptMsg)
 }
 
 func (r *ELPReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
-	inst := r.instanceSpace[proposalInfo.inst]
-	pbk := inst.pbk
-	if pbk == nil {
-		return
-	}
-
-	if pbk.propCurBal.GreaterThan(proposalInfo.proposingBal) || pbk.status == READY_TO_PROPOSE {
-		return
-	}
+	inst := proposalInfo.inst
+	instance := r.instanceSpace[inst]
+	pbk := instance.pbk
+	pbk.status = READY_TO_PROPOSE
+	dlog.AgentPrintfN(r.Id, "Attempting to propose value in instance %d", inst)
+	qrm := pbk.proposalInfos[pbk.propCurBal]
+	qrm.StartAcceptanceQuorum()
 
 	if pbk.proposeValueBal.IsZero() {
-		for {
-			select {
-			case b := <-r.batchedProps: //v := <-q: //todo fixme
-				if _, exists := r.chosenBatches[b.getUID()]; exists {
-					dlog.Println("chosen batch being thrown out")
+		if pbk.cmds != nil {
+			panic("there must be a previously chosen value")
+		}
+
+		if pbk.clientProposals != nil {
+			pbk.whoseCmds = r.Id
+			pbk.cmds = pbk.clientProposals.getCmds()
+
+			dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d proposed in instance %d at ballot %d.%d", len(pbk.clientProposals.getCmds()), pbk.clientProposals.getUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+			if r.doStats {
+				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+				r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
+				r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+			}
+
+		} else {
+			done := false
+			for !done {
+				select {
+				case b := <-r.batchedProps:
+					if _, exists := r.chosenBatches[b.getUID()]; exists {
+						dlog.AgentPrintfN(r.Id, "Batch with UID %d received to propose in recovered instance %d has been chosen so now throwing out and trying again", b.getUID(), inst)
+						break
+					}
+					pbk.clientProposals = b
+					pbk.whoseCmds = r.Id
+					pbk.cmds = pbk.clientProposals.getCmds()
+
+					if r.doStats {
+						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+						r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
+						r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+					}
+
+					dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d received and proposed in recovered instance %d at ballot %d.%d \n", len(pbk.clientProposals.getCmds()), pbk.clientProposals.getUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+					done = true
 					break
-				}
-				pbk.clientProposals = b
-				pbk.whoseCmds = r.Id
-				pbk.cmds = pbk.clientProposals.getCmds()
-
-				if r.doStats {
-					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Client Value Proposed", 1)
-					r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, proposalInfo.inst}, pbk.propCurBal, len(pbk.cmds))
-					r.TimeseriesStats.Update("Times Client Values Proposed", 1)
-				}
-
-				dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals.getCmds()), inst)
-				break
-			default:
-				if r.noopWaitUs > 0 {
-					dlog.Printf("Ready to tryPropose in instance %d but awaiting a full batch of values", proposalInfo.inst)
-					time.AfterFunc(r.noopWait, func() {
-						r.proposableInstances <- ProposalInfo{
-							inst:         proposalInfo.inst,
-							proposingBal: pbk.propCurBal,
-						}
-					})
-					return
-				} else {
-					if !r.shouldNoop(proposalInfo.inst) {
-						time.AfterFunc(r.noopWait, func() {
-							r.proposableInstances <- ProposalInfo{
-								inst:         proposalInfo.inst,
-								proposingBal: pbk.propCurBal,
-							}
-						})
-						return
+				default:
+					if r.doStats {
+						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
+						r.TimeseriesStats.Update("Times Noops Proposed", 1)
+						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
 					}
 					pbk.cmds = state.NOOPP()
-					dlog.Println("Proposing noop")
-					if r.doStats {
-						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Noop Proposed", 1)
-						r.TimeseriesStats.Update("Times Noops Proposed", 1)
-						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, proposalInfo.inst}, pbk.propCurBal)
-					}
+					dlog.AgentPrintfN(r.Id, "Proposing noop in recovered instance %d at ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+					done = true
+					break
 				}
 			}
 		}
 	} else {
 		if r.doStats {
-			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Previous Value Proposed", 1)
+			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)
 			r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
-			r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, proposalInfo.inst}, pbk.propCurBal, len(pbk.cmds))
+			r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
 		}
+		dlog.AgentPrintfN(r.Id, "Proposing previous value from ballot %.%d with whose command %d in instance %d at ballot %d.%d, waiting %d ms before checking again", pbk.proposeValueBal.Number, pbk.proposeValueBal.PropID, pbk.whoseCmds, inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
 	}
+
 	//r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.propCurBal, pbk.cmds, pbk.whoseCmds)
 	// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
+
+	if pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
+		panic("alsdkfjal")
+		//pbk.clientProposals = nil
+	}
 	pbk.status = PROPOSING
 	pbk.proposeValueBal = pbk.propCurBal
 
 	acptMsg := &stdpaxosproto.Accept{
 		LeaderId: r.Id,
-		Instance: proposalInfo.inst,
+		Instance: inst,
 		Ballot:   pbk.propCurBal,
 		WhoseCmd: pbk.whoseCmds,
 		Command:  pbk.cmds,
@@ -1532,8 +1666,12 @@ func (r *ELPReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 			}
 			acc := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 			if acc.Cur.GreaterThan(acc.Req) {
+				dlog.AgentPrintfN(r.Id, "Preempt by our Acceptor (Replica %d) on Accept in instance %d at round %d.%d with whose commands %d", r.Id, acc.Instance, acc.Cur.Number, acc.Cur.PropID, acc.WhoseCmd)
 				return
 			}
+
+			dlog.AgentPrintfN(r.Id, "Acceptance by our Acceptor (Replica %d) on instance %d at round %d.%d with whose commands %d", r.Id, acc.Instance, acc.Cur.Number, acc.Cur.PropID, acc.WhoseCmd)
+
 			r.acceptReplyChan <- acc
 		}
 	}(c, acptMsg)
@@ -1558,12 +1696,12 @@ func (r *ELPReplica) shouldNoop(inst int32) bool {
 
 func (r *ELPReplica) checkAndHandleNewlyReceivedInstance(instance int32) {
 	if instance < 0 {
-		dlog.Printf("Got instance %d from proposer who has not begun an instance yet", instance)
 		return
 	}
 	inst := r.instanceSpace[instance]
 	if inst == nil {
 		if instance > r.crtInstance {
+			dlog.AgentPrintfN(r.Id, "Got new instance %d greater than our current instance %d", instance, r.crtInstance)
 			r.crtInstance = instance
 		}
 		r.instanceSpace[instance] = r.proposerMakeEmptyInstance()
@@ -1602,8 +1740,12 @@ func (r *ELPReplica) freeInstToOpen() bool {
 
 func (r *ELPReplica) handleAccept(accept *stdpaxosproto.Accept) {
 	//start := time.Now()
+	dlog.AgentPrintfN(r.Id, "Received a Accept from Replica %d in instance %d at ballot %d.%d", accept.PropID, accept.Instance, accept.Number, accept.PropID)
+
+	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	if r.ProposalManager.IsInQrm(accept.Instance, r.Id) {
-		r.checkAndHandleNewlyReceivedInstance(accept.Instance)
+		dlog.AgentPrintfN(r.Id, "Acceptor handing Accept from Replica %d in instance %d at ballot %d.%d as it can form a quorum", accept.PropID, accept.Instance, accept.Number, accept.PropID)
+
 		responseC := r.Acceptor.RecvAcceptRemote(accept)
 
 		go func(responseC <-chan acceptor.Response) {
@@ -1614,10 +1756,20 @@ func (r *ELPReplica) handleAccept(accept *stdpaxosproto.Accept) {
 				if r.isAccMsgFilter {
 					if resp.GetType() == r.commitRPC {
 						cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
-						if cmt.Equal(accept.Ballot) {
-							panic("should not happen")
-						}
+						dlog.AgentPrintfN(r.Id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 					}
+
+					if resp.GetType() == r.prepareReplyRPC {
+						areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
+						isPreempt := areply.Req.GreaterThan(areply.Cur) && areply.CurPhase == stdpaxosproto.PROMISE
+						isPreemptStr := "Preempting"
+						if !isPreempt {
+							isPreemptStr = "Promise"
+						}
+						dlog.AgentPrintfN(r.Id, "Returning Accept Reply (%d) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+							isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+					}
+
 					if resp.IsNegative() {
 						c := make(chan bool, 1)
 						r.messageFilterIn <- &messageFilterComm{
@@ -1625,6 +1777,21 @@ func (r *ELPReplica) handleAccept(accept *stdpaxosproto.Accept) {
 							ret:  c,
 						}
 						if yes := <-c; yes {
+							if resp.GetType() == r.commitRPC {
+								cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
+								dlog.AgentPrintfN(r.Id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+							}
+
+							if resp.GetType() == r.prepareReplyRPC {
+								preply := resp.GetSerialisable().(*stdpaxosproto.PrepareReply)
+								isPreempt := preply.Req.GreaterThan(preply.Cur) && preply.CurPhase == stdpaxosproto.PROMISE
+								isPreemptStr := "Preempting"
+								if !isPreempt {
+									isPreemptStr = "Promise"
+								}
+								dlog.AgentPrintfN(r.Id, "Filtered Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+									isPreemptStr, accept.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+							}
 							return
 						}
 						r.SendMsg(resp.ToWhom(), resp.GetType(), resp)
@@ -1636,24 +1803,31 @@ func (r *ELPReplica) handleAccept(accept *stdpaxosproto.Accept) {
 		}(responseC)
 	}
 
-	accValState := r.proposerCheckAndHandleAcceptedValue(accept.Instance, int32(accept.PropID), accept.Ballot, accept.Command, accept.WhoseCmd) // must go first as acceptor might have already learnt of value
+	accValState := r.proposerCheckAndHandleAcceptedValue(accept.Instance, int32(accept.PropID), accept.Ballot, accept.Command, accept.WhoseCmd)
 	if accValState == CHOSEN {
 		return
 	}
-	r.proposerCheckAndHandlePreempt(accept.Instance, accept.Ballot, stdpaxosproto.ACCEPTANCE)
-
+	if r.proposerCheckAndHandlePreempt(accept.Instance, accept.Ballot, stdpaxosproto.PROMISE) {
+		pCurBal := r.GetPBK(accept.Instance).propCurBal
+		dlog.AgentPrintfN(r.Id, "Accept Received from Replica %d in instance %d at ballot %d.%d Preempted Previous Ballot we had at ballot %d.%d",
+			accept.PropID, accept.Instance, accept.Number, accept.PropID, pCurBal.Number, pCurBal.PropID)
+	}
 }
 
 func (r *ELPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
-	// could modify to have record of all ballots
+	dlog.AgentPrintfN(r.Id, "Received a Accept Reply from Replica %d in instance %d at requested ballot %d.%d and current ballot %d.%d", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID, areply.Cur.Number, areply.Cur.PropID)
 	inst := r.instanceSpace[areply.Instance]
 	pbk := inst.pbk
 	if pbk.status == CLOSED {
+		dlog.AgentPrintfN(r.Id, "Discarding Accept Reply in instance %d at requested ballot %d.%d because it's already chosen", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID)
+
 		dlog.Printf("Already committed ")
 		return
 	}
 
 	if pbk.propCurBal.GreaterThan(areply.Req) {
+		dlog.AgentPrintfN(r.Id, "Accept Reply for instance %d with current ballot %d.%d and requested ballot %d.%d in late, because we are now at ballot %d.%d",
+			areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.Req.Number, areply.Req.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 		return
 	}
 
@@ -1667,11 +1841,16 @@ func (r *ELPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 
 	preempted := areply.Cur.GreaterThan(areply.Req)
 	if preempted {
+		pCurBal := r.GetPBK(areply.Instance).propCurBal
+		dlog.AgentPrintfN(r.Id, "Prepare Reply Received from Replica %d in instance %d at with current ballot %d.%d Preempted Previous Ballot we had at ballot %d.%d",
+			areply.AcceptorId, areply.Instance, areply.Cur.Number, areply.Cur.PropID, pCurBal.Number, pCurBal.PropID)
 		r.proposerCheckAndHandlePreempt(areply.Instance, areply.Cur, areply.CurPhase)
 		return
 	}
 
-	dlog.Printf("Acceptance of instance %d at %d.%d by Acceptor %d received\n", areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId)
+	dlog.AgentPrintfN(r.Id, "Acceptance recorded on instance %d at ballot %d.%d from Replica %d with whose commands %d",
+		areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId, areply.WhoseCmd)
+
 	r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
 
 	// my acceptor has accepted it so now should forward on to rest of acceptors
@@ -1682,16 +1861,24 @@ func (r *ELPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 
 func (r *ELPReplica) requeueClientProposals(instance int32) {
 	inst := r.instanceSpace[instance]
-	dlog.Printf("Requeing client values in instance %d", instance)
+	if _, exists := r.chosenBatches[inst.pbk.clientProposals.getUID()]; exists {
+		return
+	}
 
 	if r.doStats && inst.pbk.clientProposals != nil {
 		r.TimeseriesStats.Update("Requeued Client Values", 1)
 	}
 
-	go func(propose proposalBatch) {
-		r.batchedProps <- propose
-	}(inst.pbk.clientProposals)
-	r.checkAndOpenNewInstances(instance)
+	dlog.AgentPrintfN(r.Id, "Requeueing batch with UID %d in instance %d", inst.pbk.clientProposals.getUID(), instance)
+	if r.maxBatchWait > 0 {
+		go func(propose proposalBatch) {
+			r.batchedProps <- propose
+		}(inst.pbk.clientProposals)
+	} else {
+		//for i := 0; i < len(inst.pbk.clientProposals); i++ {
+		//	r.clientValueQueue.TryRequeue(inst.pbk.clientProposals[i])
+		//}
+	}
 }
 
 type ClientProposalStory int
@@ -1720,20 +1907,21 @@ func (r *ELPReplica) whatHappenedToClientProposals(instance int32) ClientProposa
 func (r *ELPReplica) howManyAttemptsToChoose(inst int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
-	attempts := pbk.proposeValueBal.Number / r.maxBalInc
-	dlog.Printf("Attempts to chose instance %d: %d", inst, attempts)
+
+	attempts := (pbk.proposeValueBal.Number / r.maxBalInc)
+	dlog.AgentPrintfN(r.Id, "Instance %d took %d attempts to be chosen", inst, attempts)
 }
 
 func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
 	instance := r.instanceSpace[inst]
 	pbk := instance.pbk
+	// fixme should not lose
+	if chosenAt.GreaterThan(pbk.propCurBal) && whoseCmd == r.Id && len(chosenVal) != len(pbk.clientProposals.getCmds()) {
+		panic("A greater proposal has been chosen by us and we never made it???")
+	}
 
 	if instance.pbk.status == CLOSED {
 		panic("asldkfjalksdfj")
-	}
-
-	if chosenAt.GreaterThan(pbk.propCurBal) && whoseCmd == r.Id && len(chosenVal) != len(pbk.clientProposals.getCmds()) {
-		panic("A greater proposal has been chosen by us and we never made it???")
 	}
 
 	pbk.status = CLOSED
@@ -1749,10 +1937,6 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 	}
 	r.BackoffManager.ClearBackoff(inst)
 
-	if int32(chosenAt.PropID) == r.Id {
-		r.timeSinceValueLastSelected = time.Now()
-	}
-
 	if chosenAt.Equal(instance.pbk.propCurBal) && r.doStats {
 		r.InstanceStats.RecordComplexStatEnd(stats.InstanceID{0, inst}, "Phase 2", "Success")
 	}
@@ -1764,20 +1948,33 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 	pbk.cmds = chosenVal
 	pbk.whoseCmds = whoseCmd
 
+	//if reflect.DeepEqual(pbk.cmds, pbk.clientProposals.getCmds()) && pbk.whoseCmds != r.Id {
+	if pbk.whoseCmds == r.Id && pbk.clientProposals == nil {
+		panic("client values chosen but we won't recognise that")
+	}
+
+	dlog.AgentPrintfN(r.Id, "Instance %d learnt to chosen at ballot %d.%d with whose commands %d",
+		inst, chosenAt.Number, chosenAt.PropID, whoseCmd)
+	r.howManyAttemptsToChoose(inst)
+	if int32(chosenAt.PropID) == r.Id {
+		r.timeSinceValueLastSelected = time.Now()
+	}
 	switch r.whatHappenedToClientProposals(inst) {
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		dlog.Printf("%d client value(s) proposed in instance %d\n not chosen", len(pbk.clientProposals.getCmds()), inst)
+		dlog.AgentPrintfN(r.Id, "%d client value(s) proposed in instance %d not chosen", len(pbk.clientProposals.getCmds()), inst)
 		r.requeueClientProposals(inst)
 		pbk.clientProposals = nil
 		break
 	case ProposedAndChosen:
 		r.chosenBatches[pbk.clientProposals.getUID()] = struct{}{}
 		r.ProposalManager.ValueChosen()
-		dlog.Printf("%d client value(s) chosen in instance %d\n", len(pbk.clientProposals.getCmds()), inst)
+		dlog.AgentPrintfN(r.Id, "%d client value(s) chosen in instance %d", len(pbk.clientProposals.getCmds()), inst)
 		break
 	}
+
+	r.checkAndOpenNewInstances(inst)
 
 	if r.doStats {
 		balloter := r.ProposalManager.getBalloter()
@@ -1793,8 +1990,6 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 		}
 	}
 
-	r.checkAndOpenNewInstances(inst)
-
 	if pbk.clientProposals != nil && !r.Dreply {
 		// give client the all clear
 		for i := 0; i < len(pbk.cmds); i++ {
@@ -1807,14 +2002,13 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 			r.ReplyProposeTS(propreply, proposals[i].Reply, proposals[i].Mutex)
 		}
 	}
-	//r.howManyAttemptsToChoose(inst)
 
 	if r.Exec {
 		oldExecutedUpTo := r.executedUpTo
 		for i := r.executedUpTo + 1; i <= r.crtInstance; i++ {
 			returnInst := r.instanceSpace[i]
 			if returnInst != nil && returnInst.pbk.status == CLOSED { //&& returnInst.abk.cmds != nil {
-				dlog.Printf("Executing instance %d\n", i)
+				dlog.AgentPrintfN(r.Id, "Executing instance %d with whose commands %d", i, returnInst.pbk.whoseCmds)
 
 				if r.doStats {
 					r.InstanceStats.RecordExecuted(stats.InstanceID{0, i}, time.Now())
@@ -1839,7 +2033,7 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 					}
 				}
 				r.executedUpTo += 1
-				dlog.Printf("Executed up to %d (crtInstance=%d)", r.executedUpTo, r.crtInstance)
+				//dlog.Printf("Executed up to %d (crtInstance=%d)", r.executedUpTo, r.crtInstance)
 			} else {
 				if r.executedUpTo > oldExecutedUpTo {
 					r.recordExecutedUpTo()
