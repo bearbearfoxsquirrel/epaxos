@@ -1430,7 +1430,10 @@ func (r *LWPReplica) tryPropose(inst int32, priorAttempts int) {
 							select {
 							case b := <-r.batchedProps:
 								bat = b
+								dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.getUID(), inst)
+								break
 							case <-t.C:
+								dlog.AgentPrintfN(r.Id, "Noop wait expired for instance %d", inst)
 								break
 							}
 							r.proposableInstances <- ProposalInfo{
