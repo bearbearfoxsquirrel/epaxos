@@ -57,7 +57,7 @@ var maxOInstances = flag.Int("oi", 1, "Max number of open instances in leaderles
 var minBackoff = flag.Int("minbackoff", 5000, "Minimum backoff for a proposing replica that been preempted")
 var maxInitBackoff = flag.Int("maxibackoff", 0, "Maximum initial backoff for a proposing replica that been preempted (default 110% min)")
 var maxBackoff = flag.Int("maxbackoff", 1000000, "Maximum backoff for a proposing replica that been preempted")
-var noopWait = flag.Int("noopwait", 10000, "Wait time in microseconds before proposing no-op")
+var noopWait = flag.Int("noopwait", 0, "Wait time in microseconds before proposing no-op")
 var alwaysNoop *bool = flag.Bool("alwaysnoop", false, "Always submit noops if there is no command awaiting execution?")
 var factor *float64 = flag.Float64("factorbackoff", 0.5, "Factor for backoff")
 var procs *int = flag.Int("p", 2, "GOMAXPROCS. Defaults to 2")
@@ -151,7 +151,7 @@ func main() {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	if *dostdEager || *doBaselineTwoPhase && *logFilename != "" {
+	if (*dostdEager || *doBaselineTwoPhase) && *logFilename != "" {
 		file, _ := os.Create(*statsLoc + fmt.Sprintf("/%s", *logFilename))
 		log.SetOutput(file)
 	}
@@ -392,7 +392,7 @@ func main() {
 			})
 		}
 
-		if *doELP {
+		if *dostdEager {
 			rep := twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
