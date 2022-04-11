@@ -1142,14 +1142,6 @@ func (r *ELPReplica) proposerCheckAndHandlePreempt(inst int32, preemptingBallot 
 	return true
 }
 
-func (r *ELPReplica) howManyExtraCommitsToSend(inst int32) int32 {
-	if r.commitCatchUp {
-		return r.crtInstance - inst
-	} else {
-		return 0
-	}
-}
-
 type ProposerAccValHandler int
 
 const (
@@ -1203,7 +1195,12 @@ func (r *ELPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 
 	if pbk.proposalInfos[accepted].QuorumReached() {
 		dlog.AgentPrintfN(r.Id, "Quorum reached on Acceptance on instance %d at round %d.%d with whose commands %d", inst, accepted.Number, accepted.PropID, whoseCmds)
+		//wg := sync.WaitGroup{}
+		//wg.Add(1)
+		//go func() {
 		r.bcastCommitToAll(inst, accepted, val)
+		//wg.Done()
+		//}()
 		if int32(accepted.PropID) != r.Id {
 			cmt := &stdpaxosproto.Commit{
 				LeaderId:   int32(accepted.PropID),
@@ -1213,8 +1210,8 @@ func (r *ELPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 				MoreToCome: 0,
 				Command:    val,
 			}
-			done := r.Acceptor.RecvCommitRemote(cmt)
-			<-done
+			r.Acceptor.RecvCommitRemote(cmt)
+			//<-done
 		} else {
 			cmt := &stdpaxosproto.CommitShort{
 				LeaderId: int32(accepted.PropID),
@@ -1222,10 +1219,11 @@ func (r *ELPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 				Ballot:   accepted,
 				WhoseCmd: whoseCmds,
 			}
-			done := r.Acceptor.RecvCommitShortRemote(cmt)
-			<-done
+			r.Acceptor.RecvCommitShortRemote(cmt)
+			//<-done
 		}
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmds)
+		//wg.Wait()
 		return CHOSEN
 	} else if newVal {
 		return NEW_VAL
@@ -1601,10 +1599,10 @@ func (r *ELPReplica) propose(inst int32) {
 			}
 
 			dlog.AgentPrintfN(r.Id, "Acceptance by our Acceptor (Replica %d) on instance %d at round %d.%d with whose commands %d", r.Id, acc.Instance, acc.Cur.Number, acc.Cur.PropID, acc.WhoseCmd)
-
 			r.acceptReplyChan <- acc
 		}
 	}(c, acptMsg)
+	r.bcastAccept(inst)
 }
 
 func (r *ELPReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
@@ -1709,6 +1707,7 @@ func (r *ELPReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 			r.acceptReplyChan <- acc
 		}
 	}(c, acptMsg)
+	r.bcastAccept(inst)
 }
 
 func (r *ELPReplica) shouldNoop(inst int32) bool {
@@ -1898,9 +1897,9 @@ func (r *ELPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
 
 	// my acceptor has accepted it so now should forward on to rest of acceptors
-	if int32(areply.Req.PropID) == r.Id && areply.AcceptorId == r.Id {
-		r.bcastAccept(areply.Instance)
-	}
+	//if int32(areply.Req.PropID) == r.Id && areply.AcceptorId == r.Id {
+	//	r.bcastAccept(areply.Instance)
+	//}
 }
 
 func (r *ELPReplica) requeueClientProposals(instance int32) {
@@ -1921,7 +1920,7 @@ func (r *ELPReplica) requeueClientProposals(instance int32) {
 
 	dlog.AgentPrintfN(r.Id, "Requeueing batch with UID %d in instance %d", inst.pbk.clientProposals.getUID(), instance)
 	r.requeued[inst.pbk.clientProposals.getUID()] = struct{}{}
-	delete(r.proposing, inst.pbk.clientProposals.getUID())
+	//delete(r.proposing, inst.pbk.clientProposals.getUID())
 	go func(propose proposalBatch) {
 		r.batchedProps <- propose
 	}(inst.pbk.clientProposals)
@@ -1972,15 +1971,7 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 
 	pbk.status = CLOSED
 	dlog.Printf("Instance %d chosen now\n", inst)
-	if r.doStats && pbk.status != BACKING_OFF && !pbk.propCurBal.IsZero() {
-		if pbk.propCurBal.GreaterThan(chosenAt) {
-			r.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.propCurBal, stats.LOWERPROPOSALCHOSEN)
-		} else if chosenAt.GreaterThan(pbk.propCurBal) {
-			r.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.propCurBal, stats.HIGHERPROPOSALONGOING)
-		} else {
-			r.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.propCurBal, stats.ITWASCHOSEN)
-		}
-	}
+
 	r.BackoffManager.ClearBackoff(inst)
 
 	if chosenAt.Equal(instance.pbk.propCurBal) && r.doStats {
@@ -2005,6 +1996,17 @@ func (r *ELPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 	if int32(chosenAt.PropID) == r.Id {
 		r.timeSinceValueLastSelected = time.Now()
 	}
+
+	if r.doStats && pbk.status != BACKING_OFF && !pbk.propCurBal.IsZero() {
+		if pbk.propCurBal.GreaterThan(chosenAt) {
+			r.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.propCurBal, stats.LOWERPROPOSALCHOSEN)
+		} else if chosenAt.GreaterThan(pbk.propCurBal) {
+			r.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.propCurBal, stats.HIGHERPROPOSALONGOING)
+		} else {
+			r.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.propCurBal, stats.ITWASCHOSEN)
+		}
+	}
+
 	switch r.whatHappenedToClientProposals(inst) {
 	case NotProposed:
 		break
@@ -2116,8 +2118,8 @@ func (r *ELPReplica) handleCommit(commit *stdpaxosproto.Commit) {
 		panic("asdfjsladfkjal;kejf")
 	}
 
-	done := r.Acceptor.RecvCommitRemote(commit)
-	<-done
+	r.Acceptor.RecvCommitRemote(commit)
+	//<-done
 	r.proposerCloseCommit(commit.Instance, commit.Ballot, commit.Command, commit.WhoseCmd)
 }
 
@@ -2130,8 +2132,8 @@ func (r *ELPReplica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 		return
 	}
 
-	done := r.Acceptor.RecvCommitShortRemote(commit)
-	<-done
+	r.Acceptor.RecvCommitShortRemote(commit)
+	//<-done
 
 	if inst.pbk.cmds == nil {
 		panic("We don't have any record of the value to be committed")

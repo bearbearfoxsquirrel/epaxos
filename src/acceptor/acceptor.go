@@ -908,6 +908,10 @@ func (a *betterBatching) checkAndUpdateMaxInstance(inst int32) {
 
 func (a *betterBatching) batchPersister() {
 	timeout := time.NewTimer(a.maxBatchWait)
+	doneLastBatch := make(chan struct{})
+	go func() {
+		doneLastBatch <- struct{}{}
+	}()
 	for {
 		select {
 		case inc := <-a.batcher.commitShorts:
@@ -930,8 +934,8 @@ func (a *betterBatching) batchPersister() {
 			instState.vBal = cmtMsg.Ballot
 
 			instState.whoseCmds = cmtMsg.WhoseCmd
-			recordInstanceMetadata(instState, a.stableStore, a.durable)
-			recordCommands(instState.cmds, a.stableStore, a.durable)
+			//	recordInstanceMetadata(instState, a.stableStore, a.durable)
+			//	recordCommands(instState.cmds, a.stableStore, a.durable)
 			//fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 
 			go func() {
@@ -965,7 +969,10 @@ func (a *betterBatching) batchPersister() {
 			a.checkAndUpdateMaxInstance(inst)
 			instState := a.getInstState(inst)
 			if instState.status == COMMITTED {
-				close(resp)
+				go func() {
+					close(resp)
+
+				}()
 				break
 			}
 
@@ -975,8 +982,8 @@ func (a *betterBatching) batchPersister() {
 			instState.vBal = cmtMsg.Ballot
 			instState.cmds = cmtMsg.Command
 			instState.whoseCmds = cmtMsg.WhoseCmd
-			recordInstanceMetadata(instState, a.stableStore, a.durable)
-			recordCommands(instState.cmds, a.stableStore, a.durable)
+			//	recordInstanceMetadata(instState, a.stableStore, a.durable)
+			//	recordCommands(instState.cmds, a.stableStore, a.durable)
 			//fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 
 			go func() {
@@ -1003,21 +1010,44 @@ func (a *betterBatching) batchPersister() {
 			break
 		case inc := <-a.batcher.promiseRequests:
 			a.recvPromiseRequest(inc)
+			//if int32(inc.incomingMsg.PropID) == a.meID {
+			//	a.doBatch()
+			//	timeout.Reset(a.maxBatchWait)
+			//}
 			break
 		case inc := <-a.batcher.acceptRequests:
 			a.recvAcceptRequest(inc)
 			break
 		case <-timeout.C:
 			// return responses for max and not max
-			for instToResp, awaitingResps := range a.batcher.awaitingResponses {
-				abk := a.batcher.instanceState[instToResp]
-				returnResponsesAndResetAwaitingResponses(instToResp, a.meID, awaitingResps, *abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
-			}
-			a.batcher.awaitingResponses = make(map[int32]*responsesAwaiting, 100)
+			a.doBatch()
 			timeout.Reset(a.maxBatchWait)
 			break
+
+		}
+
+	}
+}
+
+func (a *betterBatching) doBatch() {
+
+	dlog.AgentPrintfN(a.meID, "Acceptor batch starting, now persisting received ballots")
+	for instToResp, _ := range a.batcher.awaitingResponses {
+		abk := a.batcher.instanceState[instToResp]
+		recordInstanceMetadata(abk, a.stableStore, a.durable)
+		if abk.cmds != nil {
+			recordCommands(abk.cmds, a.stableStore, a.durable)
 		}
 	}
+	fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
+
+	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses")
+	for instToResp, awaitingResps := range a.batcher.awaitingResponses {
+		abk := a.batcher.instanceState[instToResp]
+		returnResponsesAndResetAwaitingResponses(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
+	}
+
+	a.batcher.awaitingResponses = make(map[int32]*responsesAwaiting, 100)
 }
 
 func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
@@ -1065,8 +1095,8 @@ func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
 	instState.vBal = accMsg.Ballot
 	instState.cmds = accMsg.Command
 	instState.whoseCmds = accMsg.WhoseCmd
-	recordInstanceMetadata(instState, a.stableStore, a.durable)
-	recordCommands(instState.cmds, a.stableStore, a.durable)
+	//recordInstanceMetadata(instState, a.stableStore, a.durable)
+	//recordCommands(instState.cmds, a.stableStore, a.durable)
 
 	// close any previous awaiting responses and store this current one
 	instAwaitingResps := a.getAwaitingResponses(inst)
@@ -1119,7 +1149,7 @@ func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
 	// store commit
 	instState.status = PREPARED
 	instState.curBal = prepMsg.Ballot
-	recordInstanceMetadata(instState, a.stableStore, a.durable)
+	//recordInstanceMetadata(instState, a.stableStore, a.durable)
 
 	// close any previous awaiting responses and store this current one
 	instAwaitingResps := a.getAwaitingResponses(inst)
@@ -1239,9 +1269,12 @@ func (abk AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
 	return phase
 }
 
-func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingResps *responsesAwaiting, abk AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
+func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingResps *responsesAwaiting, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
 	//go func() {
+
+	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of responses for instance %d", myId, inst)
 	if abk.status == COMMITTED {
+		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)
 		//cmtMsg := &stdpaxosproto.Commit{
 		//	LeaderId:   int32(abk.vBal.PropID),
 		//	Instance:   inst,
@@ -1251,43 +1284,61 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 		//	Command:    abk.cmds,
 		//}
 		//returnCommitsToAwaitingInstanceResponses(awaitingResps, cmtMsg, commitRPC, myId)
+		for _, prepResp := range awaitingResps.propsPrepResps {
+			close(prepResp.retMsgChan)
+		}
+		for _, accResp := range awaitingResps.propsAcceptResps {
+			close(accResp.retMsgChan)
+		}
 		return
 	}
 
 	for pid, prepResp := range awaitingResps.propsPrepResps {
-		prepResp.retMsgChan <- protoResponse{
-			towhom:     giveToWhom(pid),
-			gettype:    func() uint8 { return prepareReplyRPC },
-			isnegative: func() bool { return !abk.curBal.Equal(prepResp.Ballot) },
-			Serializable: &stdpaxosproto.PrepareReply{
-				Instance:   inst,
-				Cur:        abk.curBal,
-				CurPhase:   abk.getPhase(),
-				Req:        prepResp.Ballot,
-				VBal:       abk.vBal,
-				AcceptorId: myId,
-				WhoseCmd:   abk.whoseCmds,
-				Command:    abk.cmds,
-			},
+		dlog.AgentPrintfN(myId, "Acceptor returning Prepare Reply to Replica %d for instance %d at current ballot %d.%d when requested %d.%d", pid,
+			inst, abk.curBal.Number, abk.curBal.PropID, prepResp.Number, prepResp.PropID)
+		prep := &stdpaxosproto.PrepareReply{
+			Instance:   inst,
+			Cur:        abk.curBal,
+			CurPhase:   abk.getPhase(),
+			Req:        prepResp.Ballot,
+			VBal:       abk.vBal,
+			AcceptorId: myId,
+			WhoseCmd:   abk.whoseCmds,
+			Command:    abk.cmds,
 		}
-		close(prepResp.retMsgChan)
+		resp, lpid := prepResp, pid
+		//go func() {
+		resp.retMsgChan <- protoResponse{
+			towhom:       giveToWhom(lpid),
+			gettype:      func() uint8 { return prepareReplyRPC },
+			isnegative:   func() bool { return !prep.Cur.Equal(prep.Req) },
+			Serializable: prep,
+		}
+		close(resp.retMsgChan)
+		//}()
 	}
 
 	for pid, accResp := range awaitingResps.propsAcceptResps {
-		accResp.retMsgChan <- protoResponse{
-			towhom:     giveToWhom(pid),
-			gettype:    func() uint8 { return acceptReplyRPC },
-			isnegative: func() bool { return !abk.curBal.Equal(accResp.Ballot) },
-			Serializable: &stdpaxosproto.AcceptReply{
-				Instance:   inst,
-				AcceptorId: myId,
-				CurPhase:   abk.getPhase(),
-				Cur:        abk.curBal,
-				Req:        accResp.Ballot,
-				WhoseCmd:   abk.whoseCmds,
-			},
+		dlog.AgentPrintfN(myId, "Acceptor returning Accept Reply to Replica %d for instance %d at current ballot %d.%d when requested %d.%d",
+			pid, inst, abk.curBal.Number, abk.curBal.PropID, accResp.Number, accResp.PropID)
+		acc := &stdpaxosproto.AcceptReply{
+			Instance:   inst,
+			AcceptorId: myId,
+			CurPhase:   abk.getPhase(),
+			Cur:        abk.curBal,
+			Req:        accResp.Ballot,
+			WhoseCmd:   abk.whoseCmds,
 		}
-		close(accResp.retMsgChan)
+		resp, lpid := accResp, pid
+		//go func() {
+		resp.retMsgChan <- protoResponse{
+			towhom:       giveToWhom(lpid),
+			gettype:      func() uint8 { return acceptReplyRPC },
+			isnegative:   func() bool { return !acc.Cur.Equal(acc.Req) },
+			Serializable: acc,
+		}
+		close(resp.retMsgChan)
+		//}()
 	}
 
 	//delete(awaitingResps)

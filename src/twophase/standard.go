@@ -598,15 +598,15 @@ func (r *LWPReplica) run() {
 				break
 			case props := <-r.batchedProps: //<-startNewInstanceChan:
 				delete(r.requeued, props.getUID())
-				if _, exists := r.proposing[props.getUID()]; exists {
-					dlog.AgentPrintfN(r.Id, "Batch with UID %d received to start instance with is being proposed already so now throwing out and trying again", props.getUID())
-					break
-				}
+				//if _, exists := r.proposing[props.getUID()]; exists {
+				//	dlog.AgentPrintfN(r.Id, "Batch with UID %d received to start instance with is being proposed already so now throwing out and trying again", props.getUID())
+				//	break
+				//}
 				if _, exists := r.chosenBatches[props.getUID()]; exists {
 					dlog.AgentPrintfN(r.Id, "Batch with UID %d received to start instance with has been chosen so now throwing out", props.getUID())
 					break
 				}
-				r.proposing[props.getUID()] = struct{}{}
+				//r.proposing[props.getUID()] = struct{}{}
 				r.beginNextInstance(props)
 				break
 			case <-c:
@@ -1215,8 +1215,8 @@ func (r *LWPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 				MoreToCome: 0,
 				Command:    val,
 			}
-			done := r.Acceptor.RecvCommitRemote(cmt)
-			<-done
+			r.Acceptor.RecvCommitRemote(cmt)
+			//<-done
 		} else {
 			cmt := &stdpaxosproto.CommitShort{
 				LeaderId: int32(accepted.PropID),
@@ -1224,8 +1224,8 @@ func (r *LWPReplica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, 
 				Ballot:   accepted,
 				WhoseCmd: whoseCmds,
 			}
-			done := r.Acceptor.RecvCommitShortRemote(cmt)
-			<-done
+			r.Acceptor.RecvCommitShortRemote(cmt)
+			//<-done
 		}
 		r.proposerCloseCommit(inst, accepted, pbk.cmds, whoseCmds)
 		return CHOSEN
@@ -1493,6 +1493,7 @@ func (r *LWPReplica) tryPropose(inst int32, priorAttempts int) {
 			r.acceptReplyChan <- acc
 		}
 	}(c, acptMsg)
+	r.bcastAccept(inst)
 }
 
 func (r *LWPReplica) recheckInstanceToPropose(retry ProposalInfo) {
@@ -1683,9 +1684,9 @@ func (r *LWPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	r.proposerCheckAndHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.cmds, areply.WhoseCmd)
 
 	// my acceptor has accepted it so now should forward on to rest of acceptors
-	if int32(areply.Req.PropID) == r.Id && areply.AcceptorId == r.Id {
-		r.bcastAccept(areply.Instance)
-	}
+	//if int32(areply.Req.PropID) == r.Id && areply.AcceptorId == r.Id {
+	//	r.bcastAccept(areply.Instance)
+	//}
 	//elapsed := time.Since(start)
 	//log.Println("Handling accept reply took ", elapsed)
 }
@@ -1708,7 +1709,7 @@ func (r *LWPReplica) requeueClientProposals(instance int32) {
 
 	dlog.AgentPrintfN(r.Id, "Requeueing batch with UID %d in instance %d", inst.pbk.clientProposals.getUID(), instance)
 	r.requeued[inst.pbk.clientProposals.getUID()] = struct{}{}
-	delete(r.proposing, inst.pbk.clientProposals.getUID())
+	//delete(r.proposing, inst.pbk.clientProposals.getUID())
 	go func(propose proposalBatch) {
 		r.batchedProps <- propose
 	}(inst.pbk.clientProposals)
@@ -1881,8 +1882,8 @@ func (r *LWPReplica) handleCommit(commit *stdpaxosproto.Commit) {
 
 	//	r.acceptorCommit(commit.Instance, commit.Ballot, commit.Command)
 	//	r.
-	done := r.Acceptor.RecvCommitRemote(commit)
-	<-done
+	r.Acceptor.RecvCommitRemote(commit)
+	//<-done
 	r.proposerCloseCommit(commit.Instance, commit.Ballot, commit.Command, commit.WhoseCmd)
 }
 
@@ -1895,8 +1896,8 @@ func (r *LWPReplica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 		return
 	}
 
-	done := r.Acceptor.RecvCommitShortRemote(commit)
-	<-done
+	r.Acceptor.RecvCommitShortRemote(commit)
+	//<-done
 
 	if inst.pbk.cmds == nil {
 		panic("We don't have any record of the value to be committed")
