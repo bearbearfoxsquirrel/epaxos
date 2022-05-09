@@ -119,51 +119,18 @@ type SynodTringleGridQuorumSystemConstructor struct {
 	*genericsmr.Replica
 }
 
-//
-//// in this construction excess acceptors are simply discounted
-//func (constructor *SynodTringleGridQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
-//	sqrt := int(math.Ceil(math.Sqrt(float64(len(acc)))))
-//	if sqrt < constructor.F+1 {
-//		panic("Acceptor group is too small to tolerate this number of failures")
-//	}
-//	cols := make([][]int, sqrt)
-//	rows := make([][]int, sqrt)
-//
-//	j := 0
-//	k := 0
-//	colLen := sqrt + 1
-//	for i := 0; i < len(cols); i++ {
-//		j = k + colLen
-//		a := acc[k:j]
-//		k = j
-//		//log.Println(a)
-//		cols[i] = a
-//		colLen--
-//	}
-//
-//	for i := 0; i < len(rows); i++ {
-//		rowLen := i + 1
-//		row := make([]int, rowLen)
-//		for l := 0; l < rowLen; l++ {
-//			row[l] = cols[l][i-l]
-//		}
-//	}
-//
-//	return &GridQuorumSynodQuorumSystem{
-//		cols: cols,
-//		rows: rows,
-//		//all:     acc,
-//		thrifty: constructor.Thrifty,
-//		Replica: constructor.Replica,
-//	}
-//}
-
 type Phase int
 
 const (
 	PROMISE Phase = iota
 	ACCEPTANCE
 )
+
+type SynodQuorum interface {
+	HasAcknowledged(int) bool
+	Reached() bool
+	GetAcks() []int32
+}
 
 type SynodQuorumSystem interface {
 	StartPromiseQuorum()
@@ -180,12 +147,24 @@ type SynodQuorumSystem interface {
 	//	BeConstructed(constructor QuorumSystemConstructor)
 }
 
+//type ToSend interface {
+//	Get() []int
+//}
+//
+//type Broadcaster interface {
+//	Broadcast(toSend ToSend, code uint8, msg fastrpc.Serializable)
+//}
+//
+
+//type
+
 type CountingQuorumSynodQuorumSystem struct {
-	p1size       int
-	p2size       int
-	crtQrm       quorum.CountingQuorumTally
-	thrifty      bool
-	possibleAids []int
+	p1size          int
+	p2size          int
+	crtQrm          quorum.CountingQuorumTally
+	thrifty         bool
+	possibleAids    []int
+	possibleAidsMap map[int]struct{}
 	*genericsmr.Replica
 	Phase
 	bcastAttempts      int
@@ -260,7 +239,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 				if preferredAcceptor != qrmSys.Id {
 					qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
 				}
-				//log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.Id)
+				//log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.id)
 				sentTo = append(sentTo, int(preferredAcceptor))
 				break
 			}

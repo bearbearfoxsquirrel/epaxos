@@ -4,7 +4,7 @@ import (
 	"math/rand"
 )
 
-type InstanceAcceptorMapper interface {
+type InstanceAgentMapper interface {
 	GetGroup(inst int) []int
 }
 
@@ -18,6 +18,21 @@ type InstanceNegativeAcceptorSetMapper struct {
 	Acceptors []int
 	F         int
 	N         int
+}
+
+type InstanceSetMapper struct {
+	Ids []int
+	G   int
+	N   int
+}
+
+func (mapper *InstanceSetMapper) GetGroup(inst int) []int {
+	group := make([]int, mapper.G)
+	rem := make([]int, len(mapper.Ids))
+	copy(rem, mapper.Ids)
+	group = getGroup(inst, mapper.G, mapper.N, rem, group)
+	//log.Println("got group for instance", inst, "group is", group)
+	return group
 }
 
 func (mapper *InstanceNegativeAcceptorSetMapper) GetGroup(inst int) []int {

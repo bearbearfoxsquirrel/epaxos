@@ -128,24 +128,19 @@ var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 5, "Max time in ms th
 var minimalAcceptorNegatives *bool = flag.Bool("minimalaccnegatives", false, "Only the minimal number (at most F+1) of acceptors will respond negatively in each quorum")
 var timeBasedBallots *bool = flag.Bool("timebasedballots", false, "The maximum ballot available to proposers is dictated by the time since they last chose a ballot")
 var sendPreparesAllAcceptors *bool = flag.Bool("sendpreparesallacceptors", false, "if using minimal quorums, send prepares to all acceptors - passive observation")
-
-//var randomisedExpBackoff *bool = flag.Bool("rexpbackoff", false, "Use a randomised exponential backoff")
-
-// todo add in selected fastest qrm
+var minimalProposers *bool = flag.Bool("minimalproposers", false, "When a proposer receives F+1 proposals to greater than theirs they stop proposing to that instance")
+var mappedProposers *bool = flag.Bool("mappedproposers", false, "F+1 proposers are statically mapped to instances")
+var dynamicMappedProposers *bool = flag.Bool("dmappedproposers", false, "Dynamically map proposers to instances - bounded by n and f+1")
 
 func main() {
 	flag.Parse()
 
-	//go func() {
-	//time.Sleep(time.Second)
 	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
-	//}()
 
 	if *maxInitBackoff == 0 {
 		*maxInitBackoff = int(float64(*minBackoff) * 1.2)
 	}
 
-	//runtime.GOMAXPROCS(*procs)
 	//	runtime.mg
 	if *quiet == true {
 		log.SetOutput(ioutil.Discard)
@@ -156,9 +151,9 @@ func main() {
 		log.SetOutput(file)
 	}
 
-	//if *doMencius && *thrifty {
-	//	log.Fatal("incompatble options -m -thrifty")
-	//}
+	if *doMencius && *thrifty {
+		log.Fatal("incompatble options -m -thrifty")
+	}
 
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
@@ -276,7 +271,7 @@ func main() {
 		}
 
 		if *reducedQrmSize {
-			var mapper instanceagentmapper.InstanceAcceptorMapper
+			var mapper instanceagentmapper.InstanceAgentMapper
 			if *gridQrms {
 				mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
 					Acceptors: aids,
@@ -347,15 +342,15 @@ func main() {
 			MaxInc:            10000,
 			DoTimeBasedBallot: *timeBasedBallots,
 		}
-		var initialtor twophase.ProposalManager
-		initialtor = &twophase.NormalQuorumProposalInitiator{
+		var proposerQrms twophase.Quormaliser
+		proposerQrms = &twophase.Standard{
 			SynodQuorumSystemConstructor: qrm,
-			Balloter:                     balloter,
 			Aids:                         aids,
+			MyID:                         int32(replicaId),
 		}
 
 		if *reducedQrmSize {
-			var mapper instanceagentmapper.InstanceAcceptorMapper
+			var mapper instanceagentmapper.InstanceAgentMapper
 			if *gridQrms {
 				mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
 					Acceptors: aids,
@@ -370,11 +365,11 @@ func main() {
 				}
 			}
 
-			initialtor = &twophase.ReducedQuorumProposalInitiator{
+			proposerQrms = &twophase.Minimal{
 				AcceptorMapper:               mapper,
 				SynodQuorumSystemConstructor: qrm,
-				Balloter:                     balloter,
 				MapperCache:                  make(map[int32][]int),
+				MyID:                         int32(replicaId),
 			}
 		}
 
@@ -391,24 +386,25 @@ func main() {
 				N:         len(nodeList),
 			})
 		}
-
+		q := twophase.ChosenUniqueQNew(int32(replicaId), 200)
+		batLnrs := []twophase.MyBatchLearner{&balloter, q.(*twophase.ChosenUniqueQ)}
 		if *dostdEager {
-			rep := twophase.NewBaselineEagerReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+			rep := twophase.NewBaselineEagerReplica(proposerQrms, proposerQrms, proposerQrms, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors)
+				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), proposerQrms, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers)
 			runnable = rep
 			rpc.Register(rep)
 		} else {
-			rep := twophase.NewBaselineTwoPhaseReplica(initialtor, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
+			rep := twophase.NewBaselineTwoPhaseReplica(proposerQrms, proposerQrms, proposerQrms, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance)
 			runnable = rep
 			rpc.Register(rep)
 		}
@@ -430,7 +426,6 @@ func main() {
 	}
 
 	http.Serve(l, nil)
-
 }
 
 func registerWithMaster(masterAddr string) (int, []string, bool) {

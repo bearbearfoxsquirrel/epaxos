@@ -828,7 +828,7 @@ func (r *ELPReplica) tryNextAttempt(next RetryInfo) {
 	}
 
 	if (r.BackoffManager.NoHigherBackoff(next) && inst.pbk.status == BACKING_OFF) || !next.backedoff {
-		//		r.proposerBeginNextConfBal(next.InstToPrep)
+		//		r.proposerBeginNextConfBal(next.inst)
 		r.ProposalManager.beginNewProposal(r, next.InstToPrep, r.crtConfig)
 		nextConfBal := r.instanceSpace[next.InstToPrep].pbk.propCurConfBal
 		r.acceptorPrepareOnConfBal(next.InstToPrep, nextConfBal)
@@ -1847,7 +1847,7 @@ func (r *ELPReplica) handleCommit(commit *lwcproto.Commit) {
 	}
 
 	//if r.ringCommit {
-	//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, commit)
+	//	r.SendMsg((r.id + 1) % int32(r.N), r.commitRPC, commit)
 	//}
 
 	r.acceptorCommit(commit.Instance, commit.ConfigBal, commit.Command)

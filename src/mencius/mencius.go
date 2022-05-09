@@ -339,7 +339,7 @@ func (r *Replica) bcastSkip(startInstance int32, endInstance int32, exceptReplic
 	sk.StartInstance = startInstance
 	sk.EndInstance = endInstance
 	args := &sk
-	//args := &menciusproto.Skip{r.Id, startInstance, endInstance}
+	//args := &menciusproto.Skip{r.id, startInstance, endInstance}
 
 	n := r.N - 1
 	q := r.Id
@@ -469,7 +469,7 @@ func (r *Replica) bcastCommit(instance int32, skip uint8, nbInstToSkip int32, co
 	mc.Skip = skip
 	mc.NbInstancesToSkip = nbInstToSkip
 	//mc.Command = command
-	//args := &menciusproto.Commit{r.Id, instance, skip, nbInstToSkip, command}
+	//args := &menciusproto.Commit{r.id, instance, skip, nbInstToSkip, command}
 	args := &mc
 
 	n := r.N - 1

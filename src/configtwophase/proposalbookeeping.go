@@ -37,7 +37,7 @@ type ProposalManager interface {
 }
 
 type ReducedQuorumProposalInitiator struct {
-	AcceptorMapper instanceagentmapper.InstanceAcceptorMapper
+	AcceptorMapper instanceagentmapper.InstanceAgentMapper
 	quorumsystem.SynodQuorumSystemConstructor
 	Balloter
 }

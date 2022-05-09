@@ -1,7 +1,6 @@
 package twophase
 
 import (
-	"log"
 	"math"
 	"math/rand"
 	"stdpaxosproto"
@@ -33,11 +32,11 @@ func (balloter *Balloter) getNextProposingBal(maxPrevRoundNum int32) stdpaxospro
 			diff = 10000
 		}
 		test := 1.0 - math.Exp(float64(-0.001)*float64(diff)) //int64(math.Pow(math.E, mini-timeDif.Microseconds()))
-		log.Println(test)
+		//log.Println(test)
 		slope := float64(1.0 * (max - mini) / (1 - 0))
 		next = int32(float64(mini) + slope*(test-0))
 		//next = mini + round(slope*(int32(timeDif.Microseconds())-0))
-		log.Println("ballot", next)
+		//log.Println("ballot", next)
 		//max = mini + balloter.MaxInc + int32(timeDif.Microseconds()/10)
 
 	} else {

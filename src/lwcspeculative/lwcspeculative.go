@@ -1143,7 +1143,7 @@ func (r *Replica) getNextProposingConfigBal(instance int32) lwcproto.ConfigBal {
 
 	proposingConfBal := lwcproto.ConfigBal{
 		Config: r.crtConfig,
-		Ballot: lwcproto.Ballot{next - r.Id, int16(r.Id)}, //- int16(r.Id / 2), int16(r.Id)},
+		Ballot: lwcproto.Ballot{next - r.Id, int16(r.Id)}, //- int16(r.id / 2), int16(r.id)},
 	}
 
 	dlog.Printf("For instance", instance, "now incrementing to new conf-bal", proposingConfBal)
@@ -1523,13 +1523,13 @@ func (r *Replica) proposerCheckAndHandleAcceptedValue(inst int32, aid int32, acc
 	if int(pbk.proposalInfos[accepted].quorumCount()) >= r.WriteQuorumSize() {
 
 		//if r.ringCommit {
-		//	pc.LeaderId = r.Id
+		//	pc.LeaderId = r.id
 		//	pc.Instance = inst
 		//	pc.ConfigBal = accepted
 		//	pc.WhoseCmd = r.instanceSpace[inst].pbk.whoseCmds
 		//	pc.MoreToCome = 0
 		//	pc.Command = val
-		//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, &pc )
+		//	r.SendMsg((r.id + 1) % int32(r.N), r.commitRPC, &pc )
 		//} else {
 		if !r.bcastAcceptance {
 			r.bcastCommitToAll(inst, accepted, val)
@@ -1987,7 +1987,7 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt lwcproto.ConfigBal, c
 								dlog.Printf("Recovering instance %d \n", k)
 								r.retryInstance <- RetryInfo{
 									backedoff:        false,
-									InstToPrep:       k,
+									inst:       k,
 									attemptedConfBal: r.instanceSpace[k].pbk.propCurConfBal,
 									preempterConfBal: lwcproto.ConfigBal{-1, lwcproto.Ballot{-1, -1}},
 									preempterAt:      0,
@@ -2052,7 +2052,7 @@ func (r *Replica) handleCommit(commit *lwcproto.Commit) {
 	}
 
 	//if r.ringCommit {
-	//	r.SendMsg((r.Id + 1) % int32(r.N), r.commitRPC, commit)
+	//	r.SendMsg((r.id + 1) % int32(r.N), r.commitRPC, commit)
 	//}
 
 	r.acceptorCommit(commit.Instance, commit.ConfigBal, commit.Command)

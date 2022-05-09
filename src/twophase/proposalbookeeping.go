@@ -1,139 +1,57 @@
 package twophase
 
 import (
-	"dlog"
-	"instanceagentmapper"
+	"batching"
 	"quorumsystem"
 	"state"
 	"stdpaxosproto"
-	"time"
 )
 
 type ProposingBookkeeping struct {
-	status        ProposerStatus
-	proposalInfos map[stdpaxosproto.Ballot]quorumsystem.SynodQuorumSystem
-	//proposalInfos      map[stdpaxosproto.Ballot]*QuorumInfo
+	status          ProposerStatus
+	qrms            map[stdpaxosproto.Ballot]quorumsystem.SynodQuorumSystem
 	proposeValueBal stdpaxosproto.Ballot // highest proposeValueBal at which a command was accepted
 	whoseCmds       int32
 	cmds            []*state.Command     // the accepted command
 	propCurBal      stdpaxosproto.Ballot // highest this replica proposeValueBal tried so far
-	clientProposals proposalBatch
+	clientProposals batching.ProposalBatch
 	maxKnownBal     stdpaxosproto.Ballot
 }
 
-type ProposalManager interface {
-	StartNewProposal(replica ConfigRoundProposable, inst int32)
-	trackProposalAcceptance(replica ConfigRoundProposable, inst int32, bal stdpaxosproto.Ballot)
-	getBalloter() Balloter
-	IsInQrm(inst int32, aid int32) bool
-	ValueChosen()
-	//Close(inst int32)
+func (pbk *ProposingBookkeeping) popBatch() batching.ProposalBatch {
+	b := pbk.clientProposals
+	pbk.clientProposals = nil
+	return b
 }
 
-type ReducedQuorumProposalInitiator struct {
-	AcceptorMapper instanceagentmapper.InstanceAcceptorMapper
-	MapperCache    map[int32][]int
-	quorumsystem.SynodQuorumSystemConstructor
-	Balloter
+func (pbk *ProposingBookkeeping) putBatch(bat batching.ProposalBatch) {
+	pbk.clientProposals = bat
 }
 
-type NormalQuorumProposalInitiator struct {
-	quorumsystem.SynodQuorumSystemConstructor
-	Balloter
-	Aids []int
+func (pbk *ProposingBookkeeping) getBatch() batching.ProposalBatch {
+	return pbk.clientProposals
 }
 
-func beginPreparingBallot(pbk *ProposingBookkeeping, balloter Balloter) {
-	pbk.status = PREPARING
-	nextBal := balloter.getNextProposingBal(pbk.maxKnownBal.Number)
-	nextBallot := nextBal
-	pbk.propCurBal = nextBallot
-	pbk.maxKnownBal = nextBal
-}
-
-type ConfigRoundProposable interface {
-	GetPBK(inst int32) *ProposingBookkeeping
-}
-
-//
-//func (r *ELPReplica) GetPBK(inst int32) *ProposingBookkeeping {
-//	return r.instanceSpace[inst].pbk
-//}
-
-func (proposalConstructor *NormalQuorumProposalInitiator) ValueChosen() {
-	proposalConstructor.timeSinceValueLastSelected = time.Now()
-}
-
-func (proposalConstructor *NormalQuorumProposalInitiator) IsInQrm(inst int32, aid int32) bool {
-	return true
-}
-
-func (proposalConstructor *NormalQuorumProposalInitiator) StartNewProposal(r ConfigRoundProposable, inst int32) {
-	pbk := r.GetPBK(inst)
-	beginPreparingBallot(pbk, proposalConstructor.Balloter)
-	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(proposalConstructor.Aids)
-	pbk.proposalInfos[pbk.propCurBal] = quorumaliser
-	pbk.proposalInfos[pbk.propCurBal].StartPromiseQuorum()
-}
-
-func (proposalConstructor *NormalQuorumProposalInitiator) trackProposalAcceptance(r ConfigRoundProposable, inst int32, bal stdpaxosproto.Ballot) {
-	pbk := r.GetPBK(inst)
-	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(proposalConstructor.Aids)
-	pbk.proposalInfos[bal] = quorumaliser
-	quorumaliser.StartAcceptanceQuorum()
-}
-
-func (proposalConstructor *NormalQuorumProposalInitiator) getBalloter() Balloter {
-	return proposalConstructor.Balloter
-}
-
-func (proposalConstructor *ReducedQuorumProposalInitiator) StartNewProposal(r ConfigRoundProposable, inst int32) {
-	pbk := r.GetPBK(inst)
-	beginPreparingBallot(pbk, proposalConstructor.Balloter)
-	//make quorum
-	if _, exists := proposalConstructor.MapperCache[inst]; !exists {
-		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
+func getEmptyInstance() *ProposingBookkeeping {
+	return &ProposingBookkeeping{
+		status:          NOT_BEGUN,
+		qrms:            make(map[stdpaxosproto.Ballot]quorumsystem.SynodQuorumSystem),
+		proposeValueBal: stdpaxosproto.Ballot{Number: -1, PropID: -1},
+		whoseCmds:       -1,
+		cmds:            nil,
+		propCurBal:      stdpaxosproto.Ballot{Number: -1, PropID: -1},
+		clientProposals: nil,
+		maxKnownBal:     stdpaxosproto.Ballot{Number: -1, PropID: -1},
 	}
-	group := proposalConstructor.MapperCache[inst]
-	dlog.AgentPrintfN(proposalConstructor.PropID, "Minimal acceptor group for instance %d is %v", inst, group)
-	//log.Println("group for instance", inst, ":", group)
-	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
-	pbk.proposalInfos[pbk.propCurBal] = quorumaliser
-	pbk.proposalInfos[pbk.propCurBal].StartPromiseQuorum()
 }
 
-func (proposalConstructor *ReducedQuorumProposalInitiator) trackProposalAcceptance(r ConfigRoundProposable, inst int32, bal stdpaxosproto.Ballot) {
-	pbk := r.GetPBK(inst)
-	//make quorum
-	if _, exists := proposalConstructor.MapperCache[inst]; !exists {
-		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
-	}
-	group := proposalConstructor.MapperCache[inst]
-	dlog.AgentPrintfN(proposalConstructor.PropID, "Minimal acceptor group for instance %d is %v", inst, group)
-
-	quorumaliser := proposalConstructor.SynodQuorumSystemConstructor.Construct(group)
-	pbk.proposalInfos[bal] = quorumaliser
-	quorumaliser.StartAcceptanceQuorum()
+func (pbk *ProposingBookkeeping) setNowProposing() {
+	pbk.status = PROPOSING
+	pbk.proposeValueBal = pbk.propCurBal
 }
 
-func (proposalConstructor *ReducedQuorumProposalInitiator) getBalloter() Balloter {
-	return proposalConstructor.Balloter
-}
-
-func (proposalConstructor *ReducedQuorumProposalInitiator) IsInQrm(inst int32, aid int32) bool {
-	if _, exists := proposalConstructor.MapperCache[inst]; !exists {
-		proposalConstructor.MapperCache[inst] = proposalConstructor.AcceptorMapper.GetGroup(int(inst))
-	}
-
-	for _, aidInQrm := range proposalConstructor.MapperCache[inst] {
-		if int(aid) == aidInQrm {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (proposalConstructor *ReducedQuorumProposalInitiator) ValueChosen() {
-	proposalConstructor.timeSinceValueLastSelected = time.Now()
+func (pbk *ProposingBookkeeping) setProposal(whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
+	pbk.whoseCmds = whoseCmds
+	pbk.proposeValueBal = bal
+	pbk.cmds = val
 }

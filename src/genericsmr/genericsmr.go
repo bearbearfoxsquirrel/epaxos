@@ -5,7 +5,6 @@ import (
 	"dlog"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fastrpc"
 	"fmt"
 	"genericsmrproto"
@@ -15,7 +14,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"reflect"
 	"sort"
 	"state"
 	"sync"
@@ -80,7 +78,7 @@ type Replica struct {
 
 	rpcTable   map[uint8]*RPCPair
 	maxRpcCode uint8
-	rpcCodes   map[reflect.Type]uint8
+	//	rpcCodes   map[reflect.Type]uint8
 
 	Ewma                    []float64
 	ReplicasLatenciesOrders []int32
@@ -103,14 +101,6 @@ func (r *Replica) Ping(args *genericsmrproto.PingArgs, reply *genericsmrproto.Pi
 
 func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *genericsmrproto.BeTheLeaderReply) error {
 	return nil
-}
-
-func (r *Replica) GetRPCode(serializable fastrpc.Serializable) (uint8, error) {
-	if c, exists := r.rpcCodes[reflect.TypeOf(serializable)]; exists {
-		return c, nil
-	} else {
-		return 0, errors.New("No rpc code found for serializable")
-	}
 }
 
 /* Utils */
@@ -269,7 +259,6 @@ func (r *Replica) WaitForClientConnections() {
 		//	numClis++
 		//	r.Clients =
 		go r.clientListener(conn)
-
 	}
 }
 
@@ -343,7 +332,7 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 /*
 func (r *Replica) recover(rid int) {
 	r.Alive[rid] = false
-	if rid < int(r.Id) {
+	if rid < int(r.id) {
 		for connected := false; !connected; {
 			connected = r.connectToPeer(rid)
 		}
@@ -427,7 +416,7 @@ func (r *Replica) RegisterRPC(msgObj fastrpc.Serializable, notify chan fastrpc.S
 	code := r.maxRpcCode
 	r.maxRpcCode++
 	r.rpcTable[code] = &RPCPair{msgObj, notify}
-	r.rpcCodes[reflect.TypeOf(msgObj)] = code
+	//r.rpcCodes[reflect.TypeOf(msgObj)] = code
 	dlog.Println("registering RPC ", r.maxRpcCode)
 	//	r.Mutex.Unlock()
 	return code
@@ -592,7 +581,6 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		make([]int32, len(peerAddrList)),
 		make(map[uint8]*RPCPair),
 		genericsmrproto.GENERIC_SMR_BEACON_REPLY + 1,
-		make(map[reflect.Type]uint8),
 		make([]float64, len(peerAddrList)),
 		make([]int32, len(peerAddrList)),
 		sync.Mutex{},
@@ -608,7 +596,7 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	var err error
 	r.StableStorage, err =
 		os.Create(fmt.Sprintf("%vstable-store-replica%d", storage, r.Id))
-	//		os.OpenFile(fmt.Sprintf("%v/stable-store-replica%d", storage, r.Id), os.O_RDWR|os.O_CREATE, 0755)
+	//		os.OpenFile(fmt.Sprintf("%v/stable-store-replica%d", storage, r.id), os.O_RDWR|os.O_CREATE, 0755)
 
 	if err != nil {
 		log.Fatal(err)
@@ -638,7 +626,7 @@ func (r *Replica) UpdatePreferredPeerOrder(quorum []int32) {
 			aux := make([]int32, r.N)
 			i := 0
 			for _, p := range quorum {
-				if p == r.Id {
+				if p == r.id {
 					continue
 				}
 				aux[i] = p
@@ -728,7 +716,7 @@ func (r *Replica) RandomisePeerOrder() {
 
 	for j := 0; j < npings; j++ {
 		for i := int32(0); i < int32(r.N); i++ {
-			if i == r.Id {
+			if i == r.id {
 				continue
 			}
 			r.Mutex.Lock()

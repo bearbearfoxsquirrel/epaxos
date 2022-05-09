@@ -19,15 +19,15 @@ func (NoFilter) ShouldFilterMessage(aid int32, inst int32) bool {
 	return false
 }
 
-func MinimalAcceptorFilterNew(minimalAcceptor instanceagentmapper.InstanceAcceptorMapper) AcceptorMessageFilter {
+func MinimalAcceptorFilterNew(minimalAcceptor instanceagentmapper.InstanceAgentMapper) AcceptorMessageFilter {
 	return &MinimalAcceptorFilter{
-		InstanceAcceptorMapper: minimalAcceptor,
-		minimalGroups:          make(map[int32][]int),
+		InstanceAgentMapper: minimalAcceptor,
+		minimalGroups:       make(map[int32][]int),
 	}
 }
 
 type MinimalAcceptorFilter struct {
-	instanceagentmapper.InstanceAcceptorMapper
+	instanceagentmapper.InstanceAgentMapper
 	minimalGroups map[int32][]int
 }
 
@@ -45,7 +45,7 @@ func (m *MinimalAcceptorFilter) ShouldFilterMessage(aid int32, inst int32) bool 
 }
 
 type MinimalAcceptorQuorumMinimalAcceptorFilter struct {
-	instanceAcceptorGroupMapper instanceagentmapper.InstanceAcceptorMapper
+	instanceAcceptorGroupMapper instanceagentmapper.InstanceAgentMapper
 	minimalGroups               map[int32][]int
 	f                           int32
 }

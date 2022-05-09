@@ -182,7 +182,7 @@ package stdpaxosglobalspec
 //
 //type RetryInfo struct {
 //	backedoff        bool
-//	InstToPrep       int32
+//	inst       int32
 //	attemptedConfBal stdpaxosproto.Ballot
 //	preempterConfBal stdpaxosproto.Ballot
 //	preempterAt      QuorumType
@@ -284,7 +284,7 @@ package stdpaxosglobalspec
 //	dlog.Printf("Beginning backoff of %d us for instance %d on conf-curBal %d.%d (attempt %d)", next, inst, attemptedConfBal.Number, attemptedConfBal.PropID, preemptNum)
 //	bm.currentBackoffs[inst] = RetryInfo{
 //		backedoff:        true,
-//		InstToPrep:       inst,
+//		inst:       inst,
 //		attemptedConfBal: attemptedConfBal,
 //		preempterConfBal: preempter,
 //		preempterAt:      prempterPhase,
@@ -298,7 +298,7 @@ package stdpaxosglobalspec
 //		<-timer.C
 //		*bm.sig <- RetryInfo{
 //			backedoff:        true,
-//			InstToPrep:       instance,
+//			inst:       instance,
 //			attemptedConfBal: attempted,
 //			preempterConfBal: preempterConfBal,
 //			preempterAt:      preempterP,
@@ -309,14 +309,14 @@ package stdpaxosglobalspec
 //}
 //
 //func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
-//	curBackoff, exists := bm.currentBackoffs[backoff.InstToPrep]
+//	curBackoff, exists := bm.currentBackoffs[backoff.inst]
 //
 //	if !exists {
 //		dlog.Printf("backoff has no record")
 //		return false
 //	} else {
 //		stillRelevant := backoff == curBackoff //should update so that inst also has curBal backed off
-//		dlog.Println("Backoff of instance ", backoff.InstToPrep, "is relevant? ", stillRelevant)
+//		dlog.Println("Backoff of instance ", backoff.inst, "is relevant? ", stillRelevant)
 //		return stillRelevant
 //	}
 //}
@@ -492,7 +492,7 @@ package stdpaxosglobalspec
 //func (r *Replica) sendNextRecoveryRequestBatch() {
 //	// assumes r.nextRecoveryBatchPoint is initialised correctly
 //	for i := int32(0); i < int32(r.N); i++ {
-//		if i == r.Id {
+//		if i == r.id {
 //			continue
 //		}
 //		dlog.Printf("Sending next batch for recovery from %d to %d to acceptor %d", r.nextRecoveryBatchPoint, r.nextRecoveryBatchPoint+r.catchUpBatchSize, i)
@@ -523,7 +523,7 @@ package stdpaxosglobalspec
 //func (r *Replica) checkAndHandleCatchUpResponse(commit *stdpaxosproto.Commit) {
 //	if r.catchingUp {
 //		//dlog.Printf("got catch up for %d", commit.Instance)
-//		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.Id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
+//		if r.crtInstance-r.executedUpTo <= r.maxOpenInstances && int32(r.instanceSpace[r.executedUpTo].abk.curBal.PropID) == r.id && r.executedUpTo > r.recoveringFrom { //r.crtInstance - r.executedUpTo <= r.maxOpenInstances {
 //			r.catchingUp = false
 //			dlog.Printf("Caught up with consensus group")
 //			//reset client connections so that we can begin benchmarking again
@@ -560,7 +560,7 @@ package stdpaxosglobalspec
 //	}
 //
 //	doner := make(chan struct{})
-//	if r.Id == r.whoCrash {
+//	if r.id == r.whoCrash {
 //		go func() {
 //			t := time.NewTimer(r.whenCrash)
 //			<-t.C
@@ -662,7 +662,7 @@ package stdpaxosglobalspec
 //	if pbk.curBal.Equal(proposalInfo.proposingConfBal) && pbk.status == READY_TO_PROPOSE {
 //		whoseCmds := int32(-1)
 //		if pbk.maxAcceptedConfBal.IsZero() {
-//			whoseCmds = r.Id
+//			whoseCmds = r.id
 //			switch cliProp := r.clientValueQueue.TryDequeue(); {
 //			case cliProp != nil:
 //				numEnqueued := r.clientValueQueue.Len() + 1
@@ -697,11 +697,11 @@ package stdpaxosglobalspec
 //		// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
 //		if r.fastLearn {
 //			r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.curBal, pbk.cmds)
-//			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+//			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.id, pbk.curBal, pbk.cmds, whoseCmds)
 //
 //			r.bcastAccept(proposalInfo.inst)
 //		} else {
-//			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+//			r.proposerCheckAndHandleAcceptedValue(proposalInfo.inst, r.id, pbk.curBal, pbk.cmds, whoseCmds)
 //
 //			r.bcastAccept(proposalInfo.inst)
 //			r.acceptorAcceptOnConfBal(proposalInfo.inst, pbk.curBal, pbk.cmds)
@@ -710,22 +710,22 @@ package stdpaxosglobalspec
 //}
 //
 //func (r *Replica) tryNextAttempt(next RetryInfo) {
-//	inst := r.instanceSpace[next.InstToPrep]
+//	inst := r.instanceSpace[next.inst]
 //	if !next.backedoff {
 //		if inst == nil {
-//			r.instanceSpace[next.InstToPrep] = r.makeEmptyInstance()
-//			inst = r.instanceSpace[next.InstToPrep]
+//			r.instanceSpace[next.inst] = r.makeEmptyInstance()
+//			inst = r.instanceSpace[next.inst]
 //		}
 //	}
 //
 //	if (r.BackoffManager.StillRelevant(next) && inst.pbk.status == BACKING_OFF) || !next.backedoff {
-//		r.proposerBeginNextConfBal(next.InstToPrep)
-//		nextConfBal := r.instanceSpace[next.InstToPrep].pbk.curBal
-//		r.acceptorPrepareOnConfBal(next.InstToPrep, nextConfBal)
-//		r.bcastPrepare(next.InstToPrep)
-//		dlog.Printf("Proposing next conf-curBal %d.%d to instance %d\n", nextConfBal.Number, nextConfBal.PropID, next.InstToPrep)
+//		r.proposerBeginNextConfBal(next.inst)
+//		nextConfBal := r.instanceSpace[next.inst].pbk.curBal
+//		r.acceptorPrepareOnConfBal(next.inst, nextConfBal)
+//		r.bcastPrepare(next.inst)
+//		dlog.Printf("Proposing next conf-curBal %d.%d to instance %d\n", nextConfBal.Number, nextConfBal.PropID, next.inst)
 //	} else {
-//		dlog.Printf("Skipping retry of instance %d preempted at curBal %d.%d preempted %d times due to preempted again or closed\n", next.InstToPrep, next.attemptedConfBal.Number, next.attemptedConfBal.PropID, next.timesPreempted)
+//		dlog.Printf("Skipping retry of instance %d preempted at curBal %d.%d preempted %d times due to preempted again or closed\n", next.inst, next.attemptedConfBal.Number, next.attemptedConfBal.PropID, next.timesPreempted)
 //	}
 //}
 //
@@ -735,7 +735,7 @@ package stdpaxosglobalspec
 //			dlog.Println("Prepare bcast failed:", err)
 //		}
 //	}()
-//	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.curBal}
+//	args := &stdpaxosproto.Prepare{r.id, instance, r.instanceSpace[instance].pbk.curBal}
 //	dlog.Printf("send prepare to %d\n", to)
 //	r.SendMsg(to, r.prepareRPC, args)
 //	whoSent := []int32{0}
@@ -749,7 +749,7 @@ package stdpaxosglobalspec
 //		}
 //	}()
 //
-//	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.curBal}
+//	args := &stdpaxosproto.Prepare{r.id, instance, r.instanceSpace[instance].pbk.curBal}
 //	n := r.N - 1
 //	r.RandomisePeerOrder()
 //	sent := 0
@@ -773,7 +773,7 @@ package stdpaxosglobalspec
 //		}
 //	}()
 //
-//	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].pbk.curBal}
+//	args := &stdpaxosproto.Prepare{r.id, instance, r.instanceSpace[instance].pbk.curBal}
 //
 //	n := r.N - 1
 //
@@ -823,7 +823,7 @@ package stdpaxosglobalspec
 //		}
 //	}()
 //
-//	pa.LeaderId = r.Id
+//	pa.LeaderId = r.id
 //	pa.Instance = instance
 //	pa.Ballot = r.instanceSpace[instance].pbk.curBal
 //	pa.Command = r.instanceSpace[instance].pbk.cmds
@@ -861,7 +861,7 @@ package stdpaxosglobalspec
 //		}
 //	}()
 //
-//	pa.LeaderId = r.Id
+//	pa.LeaderId = r.id
 //	pa.Instance = instance
 //	pa.Ballot = r.instanceSpace[instance].pbk.curBal
 //	pa.Command = r.instanceSpace[instance].pbk.cmds
@@ -901,14 +901,14 @@ package stdpaxosglobalspec
 //			dlog.Println("commit bcast failed:", err)
 //		}
 //	}()
-//	pc.LeaderId = r.Id
+//	pc.LeaderId = r.id
 //	pc.Instance = instance
 //	pc.Ballot = confBal
 //	pc.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
 //	pc.MoreToCome = 0
 //	pc.Command = command
 //
-//	pcs.LeaderId = r.Id
+//	pcs.LeaderId = r.id
 //	pcs.Instance = instance
 //	pcs.Ballot = confBal
 //	pcs.WhoseCmd = r.instanceSpace[instance].pbk.whoseCmds
@@ -957,11 +957,11 @@ package stdpaxosglobalspec
 //		panic("Trying outdated conf-curBal?")
 //	}*/
 //
-//	//if (instance % int32(r.N)) == r.Id {
+//	//if (instance % int32(r.N)) == r.id {
 //	//		next += max
 //	//	}
 //
-//	proposingConfBal := stdpaxosproto.Ballot{next - r.Id, int16(r.Id)}
+//	proposingConfBal := stdpaxosproto.Ballot{next - r.id, int16(r.id)}
 //
 //	dlog.Printf("For instance", instance, "now incrementing to new conf-curBal", proposingConfBal)
 //	return proposingConfBal
@@ -1131,7 +1131,7 @@ package stdpaxosglobalspec
 //		Instance:   prepare.Instance,
 //		Cur:        newBallot,
 //		VBal:       inst.abk.vConfBal,
-//		AcceptorId: r.Id,
+//		AcceptorId: r.id,
 //		WhoseCmd:   inst.pbk.whoseCmds,
 //		Command:    inst.abk.cmds,
 //	}
@@ -1140,13 +1140,13 @@ package stdpaxosglobalspec
 //}
 //
 //func (r *Replica) checkAndHandleOldPreempted(new stdpaxosproto.Ballot, old stdpaxosproto.Ballot, accepted stdpaxosproto.Ballot, acceptedVal []state.Command, inst int32) {
-//	if new.PropID != old.PropID && int32(new.PropID) != r.Id && old.PropID != -1 && new.GreaterThan(old) {
+//	if new.PropID != old.PropID && int32(new.PropID) != r.id && old.PropID != -1 && new.GreaterThan(old) {
 //		preemptOldPropMsg := &stdpaxosproto.PrepareReply{
 //			Instance:   inst,
 //			Cur:        new,
 //			VBal:       accepted,
 //			WhoseCmd:   r.instanceSpace[inst].pbk.whoseCmds,
-//			AcceptorId: r.Id,
+//			AcceptorId: r.id,
 //			Command:    acceptedVal,
 //		}
 //		r.replyPrepare(int32(new.PropID), preemptOldPropMsg)
@@ -1251,7 +1251,7 @@ package stdpaxosglobalspec
 //			Cur:        preply.Cur,
 //			VBal:       inst.abk.vConfBal,
 //			WhoseCmd:   pbk.whoseCmds,
-//			AcceptorId: r.Id,
+//			AcceptorId: r.id,
 //			Command:    inst.abk.cmds,
 //		}
 //		r.SendMsg(int32(preply.Cur.PropID), r.prepareReplyRPC, &myReply)
@@ -1277,7 +1277,7 @@ package stdpaxosglobalspec
 //
 //	whoseCmds := int32(-1)
 //	if pbk.maxAcceptedConfBal.IsZero() {
-//		whoseCmds = r.Id
+//		whoseCmds = r.id
 //		if r.initalProposalWait > 0 {
 //			time.Sleep(r.initalProposalWait)
 //		}
@@ -1326,12 +1326,12 @@ package stdpaxosglobalspec
 //	pbk.status = PROPOSING
 //	// if we reorder bcast and recording - the acknowledger of the request of acceptance can count a qrm of 2 and quick learn
 //	if r.fastLearn {
-//		r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+//		r.proposerCheckAndHandleAcceptedValue(inst, r.id, pbk.curBal, pbk.cmds, whoseCmds)
 //		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
 //
 //		r.bcastAccept(inst)
 //	} else {
-//		r.proposerCheckAndHandleAcceptedValue(inst, r.Id, pbk.curBal, pbk.cmds, whoseCmds)
+//		r.proposerCheckAndHandleAcceptedValue(inst, r.id, pbk.curBal, pbk.cmds, whoseCmds)
 //
 //		r.bcastAccept(inst)
 //		r.acceptorAcceptOnConfBal(inst, pbk.curBal, pbk.cmds)
@@ -1364,7 +1364,7 @@ package stdpaxosglobalspec
 //		if r.fastLearn {
 //			r.proposerCheckAndHandleAcceptedValue(accept.Instance, int32(accept.PropID), accept.Ballot, accept.Command, accept.WhoseCmd) // must go first as acceptor might have already learnt of value
 //		}
-//		accValState := r.proposerCheckAndHandleAcceptedValue(accept.Instance, r.Id, accept.Ballot, accept.Command, accept.WhoseCmd)
+//		accValState := r.proposerCheckAndHandleAcceptedValue(accept.Instance, r.id, accept.Ballot, accept.Command, accept.WhoseCmd)
 //		if accValState == CHOSEN {
 //			return
 //		}
@@ -1378,7 +1378,7 @@ package stdpaxosglobalspec
 //
 //	replyConfBal := inst.abk.curBal
 //
-//	areply := &stdpaxosproto.AcceptReply{accept.Instance, r.Id, replyConfBal, accept.Ballot, 0, inst.pbk.whoseCmds}
+//	areply := &stdpaxosproto.AcceptReply{accept.Instance, r.id, replyConfBal, accept.Ballot, 0, inst.pbk.whoseCmds}
 //	r.replyAccept(accept.LeaderId, areply)
 //}
 //
@@ -1445,10 +1445,10 @@ package stdpaxosglobalspec
 //func (r *Replica) whatHappenedToClientProposals(instance int32) ClientProposalStory {
 //	inst := r.instanceSpace[instance]
 //	pbk := inst.pbk
-//	if pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
+//	if pbk.whoseCmds != r.id && pbk.clientProposals != nil {
 //		//dlog.Printf("not chosen but proposed")
 //		return ProposedButNotChosen
-//	} else if pbk.whoseCmds == r.Id {
+//	} else if pbk.whoseCmds == r.id {
 //		//dlog.Printf("chosen proposal")
 //		return ProposedAndChosen
 //	} else {
@@ -1548,7 +1548,7 @@ package stdpaxosglobalspec
 //								dlog.Printf("Recovering instance %d \n", k)
 //								r.retryInstance <- RetryInfo{
 //									backedoff:        false,
-//									InstToPrep:       k,
+//									inst:       k,
 //									attemptedConfBal: r.instanceSpace[k].pbk.curBal,
 //									preempterConfBal: stdpaxosproto.Ballot{-1, stdpaxosproto.Ballot{-1, -1}},
 //									preempterAt:      0,

@@ -1005,13 +1005,13 @@ func (r *Replica) getNextProposingConfigBal(instance int32) lwcproto.ConfigBal {
 
 	next := int32(math.Floor(rand.Float64()*float64(max-min+1) + float64(min)))
 
-	//if (instance % int32(r.N)) == r.Id {
+	//if (instance % int32(r.N)) == r.id {
 	//		next += max
 	//	}
 
 	proposingConfBal := lwcproto.ConfigBal{
 		Config: r.crtConfig,
-		Ballot: lwcproto.Ballot{next - r.Id, int16(r.Id)}, //- int16(r.Id / 2), int16(r.Id)},
+		Ballot: lwcproto.Ballot{next - r.Id, int16(r.Id)}, //- int16(r.id / 2), int16(r.id)},
 	}
 
 	dlog.Printf("For instance", instance, "now incrementing to new conf-bal", proposingConfBal)

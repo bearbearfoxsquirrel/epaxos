@@ -310,7 +310,7 @@ func (r *Replica) BatchingEnabled() bool {
 ************************************/
 func (r Replica) replicaLoop() {
 	/*	doner := make(chan struct{})
-		if r.Id == 1 {
+		if r.id == 1 {
 			go func() {
 				t := time.NewTimer(60 * time.Second)
 				<-t.C
@@ -571,10 +571,10 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	if len(order) < r.SlowQuorumSize() {
 		r.SendToGroup(order, r.prepareRPC, args)
 		//n := r.N - 1
-		//q := r.Id
+		//q := r.id
 		//for sent := 0; sent < n; {
 		//	q = (q + 1) % int32(r.N)
-		//	if q == r.Id {
+		//	if q == r.id {
 		//		dlog.Printf("Not enough replicas alive! %v", r.Alive)
 		//		break
 		//	}
@@ -656,7 +656,7 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 	peers := r.GetAliveRandomPeerOrder()
 	r.SendToGroup(peers, r.tryPreAcceptRPC, tpa)
 	//for q := int32(0); q < int32(r.N); q++ {
-	//	if q == r.Id {
+	//	if q == r.id {
 	//		continue
 	//	}
 	////	if !r.Alive[q] {
