@@ -23,6 +23,7 @@ type LearnerQuorumaliser interface {
 
 type AcceptorQrmInfo interface {
 	IsInQrm(inst int32, aid int32) bool
+	GetQrm(inst int32) []int
 }
 
 ////////////////////////////////
@@ -48,6 +49,10 @@ func (qrmliser *Standard) trackProposalAcceptance(pbk *ProposingBookkeeping, ins
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(qrmliser.Aids)
 	pbk.qrms[bal] = quorumaliser
 	quorumaliser.StartAcceptanceQuorum()
+}
+
+func (qrmliser *Standard) GetQrm(inst int32) []int {
+	return qrmliser.Aids
 }
 
 //////////////////////////////////
@@ -98,4 +103,11 @@ func (qrmliser *Minimal) IsInQrm(inst int32, aid int32) bool {
 	}
 
 	return false
+}
+
+func (qrmliser *Minimal) GetQrm(inst int32) []int {
+	if _, exists := qrmliser.MapperCache[inst]; !exists {
+		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
+	}
+	return qrmliser.MapperCache[inst]
 }

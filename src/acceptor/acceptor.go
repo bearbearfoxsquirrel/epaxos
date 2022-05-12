@@ -984,6 +984,7 @@ func (a *betterBatching) batchPersister() {
 func (a *betterBatching) doBatch() {
 
 	dlog.AgentPrintfN(a.meID, "Acceptor batch starting, now persisting received ballots")
+
 	for instToResp, _ := range a.batcher.awaitingResponses {
 		abk := a.batcher.instanceState[instToResp]
 		recordInstanceMetadata(abk, a.stableStore, a.durable)
@@ -993,7 +994,7 @@ func (a *betterBatching) doBatch() {
 	}
 	fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 
-	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses")
+	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses for %d instances", len(a.batcher.awaitingResponses))
 	for instToResp, awaitingResps := range a.batcher.awaitingResponses {
 		abk := a.batcher.instanceState[instToResp]
 		returnResponsesAndResetAwaitingResponses(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
@@ -1096,7 +1097,6 @@ func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
 		return
 	}
 
-	// store commit
 	instState.status = PREPARED
 	instState.curBal = prepMsg.Ballot
 	//recordInstanceMetadata(instState, a.stableStore, a.durable)
@@ -1207,7 +1207,7 @@ func (a *betterBatching) getPhase(inst int32) stdpaxosproto.Phase {
 	return phase
 }
 
-func (abk AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
+func (abk *AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
 	var phase stdpaxosproto.Phase
 	if abk.status == ACCEPTED {
 		phase = stdpaxosproto.ACCEPTANCE
@@ -1220,7 +1220,7 @@ func (abk AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
 }
 
 func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingResps *responsesAwaiting, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
-	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of responses for instance %d", myId, inst)
+	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of %d responses for instance %d", myId, len(awaitingResps.propsAcceptResps)+len(awaitingResps.propsPrepResps), inst)
 	if abk.status == COMMITTED {
 		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)
 		for _, prepResp := range awaitingResps.propsPrepResps {
@@ -1258,9 +1258,14 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 		}()
 	}
 
+	outOfOrderAccept := false
 	for pid, accResp := range awaitingResps.propsAcceptResps {
 		dlog.AgentPrintfN(myId, "Acceptor returning Accept Reply to Replica %d for instance %d at current ballot %d.%d when requested %d.%d",
 			pid, inst, abk.curBal.Number, abk.curBal.PropID, accResp.Number, accResp.PropID)
+
+		if abk.curBal.GreaterThan(accResp.Ballot) {
+			outOfOrderAccept = true
+		}
 
 		// if we accepted anything here but cur bal has changed, it is safe to respond positively to accept request
 		//   -- we are telling proposers of the greater ballot of this acceptance
@@ -1289,6 +1294,10 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 			}
 			close(resp.retMsgChan)
 		}()
+	}
+
+	if outOfOrderAccept {
+		dlog.AgentPrintfN(myId, "Acceptor %d has acknowledged ballots out of order in instance %d", myId, inst)
 	}
 }
 

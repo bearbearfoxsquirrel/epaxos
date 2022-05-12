@@ -138,6 +138,8 @@ type EBLReplica struct {
 	proposing                   map[int32]struct{}
 	PrepareResponsesRPC
 	AcceptResponsesRPC
+	openInstance          chan struct{}
+	rateLimitOpeningInsts bool
 }
 
 type TimeoutInfo struct {
@@ -177,7 +179,7 @@ func NewBaselineEagerReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuorum
 	minBatchSize int32, initiator ProposerQuorumaliser, tsStatsFilename string, instStatsFilename string,
 	propsStatsFilename string, sendProposerState bool, proactivePrepareOnPreempt bool, batchingAcceptor bool,
 	maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter, sendPreparesToAllAcceptors bool,
-	q Queueing, minimalProposers bool, timeBasedBallots bool, cliPropLearners []MyBatchLearner, mappedProposers bool, dynamicMappedProposers bool) *EBLReplica {
+	q Queueing, minimalProposers bool, timeBasedBallots bool, cliPropLearners []MyBatchLearner, mappedProposers bool, dynamicMappedProposers bool, mappedProposersNum int, rateLimitOpeningInsts bool) *EBLReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &EBLReplica{
@@ -244,6 +246,7 @@ func NewBaselineEagerReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuorum
 		requeued:                    make(map[int32]struct{}),
 		proposing:                   make(map[int32]struct{}),
 		sendPreparesToAllAcceptors:  sendPreparesToAllAcceptors,
+		rateLimitOpeningInsts:       rateLimitOpeningInsts,
 	}
 
 	if filter != nil {
@@ -331,7 +334,7 @@ func NewBaselineEagerReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuorum
 	}
 
 	if mappedProposers {
-		propManager = MappedProposersProposalManagerNew(r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats, ids, r.F+1)
+		propManager = MappedProposersProposalManagerNew(r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats, ids, mappedProposersNum)
 	}
 
 	if dynamicMappedProposers {
@@ -351,6 +354,7 @@ func NewBaselineEagerReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuorum
 	r.Durable = durable
 
 	r.crtOpenedInstances = make([]int32, r.maxOpenInstances)
+	r.openInstance = make(chan struct{}, r.maxOpenInstances)
 
 	for i := 0; i < len(r.crtOpenedInstances); i++ {
 		r.crtOpenedInstances[i] = -1
@@ -403,7 +407,8 @@ func (r *EBLReplica) run() {
 
 	for i := 0; i < int(r.maxOpenInstances); i++ {
 		r.crtOpenedInstances[i] = -1
-		r.beginNextInstance()
+		//r.beginNextInstance()
+		r.openInstance <- struct{}{}
 	}
 
 	doner := make(chan struct{})
@@ -415,6 +420,7 @@ func (r *EBLReplica) run() {
 		}()
 	}
 
+	//chan := make(chan batching.ProposalBatch, 100)
 	go batching.StartBatching(r.Id, r.ProposeChan, r.Queueing.GetTail(), r.expectedBatchedRequest, r.maxBatchSizeBytes, time.Millisecond*time.Duration(r.maxBatchWait))
 
 	var c chan struct{}
@@ -429,9 +435,30 @@ func (r *EBLReplica) run() {
 	if r.sendProposerState {
 		stateGo = *time.NewTimer(50 * time.Millisecond)
 	}
+	var changeOn chan struct{} = nil
+	if r.rateLimitOpeningInsts {
+		changeOn = make(chan struct{})
+		go func() {
+			for {
+				time.Sleep(r.noopWait)
+				changeOn <- struct{}{}
+			}
+		}()
+	}
+
+	onOffBeginInstChan := r.openInstance
 
 	for !r.Shutdown {
 		select {
+		case <-changeOn:
+			onOffBeginInstChan = r.openInstance
+			break
+		case <-onOffBeginInstChan:
+			r.beginNextInstance()
+			if r.rateLimitOpeningInsts {
+				onOffBeginInstChan = nil
+			}
+			break
 		case <-stateGo.C:
 			for i := int32(0); i < int32(r.N); i++ {
 				if i == r.Id {
@@ -1272,7 +1299,7 @@ func (r *EBLReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 
 	pbk := r.instanceSpace[areply.Instance]
 	if pbk.status == CLOSED {
-		dlog.AgentPrintfN(r.Id, "Discarding Accept Reply in instance %d at requested ballot %d.%d because it's already chosen", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID)
+		dlog.AgentPrintfN(r.Id, "Discarding Accept Reply from Replica %d in instance %d at requested ballot %d.%d because it's already chosen", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID)
 		return
 	}
 
@@ -1406,12 +1433,36 @@ func (r *EBLReplica) executeCmds() {
 
 func (r *EBLReplica) checkAndOpenNewInstances(inst int32) {
 	dlog.AgentPrintfN(r.Id, "Checking and opening new instances because instance %d is either chosen or preempted", inst)
-	for i := 0; i < len(r.crtOpenedInstances); i++ {
+
+	// calculate new oi
+
+	// what if oi is decreased
+	// delay changing it and wait for extra instane to close before changing it
+	//
+
+	////group := r.GetQrm(inst)
+	//avgLat := float64(0)
+	//for i := 0; i < r.N; i++ {
+	//	avgLat += r.Ewma[i]
+	//}
+	//avgLat = avgLat / float64(r.N) - 1
+	//
+	//oi := (2 * avgLat) / float64(r.noopWait.Nanoseconds()) * float64(r.N)
+	//
+	//dlog.AgentPrintfN(r.Id, "Setting oi to %f", oi)
+	//
+	//r.maxOpenInstances = int32(oi)
+	//if oi > r.maxOpenInstances {
+	//	oi = r.maxOpenInstances
+	//}
+	for i := 0; i < int(r.maxOpenInstances); i++ {
 		if r.crtOpenedInstances[i] == -1 {
-			r.beginNextInstance()
+			//r.beginNextInstance()
+			//go func() { r.openInstance <- struct{}{} }()
 		} else if r.crtOpenedInstances[i] == inst || r.instanceSpace[r.crtOpenedInstances[i]].status == CLOSED {
 			r.crtOpenedInstances[i] = -1
-			r.beginNextInstance()
+			go func() { r.openInstance <- struct{}{} }()
+			//r.beginNextInstance()
 		}
 	}
 }

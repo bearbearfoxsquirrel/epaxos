@@ -494,10 +494,7 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	instNo := r.crtInstance
 	r.crtInstance += int32(r.N)
 
-	//batchSize := 1
-	//if !r.BatchingEnabled() {
 	batchSize := len(r.ProposeChan) + 1
-	//}
 
 	cmds := make([]state.Command, batchSize)
 	proposals := make([]*genericsmr.Propose, batchSize)

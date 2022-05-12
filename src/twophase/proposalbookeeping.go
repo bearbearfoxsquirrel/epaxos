@@ -7,6 +7,28 @@ import (
 	"stdpaxosproto"
 )
 
+type Proposal interface {
+	GreaterThan(proposal Proposal) bool
+	LessThan(proposal Proposal) bool
+	Equal(proposal Proposal) bool
+}
+
+type ProposalWriter interface {
+	Write()
+}
+
+type ProposalBookkeeping interface {
+	GetCurrentProposal() Proposal
+	SetCurrentProposal(proposal Proposal)
+	GetCurrentValue() (Proposal, *[]*state.Command, int)
+	SetCurrentValue(proposal Proposal, commands *[]*state.Command, whoseCmds int32)
+	// todo identify main interface for proposer/learner
+	//SetBackingOff()
+	//SetReadyToPropose()
+	//SetNowProposing()
+	//SetClosed()
+}
+
 type ProposingBookkeeping struct {
 	status          ProposerStatus
 	qrms            map[stdpaxosproto.Ballot]quorumsystem.SynodQuorumSystem

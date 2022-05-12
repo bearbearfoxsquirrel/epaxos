@@ -57,7 +57,7 @@ func (q *UniqueQ) Requeue(bat batching.ProposalBatch) error {
 
 type ChosenUniqueQ struct {
 	chosen map[int32]struct{}
-	UniqueQ
+	*UniqueQ
 }
 
 func (q *ChosenUniqueQ) Dequeued(bat batching.ProposalBatch, do func()) error {
@@ -77,7 +77,7 @@ func (q *ChosenUniqueQ) Requeue(bat batching.ProposalBatch) error {
 	}
 	if _, exists := q.requeued[bat.GetUID()]; exists {
 		dlog.AgentPrintfN(q.id, "Not requeuing batch with UID %d as it is already requeued", bat.GetUID())
-		return &QueueingError{errors.New(fmt.Sprintf("Not Requeued batch with UID %d is already in queue", bat.GetUID())), 2}
+		return &QueueingError{errors.New(fmt.Sprintf("Not Requeued batch with UID %d is already in queue", bat.GetUID())), 1}
 	}
 	//dlog.AgentPrintfN(q.id, "Requeued batch with UID %d", bat.GetUID())
 	go func() { q.q <- bat }()
@@ -97,5 +97,39 @@ func UniqueQNew(rId int32, initLen int) Queueing {
 }
 
 func ChosenUniqueQNew(rId int32, initLen int) Queueing {
-	return &ChosenUniqueQ{make(map[int32]struct{}), *UniqueQNew(rId, initLen).(*UniqueQ)}
+	return &ChosenUniqueQ{make(map[int32]struct{}), UniqueQNew(rId, initLen).(*UniqueQ)}
+}
+
+type ProposedObserver interface {
+	ObserveProposed(proposed batching.ProposalBatch)
+}
+
+type ProposingChosenUniqueQ struct {
+	proposed map[int32]struct{}
+	*ChosenUniqueQ
+}
+
+func ProposingChosenUniqueueQNew(rId int32, initLen int) *ProposingChosenUniqueQ {
+	return &ProposingChosenUniqueQ{
+		proposed:      make(map[int32]struct{}),
+		ChosenUniqueQ: ChosenUniqueQNew(rId, initLen).(*ChosenUniqueQ),
+	}
+}
+
+func (q *ProposingChosenUniqueQ) ObserveProposed(bat batching.ProposalBatch) {
+	q.proposed[bat.GetUID()] = struct{}{}
+}
+
+func (q *ProposingChosenUniqueQ) Requeue(bat batching.ProposalBatch) error {
+	err := q.ChosenUniqueQ.Requeue(bat)
+	delete(q.proposed, bat.GetUID())
+	return err
+}
+
+func (q *ProposingChosenUniqueQ) Dequeued(bat batching.ProposalBatch, onSuccess func()) error {
+	if _, exists := q.proposed[bat.GetUID()]; exists {
+		dlog.AgentPrintfN(q.id, "Batch with UID %d is proposed already so throwing it out", bat.GetUID())
+		return &QueueingError{errors.New(fmt.Sprintf("Not Requeued batch with UID %d as it is chosen", bat.GetUID())), 3}
+	}
+	return q.ChosenUniqueQ.Dequeued(bat, onSuccess)
 }

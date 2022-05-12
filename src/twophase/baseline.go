@@ -122,7 +122,9 @@ type LWPReplica struct {
 	sendPreparesToAllAcceptors  bool
 	PrepareResponsesRPC
 	AcceptResponsesRPC
-	bcastAcceptance bool
+	bcastAcceptance        bool
+	instsToOpenPerBatch    int32
+	batchProposedObservers []ProposedObserver
 }
 
 type messageFilterComm struct {
@@ -151,7 +153,7 @@ func NewBaselineTwoPhaseReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuo
 	tsStatsFilename string, instStatsFilename string, propsStatsFilename string, sendProposerState bool,
 	proactivePrepareOnPreempt bool, batchingAcceptor bool, maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter,
 	sendPreparesToAllAcceptors bool, q Queueing,
-	minimalProposers bool, timeBasedBallots bool, cliPropLearners []MyBatchLearner, mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool) *LWPReplica {
+	minimalProposers bool, timeBasedBallots bool, cliPropLearners []MyBatchLearner, mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int, instsToOpenPerBatch int32, batchProposedObservers []ProposedObserver) *LWPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &LWPReplica{
@@ -211,6 +213,8 @@ func NewBaselineTwoPhaseReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuo
 		isAccMsgFilter:              filter != nil,
 		expectedBatchedRequests:     200,
 		sendPreparesToAllAcceptors:  sendPreparesToAllAcceptors,
+		instsToOpenPerBatch:         instsToOpenPerBatch,
+		batchProposedObservers:      batchProposedObservers,
 	}
 
 	if filter != nil {
@@ -295,7 +299,7 @@ func NewBaselineTwoPhaseReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuo
 		propManager = MinProposerProposalManagerNew(r.F, r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats)
 	}
 	if mappedProposers {
-		propManager = MappedProposersProposalManagerNew(r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats, ids, r.F+1)
+		propManager = MappedProposersProposalManagerNew(r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats, ids, mappedProposersNum)
 	}
 	if dynamicMappedProposers {
 		propManager = DynamicMappedProposerManagerNew(r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats, ids, r.F)
@@ -648,20 +652,22 @@ func (r *LWPReplica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballo
 }
 
 func (r *LWPReplica) beginNextInstance(valsToPropose batching.ProposalBatch) {
-	inst := r.InstanceManager.startNextInstance(&r.instanceSpace)
-	curInst := r.instanceSpace[inst]
-	r.InstanceManager.startNextProposal(curInst, inst)
+	for i := int32(0); i < r.instsToOpenPerBatch; i++ {
+		inst := r.InstanceManager.startNextInstance(&r.instanceSpace)
+		curInst := r.instanceSpace[inst]
+		r.InstanceManager.startNextProposal(curInst, inst)
 
-	if r.doStats {
-		r.InstanceStats.RecordOpened(stats.InstanceID{0, inst}, time.Now())
-		r.TimeseriesStats.Update("Instances Opened", 1)
-		r.ProposalStats.Open(stats.InstanceID{0, inst}, curInst.propCurBal)
+		if r.doStats {
+			r.InstanceStats.RecordOpened(stats.InstanceID{0, inst}, time.Now())
+			r.TimeseriesStats.Update("Instances Opened", 1)
+			r.ProposalStats.Open(stats.InstanceID{0, inst}, curInst.propCurBal)
+		}
+
+		r.instanceSpace[inst].putBatch(valsToPropose)
+		prepMsg := getPrepareMessage(r.Id, inst, curInst)
+		dlog.AgentPrintfN(r.Id, "Opened new instance %d, with ballot %d.%d \n", inst, prepMsg.Number, prepMsg.PropID)
+		acceptorHandlePrepareLocal(r.Id, r.Acceptor, prepMsg, r.PrepareResponsesRPC, r.prepareReplyChan)
 	}
-
-	r.instanceSpace[inst].putBatch(valsToPropose)
-	prepMsg := getPrepareMessage(r.Id, inst, curInst)
-	dlog.AgentPrintfN(r.Id, "Opened new instance %d, with ballot %d.%d \n", inst, prepMsg.Number, prepMsg.PropID)
-	acceptorHandlePrepareLocal(r.Id, r.Acceptor, prepMsg, r.PrepareResponsesRPC, r.prepareReplyChan)
 }
 
 func getPrepareMessage(id int32, inst int32, curInst *ProposingBookkeeping) *stdpaxosproto.Prepare {
@@ -933,6 +939,12 @@ func (r *LWPReplica) tryPropose(inst int32, priorAttempts int) {
 	}
 	//pbk.status = PROPOSING
 	//pbk.proposeValueBal = pbk.propCurBal
+	if pbk.clientProposals != nil {
+		for _, obs := range r.batchProposedObservers {
+			obs.ObserveProposed(pbk.clientProposals)
+		}
+	}
+
 	pbk.setNowProposing()
 	acptMsg := getAcceptRequestMsg(r.Id, inst, pbk)
 	if r.AcceptorQrmInfo.IsInQrm(inst, r.Id) {
@@ -1114,7 +1126,7 @@ func (r *LWPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	dlog.AgentPrintfN(r.Id, "Replica received Accept Reply from Replica %d in instance %d at requested ballot %d.%d and current ballot %d.%d", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID, areply.Cur.Number, areply.Cur.PropID)
 	pbk := r.instanceSpace[areply.Instance]
 	if pbk.status == CLOSED {
-		dlog.AgentPrintfN(r.Id, "Discarding Accept Reply from Replica &d in instance %d at requested ballot %d.%d because it's already chosen", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID)
+		dlog.AgentPrintfN(r.Id, "Discarding Accept Reply from Replica %d in instance %d at requested ballot %d.%d because it's already chosen", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID)
 		dlog.Printf("Already committed ")
 		return
 	}

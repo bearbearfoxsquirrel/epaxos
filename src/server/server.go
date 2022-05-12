@@ -56,7 +56,7 @@ var crtConfig = flag.Int("config", 1, "Current config in LWC")
 var maxOInstances = flag.Int("oi", 1, "Max number of open instances in leaderless LWC")
 var minBackoff = flag.Int("minbackoff", 5000, "Minimum backoff for a proposing replica that been preempted")
 var maxInitBackoff = flag.Int("maxibackoff", 0, "Maximum initial backoff for a proposing replica that been preempted (default 110% min)")
-var maxBackoff = flag.Int("maxbackoff", 1000000, "Maximum backoff for a proposing replica that been preempted")
+var maxBackoff = flag.Int("maxbackoff", 100000000, "Maximum backoff for a proposing replica that been preempted")
 var noopWait = flag.Int("noopwait", 0, "Wait time in microseconds before proposing no-op")
 var alwaysNoop *bool = flag.Bool("alwaysnoop", false, "Always submit noops if there is no command awaiting execution?")
 var factor *float64 = flag.Float64("factorbackoff", 0.5, "Factor for backoff")
@@ -131,6 +131,9 @@ var sendPreparesAllAcceptors *bool = flag.Bool("sendpreparesallacceptors", false
 var minimalProposers *bool = flag.Bool("minimalproposers", false, "When a proposer receives F+1 proposals to greater than theirs they stop proposing to that instance")
 var mappedProposers *bool = flag.Bool("mappedproposers", false, "F+1 proposers are statically mapped to instances")
 var dynamicMappedProposers *bool = flag.Bool("dmappedproposers", false, "Dynamically map proposers to instances - bounded by n and f+1")
+var mappedProposersNum *int = flag.Int("mappedproposersnum", 1, "How many proposers are mapped statically to each instance")
+var instsToOpenPerBatch *int = flag.Int("blinstsopenperbatch", 1, "How many instances to open per batch")
+var rateLimitEagerOpenInsts *bool = flag.Bool("ratelimiteager", false, "Should eager instance pipeline be rate limited to noop time?")
 
 func main() {
 	flag.Parse()
@@ -138,7 +141,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
 
 	if *maxInitBackoff == 0 {
-		*maxInitBackoff = int(float64(*minBackoff) * 1.2)
+		*maxInitBackoff = int(float64(*minBackoff) * 1.5)
 	}
 
 	//	runtime.mg
@@ -375,7 +378,7 @@ func main() {
 
 		acceptorMaxBatchWait := time.Duration(time.Duration(*accMaxBatchWaitMs) * time.Millisecond)
 
-		var amf aceptormessagefilter.AcceptorMessageFilter = nil // aceptormessagefilter.NoFilterNew()
+		var amf aceptormessagefilter.AcceptorMessageFilter = nil
 		if *minimalAcceptorNegatives {
 			if *gridQrms {
 				panic("incompatible options")
@@ -387,14 +390,20 @@ func main() {
 			})
 		}
 		q := twophase.ChosenUniqueQNew(int32(replicaId), 200)
+		proposedBatchObserers := make([]twophase.ProposedObserver, 0)
 		batLnrs := []twophase.MyBatchLearner{&balloter, q.(*twophase.ChosenUniqueQ)}
+		if *instsToOpenPerBatch > 1 {
+			q = twophase.ProposingChosenUniqueueQNew(int32(replicaId), 200)
+			proposedBatchObserers = []twophase.ProposedObserver{q.(twophase.ProposedObserver)}
+			batLnrs = []twophase.MyBatchLearner{&balloter, q.(*twophase.ProposingChosenUniqueQ)}
+		}
 		if *dostdEager {
 			rep := twophase.NewBaselineEagerReplica(proposerQrms, proposerQrms, proposerQrms, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
 				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), proposerQrms, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *mappedProposersNum, *rateLimitEagerOpenInsts)
 			runnable = rep
 			rpc.Register(rep)
 		} else {
@@ -404,7 +413,7 @@ func main() {
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance, *mappedProposersNum, int32(*instsToOpenPerBatch), proposedBatchObserers)
 			runnable = rep
 			rpc.Register(rep)
 		}
