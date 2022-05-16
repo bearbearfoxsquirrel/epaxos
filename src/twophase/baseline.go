@@ -44,8 +44,8 @@ func (f *ConcurrentFile) WriteAt(b []byte, off int64) (int, error) {
 }
 
 type LWPReplica struct {
-	//ProposerQuorumaliser
 	CrtInstanceOracle
+	ProposeBatchOracle
 
 	InstanceManager
 	ProposedClientValuesManager
@@ -125,6 +125,7 @@ type LWPReplica struct {
 	bcastAcceptance        bool
 	instsToOpenPerBatch    int32
 	batchProposedObservers []ProposedObserver
+	proposedBatcheNumber   map[int32]int32
 }
 
 type messageFilterComm struct {
@@ -153,11 +154,13 @@ func NewBaselineTwoPhaseReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuo
 	tsStatsFilename string, instStatsFilename string, propsStatsFilename string, sendProposerState bool,
 	proactivePrepareOnPreempt bool, batchingAcceptor bool, maxAccBatchWait time.Duration, filter aceptormessagefilter.AcceptorMessageFilter,
 	sendPreparesToAllAcceptors bool, q Queueing,
-	minimalProposers bool, timeBasedBallots bool, cliPropLearners []MyBatchLearner, mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int, instsToOpenPerBatch int32, batchProposedObservers []ProposedObserver) *LWPReplica {
+	minimalProposers bool, timeBasedBallots bool, cliPropLearners []MyBatchLearner, mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int, instsToOpenPerBatch int32, batchProposedObservers []ProposedObserver, oracle ProposeBatchOracle) *LWPReplica {
 	retryInstances := make(chan RetryInfo, maxOpenInstances*10000)
 
 	r := &LWPReplica{
 		Replica:              replica,
+		ProposeBatchOracle:   oracle,
+		proposedBatcheNumber: make(map[int32]int32),
 		ProposerQuorumaliser: quoralP,
 		LearnerQuorumaliser:  quoralL,
 		AcceptorQrmInfo:      quoralA,
@@ -293,6 +296,9 @@ func NewBaselineTwoPhaseReplica(quoralP ProposerQuorumaliser, quoralL LearnerQuo
 	}
 
 	r.ProposedClientValuesManager = ProposedClientValuesManagerNew(r.Id, r.TimeseriesStats, r.doStats, q)
+	if r.instsToOpenPerBatch > 1 {
+		r.ProposedClientValuesManager = HedgedBetsBatchManagerNew(r.Id, r.TimeseriesStats, r.doStats, q)
+	}
 
 	var propManager = SimplePropsalManagerNew(r.Id, int32(r.N), quoralP, minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, timeBasedBallots, doStats, r.TimeseriesStats, r.ProposalStats, r.InstanceStats)
 	if minimalProposers {
@@ -405,9 +411,10 @@ func (r *LWPReplica) run() {
 			r.handleState(recvState)
 			break
 		case props := <-r.Queueing.GetHead(): //<-startNewInstanceChan:
-			if err := r.Queueing.Dequeued(props, func() { r.beginNextInstance(props) }); err != nil {
-				dlog.AgentPrintfN(r.Id, "Batch with UID %d received to start instance with has been chosen so now throwing out", props.GetUID())
-			}
+			r.Queueing.Dequeued(props, func() {
+				//dlog.AgentPrintfN(r.Id, "Batch with UID %d received to start instance with has been chosen so now throwing out", props.GetUID())
+				r.beginNextInstance(props)
+			})
 			break
 		case <-c:
 			r.TimeseriesStats.PrintAndReset()
@@ -654,6 +661,9 @@ func (r *LWPReplica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballo
 func (r *LWPReplica) beginNextInstance(valsToPropose batching.ProposalBatch) {
 	for i := int32(0); i < r.instsToOpenPerBatch; i++ {
 		inst := r.InstanceManager.startNextInstance(&r.instanceSpace)
+		if inst <= r.executedUpTo {
+			panic("alsdkfjal;kdfjal;skdfj")
+		}
 		curInst := r.instanceSpace[inst]
 		r.InstanceManager.startNextProposal(curInst, inst)
 
@@ -663,7 +673,7 @@ func (r *LWPReplica) beginNextInstance(valsToPropose batching.ProposalBatch) {
 			r.ProposalStats.Open(stats.InstanceID{0, inst}, curInst.propCurBal)
 		}
 
-		r.instanceSpace[inst].putBatch(valsToPropose)
+		r.ProposedClientValuesManager.intendingToProposeBatch(curInst, inst, valsToPropose)
 		prepMsg := getPrepareMessage(r.Id, inst, curInst)
 		dlog.AgentPrintfN(r.Id, "Opened new instance %d, with ballot %d.%d \n", inst, prepMsg.Number, prepMsg.PropID)
 		acceptorHandlePrepareLocal(r.Id, r.Acceptor, prepMsg, r.PrepareResponsesRPC, r.prepareReplyChan)
@@ -742,7 +752,7 @@ func (r *LWPReplica) proposerWittnessValue(inst int32, aid int32, accepted stdpa
 	r.ProposedClientValuesManager.learnOfAcceptedBallot(pbk, inst, accepted, whoseCmds)
 	newVal := false
 	if accepted.GreaterThan(pbk.proposeValueBal) {
-		setValue(pbk, whoseCmds, accepted, val)
+		setProposingValue(pbk, whoseCmds, accepted, val)
 		newVal = true
 	}
 
@@ -791,7 +801,7 @@ func (r *LWPReplica) learnerHandleAcceptedValue(inst int32, aid int32, accepted 
 	}
 }
 
-func setValue(pbk *ProposingBookkeeping, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
+func setProposingValue(pbk *ProposingBookkeeping, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
 	pbk.whoseCmds = whoseCmds
 	pbk.proposeValueBal = bal
 	pbk.cmds = val
@@ -880,50 +890,11 @@ func (r *LWPReplica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 func (r *LWPReplica) tryPropose(inst int32, priorAttempts int) {
 	pbk := r.instanceSpace[inst]
 	pbk.status = READY_TO_PROPOSE
-	dlog.AgentPrintfN(r.Id, "Attempting to propose value in instance %d", inst)
+	dlog.AgentPrintfN(r.Id, "Attempting to tryPropose value in instance %d", inst)
 	qrm := pbk.qrms[pbk.propCurBal]
 	qrm.StartAcceptanceQuorum()
 
-	if pbk.proposeValueBal.IsZero() {
-		if pbk.cmds != nil {
-			panic("there must be a previously chosen value")
-		}
-
-		if pbk.clientProposals != nil {
-			setValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
-
-			dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d proposed in instance %d at ballot %d.%d", len(pbk.clientProposals.GetCmds()), pbk.clientProposals.GetUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
-			if r.doStats {
-				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
-				r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
-				r.TimeseriesStats.Update("Times Client Values Proposed", 1)
-			}
-		} else {
-			select {
-			case b := <-r.Queueing.GetHead():
-				if !r.TrySetProposalsOrTryAgain(inst, priorAttempts, b, pbk) {
-					return
-				}
-				break
-			default:
-				if r.shouldNoop(inst) && (priorAttempts > 0 || r.noopWait <= 0) {
-					if r.doStats {
-						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
-						r.TimeseriesStats.Update("Times Noops Proposed", 1)
-						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
-					}
-
-					setValue(pbk, -1, pbk.propCurBal, state.NOOPP())
-
-					dlog.AgentPrintfN(r.Id, "Proposing noop in recovered instance %d at ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
-					break
-				} else {
-					r.BeginWaitingForClientProposals(inst, pbk)
-					return
-				}
-			}
-		}
-	} else {
+	if !pbk.proposeValueBal.IsZero() {
 		if r.doStats {
 			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)
 			r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
@@ -933,16 +904,58 @@ func (r *LWPReplica) tryPropose(inst int32, priorAttempts int) {
 			pbk.proposeValueBal.Number, pbk.proposeValueBal.PropID, pbk.whoseCmds, inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 	}
 
-	if pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
-		panic("alsdkfjal")
-		//pbk.clientProposals = nil
-	}
-	//pbk.status = PROPOSING
-	//pbk.proposeValueBal = pbk.propCurBal
-	if pbk.clientProposals != nil {
-		for _, obs := range r.batchProposedObservers {
-			obs.ObserveProposed(pbk.clientProposals)
+	if pbk.proposeValueBal.IsZero() {
+		if pbk.clientProposals == nil {
+			for foundValue := false; !foundValue; {
+				select {
+				case b := <-r.Queueing.GetHead():
+					r.Queueing.Dequeued(b, func() {
+						if !r.ProposeBatchOracle.ShouldPropose(b) {
+							return
+						}
+						r.ProposedClientValuesManager.intendingToProposeBatch(pbk, inst, b)
+						foundValue = true
+					})
+					break
+				default:
+					if !(r.shouldNoop(inst) && (priorAttempts > 0 || r.noopWait <= 0)) {
+						r.BeginWaitingForClientProposals(inst, pbk)
+						return
+					}
+					if r.doStats {
+						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
+						r.TimeseriesStats.Update("Times Noops Proposed", 1)
+						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
+					}
+					setProposingValue(pbk, -1, pbk.propCurBal, state.NOOPP())
+					dlog.AgentPrintfN(r.Id, "Proposing noop in recovered instance %d at ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+					foundValue = true
+					break
+				}
+			}
 		}
+
+		if pbk.clientProposals != nil {
+			if !r.ProposeBatchOracle.ShouldPropose(pbk.clientProposals) {
+				pbk.clientProposals = nil
+				r.tryPropose(inst, priorAttempts)
+				return
+			}
+			setProposingValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
+			if r.doStats {
+				r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+				r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
+				r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+			}
+			for _, obs := range r.batchProposedObservers {
+				obs.ObserveProposed(pbk.clientProposals)
+			}
+			dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d received and proposed in instance %d at ballot %d.%d \n", len(pbk.clientProposals.GetCmds()), pbk.clientProposals.GetUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+		}
+	}
+
+	if pbk.cmds == nil {
+		panic("there must be something to tryPropose")
 	}
 
 	pbk.setNowProposing()
@@ -977,12 +990,12 @@ func (r *LWPReplica) BeginWaitingForClientProposals(inst int32, pbk *ProposingBo
 			case b := <-q:
 				err := r.Queueing.Dequeued(b, func() {
 					bat = b
-					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
+					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to tryPropose in instance %d", b.GetUID(), inst)
 					valToPropose = true
 				})
 
 				if err != nil {
-					//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to propose in instance %d should not be proposed so tossing", b.GetUID(), inst)
+					//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to tryPropose in instance %d should not be proposed so tossing", b.GetUID(), inst)
 					break
 				}
 				break
@@ -998,13 +1011,13 @@ func (r *LWPReplica) BeginWaitingForClientProposals(inst int32, pbk *ProposingBo
 			ProposalBatch: bat,
 		}
 	}(pbk.propCurBal)
-	dlog.AgentPrintfN(r.Id, "Decided there no need to propose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
+	dlog.AgentPrintfN(r.Id, "Decided there no need to tryPropose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
 }
 
-func (r *LWPReplica) TrySetProposalsOrTryAgain(inst int32, priorAttempts int, b batching.ProposalBatch, pbk *ProposingBookkeeping) bool {
+func (r *LWPReplica) setProposal(inst int32, priorAttempts int, b batching.ProposalBatch, pbk *ProposingBookkeeping) bool {
 	proposeF := func() {
-		pbk.clientProposals = b
-		setValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
+		r.ProposedClientValuesManager.intendingToProposeBatch(pbk, inst, b)
+		setProposingValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
 
 		if r.doStats {
 			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
@@ -1026,9 +1039,9 @@ func (r *LWPReplica) recheckInstanceToPropose(retry ProposalInfo) {
 		panic("????")
 	}
 
-	dlog.AgentPrintfN(r.Id, "Rechecking whether to propose in instance %d", retry.inst)
+	dlog.AgentPrintfN(r.Id, "Rechecking whether to tryPropose in instance %d", retry.inst)
 	if pbk.propCurBal.GreaterThan(retry.proposingBal) || pbk.status != READY_TO_PROPOSE {
-		dlog.AgentPrintfN(r.Id, "Decided to not propose in instance %d as we are no longer on ballot %d.%d and are now on %d.%d or ballot isChosen no longer in proposable state", retry.inst, retry.proposingBal.Number, retry.proposingBal.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+		dlog.AgentPrintfN(r.Id, "Decided to not tryPropose in instance %d as we are no longer on ballot %d.%d and are now on %d.%d or ballot isChosen no longer in proposable state", retry.inst, retry.proposingBal.Number, retry.proposingBal.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 		if retry.ProposalBatch != nil { // requeue value that cannot be proposed
 			bat := retry.popBatch()
 			r.Queueing.Dequeued(bat, func() { r.Queueing.Requeue(bat) })
@@ -1038,11 +1051,14 @@ func (r *LWPReplica) recheckInstanceToPropose(retry ProposalInfo) {
 
 	if retry.ProposalBatch != nil {
 		bat := retry.popBatch()
-		r.Queueing.Dequeued(bat, func() { pbk.putBatch(bat) })
-	}
-
-	if !pbk.proposeValueBal.IsZero() && pbk.clientProposals != nil {
-		r.Queueing.Requeue(pbk.popBatch())
+		r.Queueing.Dequeued(bat, func() {
+			if !pbk.proposeValueBal.IsZero() {
+				r.Queueing.Requeue(bat)
+				return
+			}
+			//pbk.putBatch(bat)
+			r.ProposedClientValuesManager.intendingToProposeBatch(pbk, retry.inst, bat)
+		})
 	}
 
 	r.tryPropose(retry.inst, 1)
@@ -1074,10 +1090,6 @@ func (r *LWPReplica) checkAndHandleNewlyReceivedInstance(instance int32) {
 func (r *LWPReplica) handleAccept(accept *stdpaxosproto.Accept) {
 	dlog.AgentPrintfN(r.Id, "Replica received Accept from Replica %d in instance %d at ballot %d.%d", accept.PropID, accept.Instance, accept.Number, accept.PropID)
 	r.checkAndHandleNewlyReceivedInstance(accept.Instance)
-	//if r.instanceSpace[accept.Instance].status == CLOSED {
-	//	return
-	//}
-
 	r.proposerWittnessValue(accept.Instance, r.Id, accept.Ballot, accept.Command, accept.WhoseCmd)
 
 	if r.bcastAcceptance {
@@ -1182,9 +1194,12 @@ func (r *LWPReplica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 func (r *LWPReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
 	r.InstanceManager.LearnBallotChosen(&r.instanceSpace, inst, chosenAt)
 	pbk := r.instanceSpace[inst]
+	//if pbk.status == CLOSED {
+	//return
+	//}
 	r.ProposedClientValuesManager.valueChosen(pbk, inst, whoseCmd, chosenVal)
 
-	setValue(pbk, whoseCmd, chosenAt, chosenVal)
+	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
 
 	if whoseCmd == r.Id && pbk.clientProposals != nil {
 		for _, l := range r.batchLearners {

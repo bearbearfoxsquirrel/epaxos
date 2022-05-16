@@ -91,6 +91,9 @@ type Replica struct {
 	deadTime           int32
 	heartbeatFrequency time.Duration
 	ewmaWeight         float64
+	batchFlush         bool
+	batchWait          time.Duration
+	buffersFull        []chan struct{}
 }
 
 /* Client API */
@@ -404,6 +407,9 @@ func (r *Replica) clientListener(conn net.Conn) {
 			b, _ := json.Marshal(r.Stats)
 			r.Mutex.Unlock()
 			writer.Write(b)
+			if r.batchFlush {
+				break
+			}
 			writer.Flush()
 		}
 	}
@@ -459,7 +465,22 @@ func (r *Replica) SendMsg(peerId int32, code uint8, msg fastrpc.Serializable) {
 	}
 	w.WriteByte(code)
 	msg.Marshal(w)
+
+	if r.checkAndHandleBatchMessaging(peerId) {
+		return
+	}
+
 	w.Flush()
+}
+
+func (r *Replica) checkAndHandleBatchMessaging(peerId int32) bool {
+	if r.batchFlush {
+		if r.PeerWriters[peerId].Buffered() > 4000000 { // 4MB buffer size
+			r.buffersFull[peerId] <- struct{}{}
+		}
+		return true
+	}
+	return false
 }
 
 func (r *Replica) SendMsgUNSAFE(peerId int32, code uint8, msg fastrpc.Serializable) {
@@ -477,6 +498,11 @@ func (r *Replica) SendMsgUNSAFE(peerId int32, code uint8, msg fastrpc.Serializab
 	}
 	w.WriteByte(code)
 	msg.Marshal(w)
+
+	if r.checkAndHandleBatchMessaging(peerId) {
+		return
+	}
+
 	w.Flush()
 }
 
@@ -506,6 +532,7 @@ func (r *Replica) ReplyProposeTS(reply *genericsmrproto.ProposeReplyTS, w *bufio
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
 	reply.Marshal(w)
+
 	w.Flush()
 }
 func (r *Replica) SendBeacon(peerId int32) {
@@ -520,8 +547,11 @@ func (r *Replica) SendBeacon(peerId int32) {
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON)
 	beacon := &genericsmrproto.Beacon{Timestamp: time.Now().UnixNano()}
 	beacon.Marshal(w)
-	w.Flush()
 	dlog.Println("send beacon ", beacon.Timestamp, " to ", peerId)
+	if r.checkAndHandleBatchMessaging(peerId) {
+		return
+	}
+	w.Flush()
 }
 
 func (r *Replica) ReplyBeacon(beacon *Beacon) {
@@ -537,6 +567,9 @@ func (r *Replica) ReplyBeacon(beacon *Beacon) {
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON_REPLY)
 	rb := genericsmrproto.BeaconReply{beacon.Timestamp}
 	rb.Marshal(w)
+	if r.checkAndHandleBatchMessaging(beacon.Rid) {
+		return
+	}
 	w.Flush()
 }
 
@@ -553,7 +586,7 @@ func (r *Replica) Crash() {
 	r.Mutex.Unlock()
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string, deadTime int32) *Replica {
+func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string, deadTime int32, batchFlush bool, batchWait time.Duration) *Replica {
 	r := &Replica{
 		len(peerAddrList),
 		int32(id),
@@ -589,6 +622,9 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		deadTime,
 		time.Duration(200 * time.Millisecond),
 		0.1,
+		batchFlush,
+		batchWait,
+		make([]chan struct{}, len(peerAddrList)),
 	}
 
 	storage = storageParentDir
@@ -609,6 +645,35 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		r.ReplicasLatenciesOrders[i] = i
 	}
 
+	if r.batchFlush {
+		for i := int32(0); i < int32(len(r.PeerWriters)); i++ {
+			if i == r.Id {
+				continue
+			}
+			bufferFull := r.buffersFull[i]
+			go func() {
+				timer := time.NewTimer(r.batchWait)
+				for !r.Shutdown {
+					select {
+					case <-timer.C:
+					case <-bufferFull:
+						r.PeerFlushBuffer(i)
+						timer.Reset(r.batchWait)
+						break
+					}
+				}
+			}()
+		}
+
+		//go func() {
+		//	for !r.Shutdown {
+		//		time.Sleep(r.batchWait)
+		//		for i := int32(0); i < int32(len(r.ClientsWriters)); i++ {
+		//			r.ClientFlushFBuffer(i)
+		//		}
+		//	}
+		//}()
+	}
 	return r
 }
 
@@ -619,39 +684,6 @@ func (r *Replica) CopyEWMA() []float64 {
 	r.Mutex.Unlock()
 	return cp
 }
-
-/*
-// updates the preferred order in which to communicate with peers according to a preferred quorum
-func (r *Replica) UpdatePreferredPeerOrder(quorum []int32) {
-			aux := make([]int32, r.N)
-			i := 0
-			for _, p := range quorum {
-				if p == r.id {
-					continue
-				}
-				aux[i] = p
-				i++
-			}
-
-			for _, p := range r.PreferredPeerOrder {
-				found := false
-				for j := 0; j < i; j++ {
-					if aux[j] == p {
-						found = true
-						break
-					}
-				}
-				if !found {
-					aux[i] = p
-					i++
-				}
-			}
-
-			r.Mutex.Lock()
-			r.PreferredPeerOrder = aux
-			r.Mutex.Unlock()
-}
-*/
 
 func testEq(a, b []int32) bool {
 
@@ -708,51 +740,6 @@ func (r *Replica) RandomisePeerOrder() {
 	}
 	//	}
 	r.Mutex.Unlock()
-
-	//if !r.Alive[r.PreferredPeerOrder[0]] {
-	//	panic("why sorted dead process to top of list")
-	//}
-	/*npings := 20
-
-	for j := 0; j < npings; j++ {
-		for i := int32(0); i < int32(r.N); i++ {
-			if i == r.id {
-				continue
-			}
-			r.Mutex.Lock()
-			if r.Alive[i] {
-				r.Mutex.Unlock()
-				r.SendBeacon(i)
-			} else {
-				r.ReplicasLatenciesOrders[i] = math.MaxInt64
-				r.Mutex.Unlock()
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	quorum := make([]int32, r.N)
-
-	r.Mutex.Lock()
-	for i := int32(0); i < int32(r.N); i++ {
-		pos := 0
-		for j := int32(0); j < int32(r.N); j++ {
-			if (r.ReplicasLatenciesOrders[j] < r.ReplicasLatenciesOrders[i]) || ((r.ReplicasLatenciesOrders[j] == r.ReplicasLatenciesOrders[i]) && (j < i)) {
-				pos++
-			}
-		}
-		quorum[pos] = int32(i)
-	}
-	r.Mutex.Unlock()
-
-	r.UpdatePreferredPeerOrder(quorum)
-
-	for i := 0; i < r.N-1; i++ {
-		node := r.PreferredPeerOrder[i]
-		lat := float64(r.ReplicasLatenciesOrders[node]) / float64(npings*1000000)
-		log.Println(node, " -> ", lat, "ms")
-	}
-	*/
 }
 
 func (r *Replica) updateLatencyWithReply(rid int, gbeaconReply genericsmrproto.BeaconReply) {
@@ -760,15 +747,6 @@ func (r *Replica) updateLatencyWithReply(rid int, gbeaconReply genericsmrproto.B
 	r.Ewma[rid] = (1-r.ewmaWeight)*r.Ewma[rid] + r.ewmaWeight*float64(time.Now().UnixNano()-gbeaconReply.Timestamp)
 	//r.Mutex.Unlock()
 }
-
-//
-//func (r *Replica) SortPeerOrderByLatencyRanks() {
-//	r.Mutex.Lock()
-//	sort.Slice(r.PreferredPeerOrder, func(i, j int) bool {
-//		return r.Ewma[i] < r.Ewma[j]
-//	})
-//	r.Mutex.Unlock()
-//}
 
 // returns all alive acceptors ordered by random (including self)
 func (r *Replica) GetAliveRandomPeerOrder() []int32 {
@@ -887,8 +865,14 @@ func (r *Replica) SendToGroup(group []int32, code uint8, msg fastrpc.Serializabl
 	}
 }
 
-func (r *Replica) FlushBuffer(to int32) {
+func (r *Replica) ClientFlushFBuffer(cli int32) {
+	r.Mutex.Lock()
+	_ = r.ClientsWriters[cli].Flush()
+	r.Mutex.Unlock()
+}
+
+func (r *Replica) PeerFlushBuffer(to int32) {
 	r.Mutex.Lock()
 	_ = r.PeerWriters[to].Flush()
-	r.Mutex.Unlock() //todo implement for all that don't flush commits
+	r.Mutex.Unlock()
 }

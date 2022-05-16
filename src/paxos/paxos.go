@@ -82,8 +82,8 @@ type LeaderBookkeeping struct {
 	lastTriedBallot int32           // highest ballot tried so far
 }
 
-func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, sendToFastestQrm bool) *Replica {
-	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, f, storageLoc, deadTime),
+func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, sendToFastestQrm bool) *Replica {
+	r := &Replica{replica,
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),

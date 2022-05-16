@@ -134,6 +134,8 @@ var dynamicMappedProposers *bool = flag.Bool("dmappedproposers", false, "Dynamic
 var mappedProposersNum *int = flag.Int("mappedproposersnum", 1, "How many proposers are mapped statically to each instance")
 var instsToOpenPerBatch *int = flag.Int("blinstsopenperbatch", 1, "How many instances to open per batch")
 var rateLimitEagerOpenInsts *bool = flag.Bool("ratelimiteager", false, "Should eager instance pipeline be rate limited to noop time?")
+var batchFlush *bool = flag.Bool("batchflush", false, "Should messages be flushed as a batch")
+var batchFlushWait *int = flag.Int("batchflushwait", -1, "How long to wait before flushing writers")
 
 func main() {
 	flag.Parse()
@@ -186,36 +188,37 @@ func main() {
 	emulatedWriteTime := time.Nanosecond * time.Duration(*emulatedWriteTimeNs)
 	timeout := time.Microsecond * time.Duration(*timeoutus)
 
+	smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime), *batchFlush, time.Duration(*batchFlushWait)*time.Microsecond)
 	var runnable runnable.Runnable
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
-		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm)
+		rep := epaxos.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doMencius {
 		log.Println("Starting Mencius replica...")
-		rep := mencius.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *batchWait, *skipwaitms, *maxoutstandingskips, *batch)
+		rep := mencius.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *batchWait, *skipwaitms, *maxoutstandingskips, *batch)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doGpaxos {
 		log.Println("Starting Generalized Paxos replica...")
-		rep := gpaxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *maxfailures, int32(*deadTime))
+		rep := gpaxos.NewReplica(smrReplica, replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *maxfailures, int32(*deadTime))
 		rpc.Register(rep)
 
 		runnable = rep
 	} else if *doLWCSpec {
 		log.Println("Starting LWC replica...")
-		rep := lwcspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
+		rep := lwcspeculative.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
 		runnable = rep
 		rpc.Register(rep)
 	} else if *doLWCGlobalSpec {
 		log.Println("Starting LWC replica...")
-		rep := lwcglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, int32(*deadTime))
+		rep := lwcglobalspec.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, int32(*deadTime))
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doLWCPatient {
 		log.Println("Starting LWC replica...")
-		rep := lwcpatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
+		rep := lwcpatient.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doSTDSpec {
@@ -235,8 +238,6 @@ func main() {
 		//runnable = rep
 
 	} else if *doELP || *doLessWriteyNonEager {
-
-		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
 
 		var qrm quorumsystem.SynodQuorumSystemConstructor
 
@@ -319,8 +320,6 @@ func main() {
 			aids[i] = i
 		}
 
-		smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime))
-
 		var qrm quorumsystem.SynodQuorumSystemConstructor
 		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
 			F:                *maxfailures,
@@ -389,13 +388,18 @@ func main() {
 				N:         len(nodeList),
 			})
 		}
-		q := twophase.ChosenUniqueQNew(int32(replicaId), 200)
+		chosenQ := twophase.ChosenUniqueQNew(int32(replicaId), 200)
+		var q twophase.Queueing = twophase.ChosenUniqueQNew(int32(replicaId), 200)
+		var batchProposeOracle twophase.ProposeBatchOracle = chosenQ
 		proposedBatchObserers := make([]twophase.ProposedObserver, 0)
-		batLnrs := []twophase.MyBatchLearner{&balloter, q.(*twophase.ChosenUniqueQ)}
+		batLnrs := []twophase.MyBatchLearner{&balloter, chosenQ}
+
 		if *instsToOpenPerBatch > 1 {
-			q = twophase.ProposingChosenUniqueueQNew(int32(replicaId), 200)
-			proposedBatchObserers = []twophase.ProposedObserver{q.(twophase.ProposedObserver)}
-			batLnrs = []twophase.MyBatchLearner{&balloter, q.(*twophase.ProposingChosenUniqueQ)}
+			chosenUQ := twophase.ProposingChosenUniqueueQNew(int32(replicaId), 200)
+			q = chosenUQ
+			batchProposeOracle = chosenUQ
+			proposedBatchObserers = []twophase.ProposedObserver{chosenUQ}
+			batLnrs = []twophase.MyBatchLearner{&balloter, chosenUQ}
 		}
 		if *dostdEager {
 			rep := twophase.NewBaselineEagerReplica(proposerQrms, proposerQrms, proposerQrms, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
@@ -413,13 +417,13 @@ func main() {
 				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
 				int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance, *mappedProposersNum, int32(*instsToOpenPerBatch), proposedBatchObserers)
+				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance, *mappedProposersNum, int32(*instsToOpenPerBatch), proposedBatchObserers, batchProposeOracle)
 			runnable = rep
 			rpc.Register(rep)
 		}
 	} else {
 		log.Println("Starting classic Paxos replica...")
-		rep := paxos.NewReplica(replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *sendFastestQrm)
+		rep := paxos.NewReplica(smrReplica, replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *sendFastestQrm)
 		rpc.Register(rep)
 		runnable = rep
 	}

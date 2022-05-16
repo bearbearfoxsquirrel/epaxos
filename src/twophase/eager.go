@@ -537,9 +537,9 @@ func (r *EBLReplica) checkIfCanStillPropose(retry ProposalInfo) {
 		panic("????")
 	}
 
-	dlog.AgentPrintfN(r.Id, "Rechecking whether to propose in instance %d", retry.inst)
+	dlog.AgentPrintfN(r.Id, "Rechecking whether to tryPropose in instance %d", retry.inst)
 	if pbk.propCurBal.GreaterThan(retry.proposingBal) || pbk.status != READY_TO_PROPOSE {
-		dlog.AgentPrintfN(r.Id, "Decided to not propose in instance %d as we are no longer on ballot %d.%d and are now on %d.%d or ballot isChosen no longer in proposable state", retry.inst, retry.proposingBal.Number, retry.proposingBal.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
+		dlog.AgentPrintfN(r.Id, "Decided to not tryPropose in instance %d as we are no longer on ballot %d.%d and are now on %d.%d or ballot isChosen no longer in proposable state", retry.inst, retry.proposingBal.Number, retry.proposingBal.PropID, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 		if retry.ProposalBatch != nil { // requeue value that cannot be proposed
 			bat := retry.popBatch()
 			r.Queueing.Dequeued(bat, func() { r.Queueing.Requeue(bat) })
@@ -777,7 +777,7 @@ func (r *EBLReplica) proposerWittnessValue(inst int32, aid int32, accepted stdpa
 	r.ProposedClientValuesManager.learnOfAcceptedBallot(pbk, inst, accepted, whoseCmds)
 	newVal := false
 	if accepted.GreaterThan(pbk.proposeValueBal) {
-		setValue(pbk, whoseCmds, accepted, val)
+		setProposingValue(pbk, whoseCmds, accepted, val)
 		newVal = true
 
 		r.checkAndOpenNewInstances(inst)
@@ -998,7 +998,7 @@ func min(x, y int) int {
 func (r *EBLReplica) propose(inst int32) {
 	pbk := r.instanceSpace[inst]
 	pbk.status = READY_TO_PROPOSE
-	dlog.AgentPrintfN(r.Id, "Attempting to propose value in instance %d", inst)
+	dlog.AgentPrintfN(r.Id, "Attempting to tryPropose value in instance %d", inst)
 	qrm := pbk.qrms[pbk.propCurBal]
 	qrm.StartAcceptanceQuorum()
 
@@ -1008,7 +1008,7 @@ func (r *EBLReplica) propose(inst int32) {
 		}
 
 		if pbk.clientProposals != nil {
-			setValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
+			setProposingValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
 
 			dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d proposed in instance %d at ballot %d.%d", len(pbk.clientProposals.GetCmds()), pbk.clientProposals.GetUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 			if r.doStats {
@@ -1020,8 +1020,8 @@ func (r *EBLReplica) propose(inst int32) {
 			select {
 			case b := <-r.Queueing.GetHead():
 				proposeF := func() {
-					pbk.clientProposals = b
-					setValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
+					r.ProposedClientValuesManager.intendingToProposeBatch(pbk, inst, b)
+					setProposingValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
 					if r.doStats {
 						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
 						r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
@@ -1041,7 +1041,7 @@ func (r *EBLReplica) propose(inst int32) {
 						r.TimeseriesStats.Update("Times Noops Proposed", 1)
 						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
 					}
-					setValue(pbk, -1, pbk.propCurBal, state.NOOPP())
+					setProposingValue(pbk, -1, pbk.propCurBal, state.NOOPP())
 					dlog.AgentPrintfN(r.Id, "Proposing noop in recovered instance %d at ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 					break
 				} else {
@@ -1060,7 +1060,7 @@ func (r *EBLReplica) propose(inst int32) {
 			pbk.proposeValueBal.Number, pbk.proposeValueBal.PropID, pbk.whoseCmds, inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 
 		//pbk.proposeValueBal = pbk.propCurBal
-		setValue(pbk, pbk.whoseCmds, pbk.propCurBal, pbk.cmds)
+		setProposingValue(pbk, pbk.whoseCmds, pbk.propCurBal, pbk.cmds)
 	}
 
 	if pbk.whoseCmds != r.Id && pbk.clientProposals != nil {
@@ -1090,12 +1090,12 @@ func (r *EBLReplica) BeginWaitingForClientProposals(inst int32, pbk *ProposingBo
 			case b := <-q:
 				r.Queueing.Dequeued(b, func() {
 					bat = b
-					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
+					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to tryPropose in instance %d", b.GetUID(), inst)
 					valToPropose = true
 				})
 
 				//if err != nil {
-				//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to propose in instance %d should not be proposed so tossing", b.GetUID(), inst)
+				//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to tryPropose in instance %d should not be proposed so tossing", b.GetUID(), inst)
 				//break
 				//}
 				break
@@ -1111,14 +1111,14 @@ func (r *EBLReplica) BeginWaitingForClientProposals(inst int32, pbk *ProposingBo
 			ProposalBatch: bat,
 		}
 	}(pbk.propCurBal)
-	dlog.AgentPrintfN(r.Id, "Decided there no need to propose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
+	dlog.AgentPrintfN(r.Id, "Decided there no need to tryPropose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
 }
 
 func (r *EBLReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 	inst := proposalInfo.inst
 	pbk := r.instanceSpace[inst]
 	//pbk.status = READY_TO_PROPOSE
-	dlog.AgentPrintfN(r.Id, "Reattempting to propose value in instance %d", inst)
+	dlog.AgentPrintfN(r.Id, "Reattempting to tryPropose value in instance %d", inst)
 	qrm := pbk.qrms[pbk.propCurBal]
 	qrm.StartAcceptanceQuorum()
 
@@ -1128,7 +1128,7 @@ func (r *EBLReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 		}
 
 		if pbk.clientProposals != nil {
-			setValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
+			setProposingValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
 
 			dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d proposed in instance %d at ballot %d.%d", len(pbk.clientProposals.GetCmds()), pbk.clientProposals.GetUID(), inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 			if r.doStats {
@@ -1141,8 +1141,8 @@ func (r *EBLReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 			select {
 			case b := <-r.batchedProps:
 				proposeF := func() {
-					pbk.clientProposals = b
-					setValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
+					r.ProposedClientValuesManager.intendingToProposeBatch(pbk, inst, b)
+					setProposingValue(pbk, r.Id, pbk.propCurBal, pbk.clientProposals.GetCmds())
 
 					if r.doStats {
 						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
@@ -1162,7 +1162,7 @@ func (r *EBLReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 					r.TimeseriesStats.Update("Times Noops Proposed", 1)
 					r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.propCurBal)
 				}
-				setValue(pbk, -1, pbk.propCurBal, state.NOOPP())
+				setProposingValue(pbk, -1, pbk.propCurBal, state.NOOPP())
 				dlog.AgentPrintfN(r.Id, "Proposing noop in recovered instance %d at ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 				break
 			}
@@ -1174,7 +1174,7 @@ func (r *EBLReplica) recheckForValueToPropose(proposalInfo ProposalInfo) {
 			r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, inst}, pbk.propCurBal, len(pbk.cmds))
 		}
 		dlog.AgentPrintfN(r.Id, "Proposing previous value from ballot %.%d with whose command %d in instance %d at ballot %d.%d, waiting %d ms before checking again", pbk.proposeValueBal.Number, pbk.proposeValueBal.PropID, pbk.whoseCmds, inst, pbk.propCurBal.Number, pbk.propCurBal.PropID, r.noopWait.Milliseconds())
-		setValue(pbk, pbk.whoseCmds, pbk.propCurBal, pbk.cmds)
+		setProposingValue(pbk, pbk.whoseCmds, pbk.propCurBal, pbk.cmds)
 
 	}
 
@@ -1357,7 +1357,7 @@ func (r *EBLReplica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ball
 	r.ProposedClientValuesManager.valueChosen(pbk, inst, whoseCmd, chosenVal)
 	r.checkAndOpenNewInstances(inst)
 
-	setValue(pbk, whoseCmd, chosenAt, chosenVal)
+	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
 
 	if whoseCmd == r.Id && pbk.clientProposals != nil {
 		for _, l := range r.batchLearners {

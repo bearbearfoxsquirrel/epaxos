@@ -89,12 +89,12 @@ type LeaderBookkeeping struct {
 	nacks          int
 }
 
-func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int, batch bool) *Replica {
+func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int, batch bool) *Replica {
 	skippedTo := make([]int32, len(peerAddrList))
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
 	}
-	r := &Replica{genericsmr.NewReplica(id, peerAddrList, thrifty, exec, lread, dreply, failures, storageLoc, deadTime),
+	r := &Replica{replica,
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE*4),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),

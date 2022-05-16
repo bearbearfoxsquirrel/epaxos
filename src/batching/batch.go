@@ -84,6 +84,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			batchC := batcher.getBatch()
 			dlog.AgentPrintfN(batcher.myId, "Timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
+
 			batcher.startNextBatch()
 			break
 		}

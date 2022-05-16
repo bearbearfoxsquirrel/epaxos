@@ -215,12 +215,14 @@ func MinProposerProposalManagerNew(f int, id int32, n int32, quoralP ProposerQuo
 }
 
 func (decider *MinProposerProposalManager) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, phase stdpaxosproto.Phase) bool {
-	if int32(ballot.PropID) != decider.PropID && decider.PropID != -1 {
+	if int32(ballot.PropID) != decider.PropID && !ballot.IsZero() {
 		decider.minimalProposersShouldMaker.ballotReceived(inst, ballot)
 		if decider.minimalProposersShouldMaker.shouldSkipInstance(inst) {
 			dlog.AgentPrintfN(decider.id, "Stopping making proposals to instance %d because we have witnessed f+1 higher proposals", inst)
+			//(*instanceSpace)[inst].status = BACKING_OFF
+			//(*instanceSpace)[inst].propCurBal = stdpaxosproto.Ballot{-1, -1}
 			//.status = BACKING_OFF
-			//decider.BackoffManager.ClearBackoff(retry.inst)
+			//decider.BackoffManager.ClearBackoff(inst)
 			//decider.BackoffManager.CheckAndHandleBackoff(retry.inst, retry.attemptedBal, retry.preempterBal, retry.preempterAt)
 			//return true
 		}
@@ -230,6 +232,9 @@ func (decider *MinProposerProposalManager) LearnOfBallot(instanceSpace *[]*Propo
 }
 
 func (decider *MinProposerProposalManager) startNextProposal(pbk *ProposingBookkeeping, inst int32) {
+	if decider.shouldSkipInstance(inst) {
+		panic("should not start next proposal on instance fulfilled")
+	}
 	decider.SimplePropsalManager.startNextProposal(pbk, inst)
 	dlog.AgentPrintfN(decider.id, "Starting new proposal for instance %d with ballot %d.%d", inst, pbk.propCurBal.Number, pbk.propCurBal.PropID)
 	decider.minimalProposersShouldMaker.startedMyProposal(inst, pbk.propCurBal)
@@ -245,8 +250,6 @@ func (decider *MinProposerProposalManager) DecideRetry(pbk *ProposingBookkeeping
 		dlog.AgentPrintfN(decider.id, "Skipping retry of instance %d as minimal proposer threshold (f+1) met", retry.inst)
 		pbk.status = BACKING_OFF
 		decider.BackoffManager.ClearBackoff(retry.inst)
-
-		//decider.BackoffManager.CheckAndHandleBackoff(retry.inst, retry.attemptedBal, retry.preempterBal, retry.preempterAt)
 		return false
 	}
 	return decider.SimplePropsalManager.DecideRetry(pbk, retry)
