@@ -138,6 +138,7 @@ var batchFlush *bool = flag.Bool("batchflush", false, "Should messages be flushe
 var batchFlushWait *int = flag.Int("batchflushwait", -1, "How long to wait before flushing writers")
 
 func main() {
+
 	flag.Parse()
 
 	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
@@ -401,26 +402,17 @@ func main() {
 			proposedBatchObserers = []twophase.ProposedObserver{chosenUQ}
 			batLnrs = []twophase.MyBatchLearner{&balloter, chosenUQ}
 		}
-		if *dostdEager {
-			rep := twophase.NewBaselineEagerReplica(proposerQrms, proposerQrms, proposerQrms, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
-				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
-				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
-				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), proposerQrms, *tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *mappedProposersNum, *rateLimitEagerOpenInsts)
-			runnable = rep
-			rpc.Register(rep)
-		} else {
-			rep := twophase.NewBaselineTwoPhaseReplica(proposerQrms, proposerQrms, proposerQrms, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
-				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
-				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
-				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
-				*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-				*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance, *mappedProposersNum, int32(*instsToOpenPerBatch), proposedBatchObserers, batchProposeOracle)
-			runnable = rep
-			rpc.Register(rep)
-		}
+
+		rep := twophase.NewBaselineTwoPhaseReplica(proposerQrms, proposerQrms, proposerQrms, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
+			int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+			*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
+			int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
+			int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
+			*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
+			*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance, *mappedProposersNum, int32(*instsToOpenPerBatch), proposedBatchObserers, batchProposeOracle, *dostdEager)
+		runnable = rep
+		rpc.Register(rep)
+		//}
 	} else {
 		log.Println("Starting classic Paxos replica...")
 		rep := paxos.NewReplica(smrReplica, replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *sendFastestQrm)

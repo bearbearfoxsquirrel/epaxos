@@ -113,9 +113,8 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxo
 		timesPreempted: preemptNum,
 	}
 	bm.currentBackoffs[inst] = info
-	timer := time.NewTimer(time.Duration(next) * time.Microsecond)
 	go func() {
-		<-timer.C
+		time.Sleep(time.Duration(next) * time.Microsecond)
 		bm.sig <- info
 	}()
 
@@ -130,7 +129,7 @@ func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
 		return false
 	} else {
 		stillRelevant := backoff == curBackoff //DecideRetry update so that inst also has bal backed off
-		dlog.Println("Backoff of instance ", backoff.inst, "isChosen relevant? ", stillRelevant)
+		dlog.Println("Backoff of instance ", backoff.inst, "is relevant? ", stillRelevant)
 		return stillRelevant
 	}
 }

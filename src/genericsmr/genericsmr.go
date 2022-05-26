@@ -273,6 +273,7 @@ func (r *Replica) heartbeatLoop() {
 				continue
 			}
 			r.SendBeacon(i)
+
 		}
 		<-timer.C
 		timer.Reset(r.heartbeatFrequency)
@@ -748,6 +749,37 @@ func (r *Replica) updateLatencyWithReply(rid int, gbeaconReply genericsmrproto.B
 	//r.Mutex.Unlock()
 }
 
+type LatencyOracle interface {
+	GetLatency(rId int32) time.Duration
+	GetPeerOrderLatency() []int32 // ascending - you will always be index 0
+	GetAlive() []bool
+	GetPeerLatencies() []time.Duration
+}
+
+func (r *Replica) GetLatency(rId int32) time.Duration {
+	return time.Duration(r.Ewma[rId]) * time.Nanosecond
+}
+
+func (r *Replica) GetAlive() []bool {
+	for i := 0; i < r.N; i++ {
+		if int(r.Id) == i {
+			continue
+		}
+		if time.Duration(r.Ewma[i]) > time.Duration(r.deadTime)*time.Millisecond {
+			r.Alive[i] = false
+		}
+	}
+	return r.Alive
+}
+
+func (r *Replica) GetPeerLatencies() []time.Duration {
+	lat := make([]time.Duration, r.N)
+	for rId := int32(0); rId < int32(r.N); rId++ {
+		lat[rId] = r.GetLatency(rId)
+	}
+	return lat
+}
+
 // returns all alive acceptors ordered by random (including self)
 func (r *Replica) GetAliveRandomPeerOrder() []int32 {
 	// returns a random preference order for sending messages, except we are always first
@@ -770,7 +802,7 @@ func (r *Replica) GetAliveRandomPeerOrder() []int32 {
 }
 
 // returns all alive acceptors ordered by latency (including self)
-func (r *Replica) GetLatencyPeerOrder() []int32 {
+func (r *Replica) GetPeerOrderLatency() []int32 {
 	r.Mutex.Lock()
 	//aliveReps := r.getAlivePeers()
 	peers := make([]int32, r.N)

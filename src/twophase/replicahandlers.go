@@ -36,6 +36,15 @@ func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *stdpax
 	}(prepare, resp)
 }
 
+func isPreemptOrPromise(preply *stdpaxosproto.PrepareReply) string {
+	isPreempt := preply.Cur.GreaterThan(preply.Req)
+	isPreemptStr := "Preempt"
+	if !isPreempt {
+		isPreemptStr = "Promise"
+	}
+	return isPreemptStr
+}
+
 func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica) {
 	resp := acc.RecvPrepareRemote(prepare)
 	go func(response <-chan acceptor.Message) {
@@ -113,6 +122,15 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 	}(c, accept)
 }
 
+func isPreemptOrAccept(areply *stdpaxosproto.AcceptReply) string {
+	isPreempt := areply.Cur.GreaterThan(areply.Req)
+	isPreemptStr := "Preempt"
+	if !isPreempt {
+		isPreemptStr = "Accept"
+	}
+	return isPreemptStr
+}
+
 func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable) {
 	dlog.AgentPrintfN(id, "Acceptor handing Accept from Replica %d in instance %d at ballot %d.%d as it can form a quorum", accept.PropID, accept.Instance, accept.Number, accept.PropID)
 	responseC := acc.RecvAcceptRemote(accept)
@@ -174,4 +192,4 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 	}(responseC)
 }
 
-// todo replace bcasts etc. with on success closures? What's the performance penalty of that?
+// todo replace bcasts etc. with on chosen closures? What's the performance penalty of that?

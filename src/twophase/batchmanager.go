@@ -34,7 +34,7 @@ type ProposedClientValuesManager interface {
 	ClientBatchProposedHandler
 }
 
-type SimpleManager struct {
+type SimpleBatchManager struct {
 	id    int32
 	stats *stats.TimeseriesStats
 	Requeueing
@@ -43,7 +43,7 @@ type SimpleManager struct {
 }
 
 func ProposedClientValuesManagerNew(id int32, tsStats *stats.TimeseriesStats, doStats bool, q Queueing) ProposedClientValuesManager {
-	return &SimpleManager{
+	return &SimpleBatchManager{
 		id:         id,
 		stats:      tsStats,
 		Requeueing: q,
@@ -52,12 +52,12 @@ func ProposedClientValuesManagerNew(id int32, tsStats *stats.TimeseriesStats, do
 	}
 }
 
-func (manager *SimpleManager) intendingToProposeBatch(pbk *ProposingBookkeeping, inst int32, batch batching.ProposalBatch) {
+func (manager *SimpleBatchManager) intendingToProposeBatch(pbk *ProposingBookkeeping, inst int32, batch batching.ProposalBatch) {
 	pbk.putBatch(batch)
 }
 
 // is this after or before
-func (manager *SimpleManager) learnOfBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot) {
+func (manager *SimpleBatchManager) learnOfBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot) {
 	//todo log
 	if pbk.clientProposals == nil {
 		return
@@ -80,14 +80,14 @@ func (manager *SimpleManager) learnOfBallot(pbk *ProposingBookkeeping, inst int3
 }
 
 // is this after or before
-func (manager *SimpleManager) learnOfAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
+func (manager *SimpleBatchManager) learnOfAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
 	if pbk.clientProposals == nil {
 		return
 	}
 	if whoseCmds == manager.id {
 		return
 	}
-	if pbk.status == NOT_BEGUN || pbk.status == CLOSED || pbk.status == PROPOSING {
+	if pbk.status == NOT_BEGUN || pbk.status == CLOSED { // || pbk.status == PROPOSING {
 		return
 	}
 	if _, e := manager.requeuedAt[inst][pbk.propCurBal]; e {
@@ -100,7 +100,7 @@ func (manager *SimpleManager) learnOfAcceptedBallot(pbk *ProposingBookkeeping, i
 	manager.setRequeuedAt(inst, pbk.propCurBal)
 }
 
-func (manager *SimpleManager) setRequeuedAt(inst int32, bal stdpaxosproto.Ballot) {
+func (manager *SimpleBatchManager) setRequeuedAt(inst int32, bal stdpaxosproto.Ballot) {
 	if _, e := manager.requeuedAt[inst]; !e {
 		manager.requeuedAt[inst] = make(map[stdpaxosproto.Ballot]struct{})
 	}
@@ -125,7 +125,7 @@ func whatHappenedToClientProposals(pbk *ProposingBookkeeping, whoseCmds int32, m
 	}
 }
 
-func (manager *SimpleManager) valueChosen(pbk *ProposingBookkeeping, inst int32, whoseCmds int32, cmds []*state.Command) {
+func (manager *SimpleBatchManager) valueChosen(pbk *ProposingBookkeeping, inst int32, whoseCmds int32, cmds []*state.Command) {
 	if pbk.whoseCmds == manager.id && pbk.clientProposals == nil {
 		panic("client values chosen but we won't recognise that")
 	}
@@ -165,9 +165,9 @@ type HedgedBetsBatchManager struct {
 	chosen             map[int32]map[int32]struct{}
 	attemptedInstances map[int32]map[int32]struct{}     // keep track of how many instances we have proposed a batch to
 	attemptedBatches   map[int32]batching.ProposalBatch // reverse look up of insts and their batches attempted
-	// only requeue once all attempts have failed or are requesting requeue
+	// only requeue once all attempts have preempted or are requesting requeue
 	// todo add in preempt as a failure
-	failedAttempts map[int32]map[int32]struct{} // instances that a batch has been chosen and failed (or requesting requeuing)
+	failedAttempts map[int32]map[int32]struct{} // instances that a batch has been chosen and preempted (or requesting requeuing)
 }
 
 func HedgedBetsBatchManagerNew(id int32, tsStats *stats.TimeseriesStats, doStats bool, q Queueing) *HedgedBetsBatchManager {
@@ -256,7 +256,7 @@ func (manager *HedgedBetsBatchManager) markedFailed(inst int32, batch batching.P
 
 // is this after or before
 func (manager *HedgedBetsBatchManager) learnOfAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
-	// consider the instance failed?
+	// consider the instance preempted?
 	if pbk.clientProposals == nil {
 		return
 	}
@@ -266,7 +266,7 @@ func (manager *HedgedBetsBatchManager) learnOfAcceptedBallot(pbk *ProposingBookk
 	if pbk.status == NOT_BEGUN || pbk.status == CLOSED || pbk.status == PROPOSING {
 		return
 	}
-	dlog.AgentPrintfN(manager.id, "Encountered previously accepted value in instance %d, whose value %d from ballot %d.%d when attempting batch with UID %d",
+	dlog.AgentPrintfN(manager.id, "Encountered accepted value in instance %d, whose value %d from ballot %d.%d when attempting batch with UID %d",
 		inst, whoseCmds, ballot.Number, ballot.PropID, pbk.clientProposals.GetUID())
 	batch, attempted := manager.attemptedBatches[inst]
 	if !attempted {
@@ -325,7 +325,7 @@ func (manager *HedgedBetsBatchManager) valueChosen(pbk *ProposingBookkeeping, in
 	}
 
 	if manager.shouldRequeue(batch) {
-		// all current intentions have failed
+		// all current intentions have preempted
 		manager.Requeueing.Requeue(batch)
 	}
 

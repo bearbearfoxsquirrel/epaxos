@@ -982,9 +982,7 @@ func (a *betterBatching) batchPersister() {
 }
 
 func (a *betterBatching) doBatch() {
-
 	dlog.AgentPrintfN(a.meID, "Acceptor batch starting, now persisting received ballots")
-
 	for instToResp, _ := range a.batcher.awaitingResponses {
 		abk := a.batcher.instanceState[instToResp]
 		recordInstanceMetadata(abk, a.stableStore, a.durable)
@@ -993,14 +991,15 @@ func (a *betterBatching) doBatch() {
 		}
 	}
 	fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
-
 	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses for %d instances", len(a.batcher.awaitingResponses))
+
 	for instToResp, awaitingResps := range a.batcher.awaitingResponses {
 		abk := a.batcher.instanceState[instToResp]
 		returnResponsesAndResetAwaitingResponses(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
 	}
 
 	a.batcher.awaitingResponses = make(map[int32]*responsesAwaiting, 100)
+	dlog.AgentPrintfN(a.meID, "Acceptor done returning responses")
 }
 
 func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
@@ -1018,6 +1017,7 @@ func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
 
 	instAwaitingResponses := a.getAwaitingResponses(inst)
 	if instState.curBal.GreaterThan(accMsg.Ballot) {
+		dlog.AgentPrintfN(a.meID, "Acceptor intending to preempt ballot in instance %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 		//check if most recent ballot from proposer to return preempt to
 		prevAcc := instAwaitingResponses.propsAcceptResps[requestor]
 		if prevAcc != nil {
@@ -1041,8 +1041,8 @@ func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
 		}
 		return
 	}
+	dlog.AgentPrintfN(a.meID, "Acceptor intending to accept ballot in instance %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 
-	// store commit
 	instState.status = ACCEPTED
 	instState.curBal = accMsg.Ballot
 	instState.vBal = accMsg.Ballot
@@ -1073,6 +1073,7 @@ func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
 
 	instAwaitingResponses := a.getAwaitingResponses(inst)
 	if instState.curBal.GreaterThan(prepMsg.Ballot) || (instState.curBal.Equal(prepMsg.Ballot) && instState.status == ACCEPTED) {
+		dlog.AgentPrintfN(a.meID, "Acceptor intending to preempt ballot in instance %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 		// check if most recent ballot from proposer to return preempt to
 		prevAcc := instAwaitingResponses.propsAcceptResps[requestor]
 		if prevAcc != nil {
@@ -1096,6 +1097,7 @@ func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
 		}
 		return
 	}
+	dlog.AgentPrintfN(a.meID, "Acceptor intending to promise ballot in instance %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 
 	instState.status = PREPARED
 	instState.curBal = prepMsg.Ballot
@@ -1234,8 +1236,6 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 	}
 
 	for pid, prepResp := range awaitingResps.propsPrepResps {
-		dlog.AgentPrintfN(myId, "Acceptor returning Prepare Reply to Replica %d for instance %d at current ballot %d.%d when requested %d.%d", pid,
-			inst, abk.curBal.Number, abk.curBal.PropID, prepResp.Number, prepResp.PropID)
 		prep := &stdpaxosproto.PrepareReply{
 			Instance:   inst,
 			Cur:        abk.curBal,
@@ -1246,12 +1246,20 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 			WhoseCmd:   abk.whoseCmds,
 			Command:    abk.cmds,
 		}
+		preempt := !prep.Cur.Equal(prep.Req)
+		typeRespS := "promise"
+		if preempt {
+			typeRespS = "preempt"
+		}
+		dlog.AgentPrintfN(myId, "Acceptor returning Prepare Reply (%s) to Replica %d for instance %d at current ballot %d.%d when requested %d.%d", typeRespS, pid,
+			inst, abk.curBal.Number, abk.curBal.PropID, prepResp.Number, prepResp.PropID)
+
 		resp, lpid := prepResp, pid
 		go func() {
 			resp.retMsgChan <- protoMessage{
 				towhom:       giveToWhom(lpid),
 				gettype:      func() uint8 { return prepareReplyRPC },
-				isnegative:   func() bool { return !prep.Cur.Equal(prep.Req) },
+				isnegative:   func() bool { return preempt },
 				Serializable: prep,
 			}
 			close(resp.retMsgChan)
@@ -1260,8 +1268,6 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 
 	outOfOrderAccept := false
 	for pid, accResp := range awaitingResps.propsAcceptResps {
-		dlog.AgentPrintfN(myId, "Acceptor returning Accept Reply to Replica %d for instance %d at current ballot %d.%d when requested %d.%d",
-			pid, inst, abk.curBal.Number, abk.curBal.PropID, accResp.Number, accResp.PropID)
 
 		if abk.curBal.GreaterThan(accResp.Ballot) {
 			outOfOrderAccept = true
@@ -1275,7 +1281,6 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 			curPhase = stdpaxosproto.ACCEPTANCE
 			curBal = abk.vBal
 		}
-
 		acc := &stdpaxosproto.AcceptReply{
 			Instance:   inst,
 			AcceptorId: myId,
@@ -1284,12 +1289,21 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 			Req:        accResp.Ballot,
 			WhoseCmd:   abk.whoseCmds,
 		}
+
+		preempt := !acc.Cur.Equal(acc.Req)
+		respTypeS := "acceptance"
+		if preempt {
+			respTypeS = "preempt"
+		}
+		dlog.AgentPrintfN(myId, "Acceptor returning Accept Reply (%s) to Replica %d for instance %d at current ballot %d.%d when requested %d.%d", respTypeS,
+			pid, inst, abk.curBal.Number, abk.curBal.PropID, accResp.Number, accResp.PropID)
+
 		resp, lpid := accResp, pid
 		go func() {
 			resp.retMsgChan <- protoMessage{
 				towhom:       giveToWhom(lpid),
 				gettype:      func() uint8 { return acceptReplyRPC },
-				isnegative:   func() bool { return !acc.Cur.Equal(acc.Req) },
+				isnegative:   func() bool { return preempt },
 				Serializable: acc,
 			}
 			close(resp.retMsgChan)

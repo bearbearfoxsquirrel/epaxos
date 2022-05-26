@@ -305,7 +305,7 @@ func (r *Replica) bcastPrepare(instance int32) {
 
 	var order []int32
 	if r.sendToFastestQrm {
-		order = r.GetLatencyPeerOrder()
+		order = r.GetPeerOrderLatency()
 	} else {
 		order = r.GetAliveRandomPeerOrder()
 	}
@@ -335,7 +335,7 @@ func (r *Replica) bcastAccept(instance int32) {
 
 	var order []int32
 	if r.sendToFastestQrm {
-		order = r.GetLatencyPeerOrder()
+		order = r.GetPeerOrderLatency()
 	} else {
 		order = r.GetAliveRandomPeerOrder()
 	}
