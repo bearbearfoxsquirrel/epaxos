@@ -781,24 +781,24 @@ func (r *Replica) GetPeerLatencies() []time.Duration {
 }
 
 // returns all alive acceptors ordered by random (including self)
-func (r *Replica) GetAliveRandomPeerOrder() []int32 {
+func (r *Replica) GetRandomPeerOrder() []int32 {
 	// returns a random preference order for sending messages, except we are always first
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
-	aliveReps := make([]int32, 1, r.N)
-	aliveReps[0] = r.Id
-	for i, isAlive := range r.Alive {
-		if !isAlive || int(r.Id) == i {
+	reps := make([]int32, 1, r.N)
+	reps[0] = r.Id
+	for i := int32(0); i < int32(r.N); i++ {
+		if r.Id == i {
 			continue
 		}
-		aliveReps = append(aliveReps, int32(i))
+		reps = append(reps, i)
 	}
-	toShuff := aliveReps[1:]
+	toShuff := reps[1:]
 	rand.Shuffle(len(toShuff), func(i, j int) {
 		toShuff[i], toShuff[j] = toShuff[j], toShuff[i]
 	})
 
-	return aliveReps
+	return reps
 }
 
 // returns all alive acceptors ordered by latency (including self)

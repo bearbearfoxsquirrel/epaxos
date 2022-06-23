@@ -32,13 +32,13 @@ package acceptor
 //	}
 //}
 //
-//func AltBetterBatchingAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, maxBatchWait time.Duration, proposerIDs []int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool) *altbetterBatching {
+//func AltBetterBatchingAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, maxAcceptanceBatchWait time.Duration, proposerIDs []int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool) *altbetterBatching {
 //	bat := &altbetterBatching{
 //		stableStore:      file,
 //		durable:          durable,
 //		emuatedWriteTime: emulatedWriteTime,
 //		emulatedSS:       emulatedSS,
-//		maxBatchWait:     maxBatchWait,
+//		maxAcceptanceBatchWait:     maxAcceptanceBatchWait,
 //		batcher: &altbetterBatcher{
 //			awaitingResponses: make(map[int32]*responsesAwaiting, 100),
 //			instanceState:     make(map[int32]*AcceptorBookkeeping, 100),
@@ -178,7 +178,7 @@ package acceptor
 //	}
 //
 //	if bal.GreaterThan(abk.curBal) || bal.Equal(abk.curBal) {
-//		nonDurableAccept(accept, abk, a.stableStore, a.durable)
+//		nonDurableConfAccept(accept, abk, a.stableStore, a.durable)
 //		fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 //	}
 //
@@ -310,7 +310,7 @@ package acceptor
 //	durable          bool
 //	emuatedWriteTime time.Duration
 //	emulatedSS       bool
-//	maxBatchWait     time.Duration
+//	maxAcceptanceBatchWait     time.Duration
 //
 //	ProposerIDs                []int32
 //	meID                       int32
@@ -374,7 +374,7 @@ package acceptor
 //}
 //
 //func (a *altbetterBatching) batchPersister() {
-//	timeout := time.NewTimer(a.maxBatchWait)
+//	timeout := time.NewTimer(a.maxAcceptanceBatchWait)
 //	for {
 //		select {
 //		case inc := <-a.batcher.commitShorts:
@@ -438,7 +438,7 @@ package acceptor
 //		case <-timeout.C:
 //			// return responses for max and not max
 //			a.doBatch()
-//			timeout.Reset(a.maxBatchWait)
+//			timeout.Reset(a.maxAcceptanceBatchWait)
 //			break
 //
 //		}
@@ -461,7 +461,7 @@ package acceptor
 //	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses")
 //	for instToResp, awaitingResps := range a.batcher.awaitingResponses {
 //		abk := a.batcher.instanceState[instToResp]
-//		returnResponsesAndResetAwaitingResponses(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
+//		returnPrepareAndAcceptResponses(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
 //	}
 //
 //	a.batcher.awaitingResponses = make(map[int32]*responsesAwaiting, 100)

@@ -307,7 +307,7 @@ func (r *Replica) bcastPrepare(instance int32) {
 	if r.sendToFastestQrm {
 		order = r.GetPeerOrderLatency()
 	} else {
-		order = r.GetAliveRandomPeerOrder()
+		order = r.GetRandomPeerOrder()
 	}
 	if len(order) < n || !r.Thrifty {
 		r.SendToGroup(order, r.prepareRPC, args)
@@ -337,7 +337,7 @@ func (r *Replica) bcastAccept(instance int32) {
 	if r.sendToFastestQrm {
 		order = r.GetPeerOrderLatency()
 	} else {
-		order = r.GetAliveRandomPeerOrder()
+		order = r.GetRandomPeerOrder()
 	}
 	if len(order) < n || !r.Thrifty {
 		r.SendToGroup(order, r.acceptRPC, args)

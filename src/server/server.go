@@ -1,18 +1,13 @@
 package main
 
 import (
-	"configtwophase"
 	"epaxos"
 	"flag"
 	"fmt"
 	"genericsmr"
 	"gpaxos"
-	"instanceagentmapper"
 	"io/ioutil"
 	"log"
-	"lwcglobalspec"
-	"lwcpatient"
-	"lwcspeculative"
 	"masterproto"
 	"math/rand"
 	"mencius"
@@ -22,12 +17,10 @@ import (
 	"os"
 	"os/signal"
 	"paxos"
-	"quorumsystem"
 	"runnable"
 	"runtime/pprof"
 	"time"
 	"twophase"
-	"twophase/aceptormessagefilter"
 )
 
 var portnum *int = flag.Int("port", 7070, "Port # to listen on. Defaults to 7070")
@@ -137,6 +130,9 @@ var rateLimitEagerOpenInsts *bool = flag.Bool("ratelimiteager", false, "Should e
 var batchFlush *bool = flag.Bool("batchflush", false, "Should messages be flushed as a batch")
 var batchFlushWait *int = flag.Int("batchflushwait", -1, "How long to wait before flushing writers")
 
+var patientProposals *bool = flag.Bool("patprops", false, "Use patient proposals to minimise preempted accept messages")
+var prewriteAcc *bool = flag.Bool("pwa", false, "Use Prewriting acceptor to reduce writes in phase 1")
+
 func main() {
 
 	flag.Parse()
@@ -184,7 +180,7 @@ func main() {
 
 	//TODO give parent dir to all replica types
 
-	initalProposalWait := time.Duration(*initProposalWaitUs) * time.Microsecond
+	//initalProposalWait := time.Duration(*initProposalWaitUs) * time.Microsecond
 
 	emulatedWriteTime := time.Nanosecond * time.Duration(*emulatedWriteTimeNs)
 	timeout := time.Microsecond * time.Duration(*timeoutus)
@@ -209,19 +205,19 @@ func main() {
 		runnable = rep
 	} else if *doLWCSpec {
 		log.Println("Starting LWC replica...")
-		rep := lwcspeculative.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
-		runnable = rep
-		rpc.Register(rep)
+		//rep := lwcspeculative.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize))
+		//runnable = rep
+		//rpc.Register(rep)
 	} else if *doLWCGlobalSpec {
 		log.Println("Starting LWC replica...")
-		rep := lwcglobalspec.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, int32(*deadTime))
-		rpc.Register(rep)
-		runnable = rep
+		//rep := lwcglobalspec.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, int32(*deadTime))
+		//rpc.Register(rep)
+		//runnable = rep
 	} else if *doLWCPatient {
 		log.Println("Starting LWC replica...")
-		rep := lwcpatient.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
-		rpc.Register(rep)
-		runnable = rep
+		//rep := lwcpatient.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
+		//rpc.Register(rep)
+		//runnable = rep
 	} else if *doSTDSpec {
 		log.Println("Starting Standard Paxos (speculative) replica...")
 		//rep := stdpaxosspeculative.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs)
@@ -234,182 +230,101 @@ func main() {
 		//runnable = rep
 	} else if *doSTDPatient {
 		log.Println("Starting LWC replica...")
-		//rep := stdpaxospatient.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt)
-		//rpc.Register(rep)
-		//runnable = rep
-
 	} else if *doELP || *doLessWriteyNonEager {
 
-		var qrm quorumsystem.SynodQuorumSystemConstructor
-
-		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
-			F:                0,
-			Replica:          smrReplica,
-			Thrifty:          *thrifty,
-			BroadcastFastest: *sendFastestQrm,
-		}
-		if *gridQrms {
-			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
-				F:                *maxfailures,
-				Replica:          smrReplica,
-				Thrifty:          *thrifty,
-				BroadcastFastest: *sendFastestQrm,
-			}
-		}
-
-		aids := make([]int, len(nodeList))
-		for i, _ := range aids {
-			aids[i] = i
-		}
-
-		balloter := configtwophase.Balloter{
-			PropID: int32(replicaId),
-			N:      int32(smrReplica.N),
-			MaxInc: 10000,
-			//DoTimeBasedBallots: timebasedBallots
-		}
-		var initialtor configtwophase.ProposalManager
-		initialtor = &configtwophase.NormalQuorumProposalInitiator{
-			SynodQuorumSystemConstructor: qrm,
-			Balloter:                     balloter,
-			Aids:                         aids,
-		}
-
-		if *reducedQrmSize {
-			var mapper instanceagentmapper.InstanceAgentMapper
-			if *gridQrms {
-				mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
-					Acceptors: aids,
-					F:         *maxfailures,
-					N:         len(nodeList),
-				}
-			} else {
-				mapper = &instanceagentmapper.InstanceAcceptorSetMapper{
-					Acceptors: aids,
-					F:         *maxfailures,
-					N:         len(nodeList),
-				}
-			}
-
-			initialtor = &configtwophase.ReducedQuorumProposalInitiator{
-				AcceptorMapper:               mapper,
-				SynodQuorumSystemConstructor: qrm,
-				Balloter:                     balloter,
-			}
-		}
-		if *doELP {
-			rep := configtwophase.NewElpReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
-				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
-				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
-				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
-			runnable = rep
-			rpc.Register(rep)
-		} else {
-			rep := configtwophase.NewLwsReplica(initialtor, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
-				int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
-				*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
-				int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-				*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *tsStatsFilename, *instStatsFilename)
-			runnable = rep
-			rpc.Register(rep)
-		}
+		//var qrm quorumsystem.SynodQuorumSystemConstructor
+		//
+		//qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
+		//	F:                0,
+		//	Replica:          smrReplica,
+		//	Thrifty:          *thrifty,
+		//	BroadcastFastest: *sendFastestQrm,
+		//}
+		//if *gridQrms {
+		//	qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
+		//		F:                *maxfailures,
+		//		Replica:          smrReplica,
+		//		Thrifty:          *thrifty,
+		//		BroadcastFastest: *sendFastestQrm,
+		//	}
+		//}
+		//
+		//aids := make([]int, len(nodeList))
+		//for i, _ := range aids {
+		//	aids[i] = i
+		//}
+		//
+		//balloter := configtwophase.Balloter{
+		//	PropID: int32(replicaId),
+		//	N:      int32(smrReplica.N),
+		//	MaxInc: 10000,
+		//	//DoTimeBasedBallots: timebasedBallots
+		//}
+		//var initialtor configtwophase.ProposalManager
+		//initialtor = &configtwophase.NormalQuorumProposalInitiator{
+		//	SynodQuorumSystemConstructor: qrm,
+		//	Balloter:                     balloter,
+		//	Aids:                         aids,
+		//}
+		//
+		//if *reducedQrmSize {
+		//	var mapper instanceagentmapper.InstanceAgentMapper
+		//	if *gridQrms {
+		//		mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
+		//			Acceptors: aids,
+		//			F:         *maxfailures,
+		//			N:         len(nodeList),
+		//		}
+		//	} else {
+		//		mapper = &instanceagentmapper.InstanceAcceptorSetMapper{
+		//			Acceptors: aids,
+		//			F:         *maxfailures,
+		//			N:         len(nodeList),
+		//		}
+		//	}
+		//
+		//	initialtor = &configtwophase.ReducedQuorumProposalInitiator{
+		//		AcceptorMapper:               mapper,
+		//		SynodQuorumSystemConstructor: qrm,
+		//		Balloter:                     balloter,
+		//	}
+		//}
+		//if *doELP {
+		//	rep := configtwophase.NewElpReplica(smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+		//		int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+		//		*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, initalProposalWait, *emulatedSS, emulatedWriteTime,
+		//		int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
+		//		*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *reducePropConfs, *bcastAcceptance, int32(*minBatchSize), initialtor, *tsStatsFilename, *instStatsFilename)
+		//	runnable = rep
+		//	rpc.Register(rep)
+		//} else {
+		//	rep := configtwophase.NewLwsReplica(initialtor, smrReplica, replicaId, *durable, *batchWait, *storageParentDir,
+		//		int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
+		//		*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
+		//		int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
+		//		*maxBatchSizeBytes, *constBackoff, *requeueOnPreempt, *tsStatsFilename, *instStatsFilename)
+		//	runnable = rep
+		//	rpc.Register(rep)
+		//}
 	} else if *dostdEager || *doBaselineTwoPhase {
 
-		aids := make([]int, len(nodeList))
-		for i, _ := range aids {
-			aids[i] = i
-		}
+		//aids := make([]int, len(nodeList))
+		//for i, _ := range aids {
+		//	aids[i] = i
+		//}
 
-		var qrm quorumsystem.SynodQuorumSystemConstructor
-		qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
-			F:                *maxfailures,
-			Thrifty:          *thrifty,
-			Replica:          smrReplica,
-			BroadcastFastest: *sendFastestQrm,
-			AllAids:          aids,
-			SendAllAcceptors: false,
-		}
-		if *gridQrms {
-			qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
-				F:                *maxfailures,
-				Replica:          smrReplica,
-				Thrifty:          *thrifty,
-				BroadcastFastest: *sendFastestQrm,
-			}
-		}
+		acceptorMaxBatchWait := time.Duration(*accMaxBatchWaitMs) * time.Millisecond
 
-		balloter := twophase.Balloter{
-			PropID:            int32(replicaId),
-			N:                 int32(smrReplica.N),
-			MaxInc:            10000,
-			DoTimeBasedBallot: *timeBasedBallots,
-		}
-		var proposerQrms twophase.Quormaliser
-		proposerQrms = &twophase.Standard{
-			SynodQuorumSystemConstructor: qrm,
-			Aids:                         aids,
-			MyID:                         int32(replicaId),
-		}
-
-		if *reducedQrmSize {
-			var mapper instanceagentmapper.InstanceAgentMapper
-			if *gridQrms {
-				mapper = &instanceagentmapper.InstanceAcceptorGridMapper{
-					Acceptors: aids,
-					F:         *maxfailures,
-					N:         len(nodeList),
-				}
-			} else {
-				mapper = &instanceagentmapper.InstanceAcceptorSetMapper{
-					Acceptors: aids,
-					F:         *maxfailures,
-					N:         len(nodeList),
-				}
-			}
-
-			proposerQrms = &twophase.Minimal{
-				AcceptorMapper:               mapper,
-				SynodQuorumSystemConstructor: qrm,
-				MapperCache:                  make(map[int32][]int),
-				MyID:                         int32(replicaId),
-			}
-		}
-
-		acceptorMaxBatchWait := time.Duration(time.Duration(*accMaxBatchWaitMs) * time.Millisecond)
-
-		var amf aceptormessagefilter.AcceptorMessageFilter = nil
-		if *minimalAcceptorNegatives {
-			if *gridQrms {
-				panic("incompatible options")
-			}
-			amf = aceptormessagefilter.MinimalAcceptorFilterNew(&instanceagentmapper.InstanceNegativeAcceptorSetMapper{
-				Acceptors: aids,
-				F:         *maxfailures,
-				N:         len(nodeList),
-			})
-		}
-		chosenQ := twophase.ChosenUniqueQNew(int32(replicaId), 200)
-		var q twophase.Queueing = twophase.ChosenUniqueQNew(int32(replicaId), 200)
-		var batchProposeOracle twophase.ProposeBatchOracle = chosenQ
-		proposedBatchObserers := make([]twophase.ProposedObserver, 0)
-		batLnrs := []twophase.MyBatchLearner{&balloter, chosenQ}
-
-		if *instsToOpenPerBatch > 1 {
-			chosenUQ := twophase.ProposingChosenUniqueueQNew(int32(replicaId), 200)
-			q = chosenUQ
-			batchProposeOracle = chosenUQ
-			proposedBatchObserers = []twophase.ProposedObserver{chosenUQ}
-			batLnrs = []twophase.MyBatchLearner{&balloter, chosenUQ}
-		}
-
-		rep := twophase.NewBaselineTwoPhaseReplica(proposerQrms, proposerQrms, proposerQrms, replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
+		rep := twophase.NewBaselineTwoPhaseReplica(replicaId, smrReplica, *durable, *batchWait, *storageParentDir,
 			int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait),
 			*alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, *emulatedSS, emulatedWriteTime,
-			int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc, *catchUpFallenBehind,
-			int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
+			int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc,
+			*catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 			*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-			*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, amf, *sendPreparesAllAcceptors, q, *minimalProposers, *timeBasedBallots, batLnrs, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance, *mappedProposersNum, int32(*instsToOpenPerBatch), proposedBatchObserers, batchProposeOracle, *dostdEager)
+			*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
+			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
+			*mappedProposersNum, int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
+			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm)
 		runnable = rep
 		rpc.Register(rep)
 		//}

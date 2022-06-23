@@ -3,8 +3,8 @@ package stats
 import (
 	"fmt"
 	"log"
+	"lwcproto"
 	"os"
-	"stdpaxosproto"
 	"strings"
 	"time"
 )
@@ -102,7 +102,7 @@ func (c *commitExecutionComparator) recordExecution(id InstanceID, time time.Tim
 func (c *commitExecutionComparator) outputInstanceTimes(id InstanceID) string {
 	timeTup, exists := c.cmdsTimes[id]
 	if !exists {
-		panic("cannot RecordOutcome a command with no record of commit or execution")
+		panic("cannot record outcome on command with no record of commit or execution")
 	}
 	cmtDiff := timeTup.Commit.Sub(timeTup.Open)
 	execDiff := timeTup.Execute.Sub(timeTup.Commit)
@@ -308,7 +308,7 @@ func ProposalStatsNew(addtitionalOrderedKeys []string, outputLoc string) *Propos
 		outputFile:       file,
 		orderdKeys:       addtitionalOrderedKeys,
 		whyClosedOptions: whyClosedOptions,
-		keyedStats:       make(map[InstanceID]map[stdpaxosproto.Ballot]*keyedStats),
+		keyedStats:       make(map[InstanceID]map[lwcproto.ConfigBal]*keyedStats),
 		keyExists:        make(map[string]struct{}),
 	}
 
@@ -326,33 +326,33 @@ func ProposalStatsNew(addtitionalOrderedKeys []string, outputLoc string) *Propos
 type ProposalStats struct {
 	outputFile       *os.File
 	orderdKeys       []string
-	keyedStats       map[InstanceID]map[stdpaxosproto.Ballot]*keyedStats
+	keyedStats       map[InstanceID]map[lwcproto.ConfigBal]*keyedStats
 	keyExists        map[string]struct{}
 	whyClosedOptions string
 }
 
-func (stat *ProposalStats) checkAndInitialise(id InstanceID, ballot stdpaxosproto.Ballot) {
+func (stat *ProposalStats) checkAndInitialise(id InstanceID, ballot lwcproto.ConfigBal) {
 	if _, exists := stat.keyedStats[id]; !exists {
-		stat.keyedStats[id] = make(map[stdpaxosproto.Ballot]*keyedStats)
+		stat.keyedStats[id] = make(map[lwcproto.ConfigBal]*keyedStats)
 	}
 	if _, exists := stat.keyedStats[id][ballot]; !exists {
 		stat.keyedStats[id][ballot] = keyedStatsNew(&stat.orderdKeys)
 	}
 }
 
-func (stat *ProposalStats) Open(id InstanceID, ballot stdpaxosproto.Ballot) {
+func (stat *ProposalStats) Open(id InstanceID, ballot lwcproto.ConfigBal) {
 	stat.checkAndInitialise(id, ballot)
 	stat.RecordOccurence(id, ballot, "Opened time", int(time.Now().UnixNano())) //todo bad convert map to int64
 }
 
-func (stat *ProposalStats) CloseAndOutput(id InstanceID, ballot stdpaxosproto.Ballot, why WhyClosedProposal) {
+func (stat *ProposalStats) CloseAndOutput(id InstanceID, ballot lwcproto.ConfigBal, why WhyClosedProposal) {
 	stat.RecordOccurence(id, ballot, "Closed (proposal) time", int(time.Now().UnixNano()))
 	stat.RecordOccurence(id, ballot, "Why closed? ("+stat.whyClosedOptions+")", why.Int())
 	stat.output(id, ballot)
 
 }
 
-func (stat *ProposalStats) output(id InstanceID, ballot stdpaxosproto.Ballot) {
+func (stat *ProposalStats) output(id InstanceID, ballot lwcproto.ConfigBal) {
 	if _, exists := stat.keyedStats[id][ballot]; !exists {
 		panic("Cannot output instance proposal stat when instance not began")
 	}
@@ -375,7 +375,7 @@ func (stat *ProposalStats) CloseOutput() {
 	stat.outputFile.Close()
 }
 
-func (stat *ProposalStats) RecordOccurence(id InstanceID, ballot stdpaxosproto.Ballot, key string, num int) {
+func (stat *ProposalStats) RecordOccurence(id InstanceID, ballot lwcproto.ConfigBal, key string, num int) {
 	if _, exists := stat.keyExists[key]; !exists {
 		panic("key does not exist in proposal stats")
 	}
@@ -383,17 +383,17 @@ func (stat *ProposalStats) RecordOccurence(id InstanceID, ballot stdpaxosproto.B
 	stat.keyedStats[id][ballot].recordOccurence(key, num)
 }
 
-func (stat *ProposalStats) RecordClientValuesProposed(id InstanceID, ballot stdpaxosproto.Ballot, num int) {
+func (stat *ProposalStats) RecordClientValuesProposed(id InstanceID, ballot lwcproto.ConfigBal, num int) {
 	stat.checkAndInitialise(id, ballot)
 	stat.keyedStats[id][ballot].recordOccurence("Client values proposed", num)
 }
 
-func (stat *ProposalStats) RecordPreviousValueProposed(id InstanceID, ballot stdpaxosproto.Ballot, num int) {
+func (stat *ProposalStats) RecordPreviousValueProposed(id InstanceID, ballot lwcproto.ConfigBal, num int) {
 	stat.checkAndInitialise(id, ballot)
 	stat.keyedStats[id][ballot].recordOccurence("Previous value proposed", num)
 }
 
-func (stat *ProposalStats) RecordNoopProposed(id InstanceID, ballot stdpaxosproto.Ballot) {
+func (stat *ProposalStats) RecordNoopProposed(id InstanceID, ballot lwcproto.ConfigBal) {
 	stat.checkAndInitialise(id, ballot)
 	stat.keyedStats[id][ballot].recordOccurence("Noop proposed", 1)
 }

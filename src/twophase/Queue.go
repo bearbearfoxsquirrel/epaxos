@@ -74,7 +74,7 @@ type ChosenUniqueQ struct {
 
 func (q *ChosenUniqueQ) ShouldPropose(bat batching.ProposalBatch) bool {
 	if _, exists := q.chosen[bat.GetUID()]; exists {
-		dlog.AgentPrintfN(q.id, "Batch with UID %d received to tryPropose has been chosen so throwing out", bat.GetUID())
+		dlog.AgentPrintfN(q.id, "Batch with UID %d received to propose has been chosen so throwing out", bat.GetUID())
 		return false
 	}
 	return true
@@ -82,7 +82,7 @@ func (q *ChosenUniqueQ) ShouldPropose(bat batching.ProposalBatch) bool {
 
 func (q *ChosenUniqueQ) Dequeued(bat batching.ProposalBatch, do func()) error {
 	if _, exists := q.chosen[bat.GetUID()]; exists {
-		dlog.AgentPrintfN(q.id, "Batch with UID %d received to tryPropose has been chosen so throwing out", bat.GetUID())
+		dlog.AgentPrintfN(q.id, "Batch with UID %d received to propose has been chosen so throwing out", bat.GetUID())
 		return &QueueingError{errors.New(fmt.Sprintf("Not Requeued as batch with UID %d is chosen", bat.GetUID())), 2}
 	}
 	q.UniqueQ.Dequeued(bat, do)

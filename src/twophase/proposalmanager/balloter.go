@@ -1,6 +1,7 @@
-package twophase
+package proposalmanager
 
 import (
+	"lwcproto"
 	"math"
 	"math/rand"
 	"stdpaxosproto"
@@ -9,23 +10,28 @@ import (
 
 type Balloter struct {
 	PropID, N, MaxInc          int32
-	timeSinceValueLastSelected time.Time
+	TimeSinceValueLastSelected time.Time
 	DoTimeBasedBallot          bool
 }
 
+//func (balloter *Balloter) Learn(bat batching.ProposalBatch) {
+//	TODO implement me
+//panic("implement me")
+//}
+
 func (balloter *Balloter) UpdateValueSelected() {
-	balloter.timeSinceValueLastSelected = time.Now()
+	balloter.TimeSinceValueLastSelected = time.Now()
 }
 
-func (balloter *Balloter) getNextProposingBal(maxPrevRoundNum int32) stdpaxosproto.Ballot {
+func (balloter *Balloter) GetNextProposingBal(config int32, maxPrevRoundNum int32) lwcproto.ConfigBal {
 	mini := ((maxPrevRoundNum/balloter.MaxInc)+1)*balloter.MaxInc + balloter.N
 	var max int32
 	zero := time.Time{}
 	max = mini + balloter.MaxInc
 
 	var next int32
-	if balloter.timeSinceValueLastSelected != zero && balloter.DoTimeBasedBallot {
-		timeDif := time.Now().Sub(balloter.timeSinceValueLastSelected)
+	if balloter.TimeSinceValueLastSelected != zero && balloter.DoTimeBasedBallot {
+		timeDif := time.Now().Sub(balloter.TimeSinceValueLastSelected)
 
 		diff := timeDif.Milliseconds()
 		if timeDif.Milliseconds() > 10000 { // cap of 10 seconds
@@ -47,7 +53,7 @@ func (balloter *Balloter) getNextProposingBal(maxPrevRoundNum int32) stdpaxospro
 	if balloter.PropID < 0 || next < mini {
 		panic("bad round num")
 	}
-	return stdpaxosproto.Ballot{next - balloter.PropID, int16(balloter.PropID)}
+	return lwcproto.ConfigBal{Config: config, Ballot: stdpaxosproto.Ballot{next - balloter.PropID, int16(balloter.PropID)}}
 
 }
 

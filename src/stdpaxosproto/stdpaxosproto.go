@@ -22,8 +22,10 @@ func (bal Ballot) IsZero() bool {
 type Phase int32
 
 const (
+	//	NIL
 	PROMISE Phase = iota
 	ACCEPTANCE
+	UNKNOWN
 )
 
 func (p Phase) int32() int32 {

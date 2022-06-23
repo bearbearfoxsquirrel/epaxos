@@ -224,10 +224,13 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	if qrmSys.broadcastFastest {
 		peerList = qrmSys.Replica.GetPeerOrderLatency()
 	} else {
-		peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
+		peerList = qrmSys.Replica.GetRandomPeerOrder()
 	}
 
 	//log.Println("peer list ", peerList)
+
+	qrmSys.Replica.SendMsg(qrmSys.Id, code, msg)
+	sentTo = append(sentTo, int(qrmSys.Id))
 
 	if len(peerList) < qrmSys.crtQrm.Threshold {
 		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
@@ -244,7 +247,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 				break
 			}
 		}
-		if len(sentTo) == qrmSys.crtQrm.Threshold {
+		if len(sentTo) == qrmSys.crtQrm.Threshold { //todo fixme -- give out when either qrm reached and we are in it or qrm + us if we are not in it
 			break
 		}
 	}

@@ -1,10 +1,10 @@
-package twophase
+package proposalmanager
 
 import (
 	"dlog"
 	"instanceagentmapper"
+	"lwcproto"
 	"quorumsystem"
-	"stdpaxosproto"
 )
 
 type Quormaliser interface {
@@ -14,11 +14,11 @@ type Quormaliser interface {
 }
 
 type ProposerQuorumaliser interface {
-	startPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32)
+	StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32)
 }
 
 type LearnerQuorumaliser interface {
-	trackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal stdpaxosproto.Ballot)
+	TrackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal lwcproto.ConfigBal)
 }
 
 type AcceptorQrmInfo interface {
@@ -39,15 +39,15 @@ func (qrmliser *Standard) IsInQrm(inst int32, aid int32) bool {
 	return true
 }
 
-func (qrmliser *Standard) startPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32) {
+func (qrmliser *Standard) StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32) {
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(qrmliser.Aids)
-	pbk.qrms[pbk.propCurBal] = quorumaliser
-	pbk.qrms[pbk.propCurBal].StartPromiseQuorum()
+	pbk.Qrms[pbk.PropCurBal] = quorumaliser
+	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
 }
 
-func (qrmliser *Standard) trackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal stdpaxosproto.Ballot) {
+func (qrmliser *Standard) TrackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal lwcproto.ConfigBal) {
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(qrmliser.Aids)
-	pbk.qrms[bal] = quorumaliser
+	pbk.Qrms[bal] = quorumaliser
 	quorumaliser.StartAcceptanceQuorum()
 }
 
@@ -65,7 +65,7 @@ type Minimal struct {
 	MyID int32
 }
 
-func (qrmliser *Minimal) startPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32) {
+func (qrmliser *Minimal) StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32) {
 	//make quorum
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
 		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
@@ -74,11 +74,11 @@ func (qrmliser *Minimal) startPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, i
 	dlog.AgentPrintfN(qrmliser.MyID, "Minimal acceptor group for instance %d is %v", inst, group)
 	//log.Println("group for instance", inst, ":", group)
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(group)
-	pbk.qrms[pbk.propCurBal] = quorumaliser
-	pbk.qrms[pbk.propCurBal].StartPromiseQuorum()
+	pbk.Qrms[pbk.PropCurBal] = quorumaliser
+	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
 }
 
-func (qrmliser *Minimal) trackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal stdpaxosproto.Ballot) {
+func (qrmliser *Minimal) TrackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal lwcproto.ConfigBal) {
 	//make quorum
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
 		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
@@ -87,7 +87,7 @@ func (qrmliser *Minimal) trackProposalAcceptance(pbk *ProposingBookkeeping, inst
 	dlog.AgentPrintfN(qrmliser.MyID, "Minimal acceptor group for instance %d is %v", inst, group)
 
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(group)
-	pbk.qrms[bal] = quorumaliser
+	pbk.Qrms[bal] = quorumaliser
 	quorumaliser.StartAcceptanceQuorum()
 }
 

@@ -1,8 +1,9 @@
-package twophase
+package configproposalmanager
 
 import (
 	"dlog"
 	"fmt"
+	"lwcproto"
 	"math"
 	"math/rand"
 	"stdpaxosproto"
@@ -10,12 +11,12 @@ import (
 )
 
 type RetryInfo struct {
-	inst           int32
-	attemptedBal   stdpaxosproto.Ballot
-	preempterBal   stdpaxosproto.Ballot
-	preempterAt    stdpaxosproto.Phase
-	prev           int32
-	timesPreempted int32
+	Inst           int32
+	AttemptedBal   lwcproto.ConfigBal
+	PreempterBal   lwcproto.ConfigBal
+	PreempterAt    stdpaxosproto.Phase
+	Prev           int32
+	TimesPreempted int32
 }
 
 type BackoffInfo struct {
@@ -34,12 +35,12 @@ type BackoffManager struct {
 	softFac bool
 }
 
-func NewBackoffManager(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo, factor float64, softFac bool, constBackoff bool) BackoffManager {
+func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo, factor float64, softFac bool, constBackoff bool) *BackoffManager {
 	if minBO > maxInitBO {
 		panic(fmt.Sprintf("minbackoff %d, maxinitbackoff %d, incorrectly set up", minBO, maxInitBO))
 	}
 
-	return BackoffManager{
+	return &BackoffManager{
 		currentBackoffs: make(map[int32]RetryInfo),
 		BackoffInfo: BackoffInfo{
 			minBackoff:     minBO,
@@ -63,17 +64,17 @@ func (ir *IntRange) NextRandom(r *rand.Rand) int {
 	return r.Intn(ir.max-ir.min+1) + ir.min
 }
 
-func (bm *BackoffManager) ShouldBackoff(inst int32, preempter stdpaxosproto.Ballot, preempterPhase stdpaxosproto.Phase) bool {
+func (bm *BackoffManager) ShouldBackoff(inst int32, preempter lwcproto.ConfigBal, preempterPhase stdpaxosproto.Phase) bool {
 	curBackoffInfo, exists := bm.currentBackoffs[inst]
 	if !exists {
 		return true
-	} else if preempter.GreaterThan(curBackoffInfo.preempterBal) || (preempter.Equal(curBackoffInfo.preempterBal) && preempterPhase > curBackoffInfo.preempterAt) {
+	} else if preempter.GreaterThan(curBackoffInfo.PreempterBal) || (preempter.Equal(curBackoffInfo.PreempterBal) && preempterPhase > curBackoffInfo.PreempterAt) {
 		return true
 	} else {
 		return false
 	}
 }
-func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxosproto.Ballot, preempter stdpaxosproto.Ballot, prempterPhase stdpaxosproto.Phase) (bool, int32) {
+func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcproto.ConfigBal, preempter lwcproto.ConfigBal, prempterPhase stdpaxosproto.Phase) (bool, int32) {
 	// if we give this a pointer to the timer we could stop the previous backoff before it gets pinged
 	curBackoffInfo, exists := bm.currentBackoffs[inst]
 
@@ -84,7 +85,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxo
 
 	var preemptNum int32 = 0
 	if exists {
-		preemptNum = curBackoffInfo.timesPreempted + 1
+		preemptNum = curBackoffInfo.TimesPreempted + 1
 	}
 
 	var next int32
@@ -105,12 +106,12 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxo
 	}
 	dlog.Printf("Beginning backoff of %d us for instance %d on conf-bal %d.%d (attempt %d)", next, inst, attemptedBal.Number, attemptedBal.PropID, preemptNum)
 	info := RetryInfo{
-		inst:           inst,
-		attemptedBal:   attemptedBal,
-		preempterBal:   preempter,
-		preempterAt:    prempterPhase,
-		prev:           next,
-		timesPreempted: preemptNum,
+		Inst:           inst,
+		AttemptedBal:   attemptedBal,
+		PreempterBal:   preempter,
+		PreempterAt:    prempterPhase,
+		Prev:           next,
+		TimesPreempted: preemptNum,
 	}
 	bm.currentBackoffs[inst] = info
 	go func() {
@@ -122,14 +123,14 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal stdpaxo
 }
 
 func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
-	curBackoff, exists := bm.currentBackoffs[backoff.inst]
+	curBackoff, exists := bm.currentBackoffs[backoff.Inst]
 
 	if !exists {
 		dlog.Printf("backoff has no record")
 		return false
 	} else {
-		stillRelevant := backoff == curBackoff //DecideRetry update so that inst also has bal backed off
-		dlog.Println("Backoff of instance ", backoff.inst, "is relevant? ", stillRelevant)
+		stillRelevant := backoff == curBackoff //DecideRetry update so that Inst also has bal backed off
+		dlog.Println("Backoff of instance ", backoff.Inst, "is relevant? ", stillRelevant)
 		return stillRelevant
 	}
 }
@@ -137,3 +138,7 @@ func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
 func (bm *BackoffManager) ClearBackoff(inst int32) {
 	delete(bm.currentBackoffs, inst)
 }
+
+// estimate time for a proposer to receive promise from you and all other acceptors in group (depends on thrifty,
+// estimate time for the proposer to send to the acceptor group
+// time to hear learn (either from the proposer, or from the acceptor group -- depends on bcast commit)

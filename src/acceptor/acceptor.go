@@ -3,47 +3,12 @@ package acceptor
 import (
 	"dlog"
 	"encoding/binary"
-	"fastrpc"
 	"stablestore"
 	"state"
 	"stdpaxosproto"
 	"sync"
-
-	//sync2 "fsync"
 	"time"
 )
-
-type Message interface {
-	ToWhom() int32
-	GetType() uint8
-	IsNegative() bool
-	GetSerialisable() fastrpc.Serializable
-	fastrpc.Serializable
-}
-
-type protoMessage struct {
-	towhom     func() int32
-	gettype    func() uint8
-	isnegative func() bool
-	//	getSerialisable func() fastrpc.Serializable
-	fastrpc.Serializable
-}
-
-func (p protoMessage) GetSerialisable() fastrpc.Serializable {
-	return p.Serializable
-}
-
-func (p protoMessage) ToWhom() int32 {
-	return p.towhom()
-}
-
-func (p protoMessage) GetType() uint8 {
-	return p.gettype()
-}
-
-func (p protoMessage) IsNegative() bool {
-	return p.isnegative()
-}
 
 type Acceptor interface {
 	//RecvPrepareLocal(prepare *stdpaxosproto.Prepare) <-chan bool // bool
@@ -71,61 +36,31 @@ func StandardAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS 
 	}
 }
 
-func BatchingAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, maxBatchWait time.Duration, proposerIDs []int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8) *batching {
-	bat := &batching{
-		instanceState:    make(map[int32]*AcceptorBookkeeping),
-		stableStore:      file,
-		durable:          durable,
-		emuatedWriteTime: emulatedWriteTime,
-		emulatedSS:       emulatedSS,
-		maxBatchWait:     maxBatchWait,
-		batcher: struct {
-			//localPromiseRequests chan incomingLocalPromiseRequests
-			promiseRequests chan incomingPromiseRequests
-			//localAcceptRequests  chan incomingLocalAcceptRequests
-			acceptRequests chan incomingAcceptRequests
-			commits        chan incomingCommits
-		}{
-			//localPromiseRequests: make(chan incomingLocalPromiseRequests),
-			promiseRequests: make(chan incomingPromiseRequests),
-			//localAcceptRequests:  make(chan incomingLocalAcceptRequests),
-			acceptRequests: make(chan incomingAcceptRequests),
-			commits:        make(chan incomingCommits),
-		},
-		ProposerIDs:     proposerIDs,
-		meID:            id,
-		prepareReplyRPC: prepareReplyRPC,
-		acceptReplyRPC:  acceptReplyRPC,
-		commitRPC:       commitRPC,
-		commitShortRPC:  commitShortRPC,
-	}
-	go bat.batchPersister()
-	return bat
-}
-
 func BetterBatchingAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, maxBatchWait time.Duration, proposerIDs []int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool) *betterBatching {
 	bat := &betterBatching{
-		stableStore:      file,
-		durable:          durable,
-		emuatedWriteTime: emulatedWriteTime,
-		emulatedSS:       emulatedSS,
-		maxBatchWait:     maxBatchWait,
-		batcher: &betterBatcher{
-			awaitingResponses: make(map[int32]*responsesAwaiting, 100),
-			instanceState:     make(map[int32]*AcceptorBookkeeping, 100),
-			promiseRequests:   make(chan incomingPromiseRequests, 1000),
-			acceptRequests:    make(chan incomingAcceptRequests, 1000),
-			commits:           make(chan incomingCommitMsgs, 1000),
-			commitShorts:      make(chan incomingCommitShortMsgs, 1000),
+
+		batcher: &batchingAcceptor{
+			instanceState:              make(map[int32]*AcceptorBookkeeping, 100),
+			awaitingPrepareReplies:     make(map[int32]map[int32]outgoingPromiseResponses),
+			awaitingAcceptReplies:      make(map[int32]map[int32]outgoingAcceptResponses),
+			promiseRequests:            make(chan incomingPromiseRequests, 1000),
+			acceptRequests:             make(chan incomingAcceptRequests, 1000),
+			commits:                    make(chan incomingCommitMsgs, 1000),
+			commitShorts:               make(chan incomingCommitShortMsgs, 1000),
+			prepareReplyRPC:            prepareReplyRPC,
+			acceptReplyRPC:             acceptReplyRPC,
+			commitRPC:                  commitRPC,
+			commitShortRPC:             commitShortRPC,
+			maxInstance:                -1,
+			meID:                       id,
+			catchupOnProceedingCommits: catchupOnProceedingCommits,
+			stableStore:                file,
+			durable:                    durable,
+			emuatedWriteTime:           emulatedWriteTime,
+			emulatedSS:                 emulatedSS,
+			maxBatchWait:               maxBatchWait,
 		},
-		ProposerIDs:                proposerIDs,
-		meID:                       id,
-		prepareReplyRPC:            prepareReplyRPC,
-		acceptReplyRPC:             acceptReplyRPC,
-		commitRPC:                  commitRPC,
-		commitShortRPC:             commitShortRPC,
-		maxInstance:                -1,
-		catchupOnProceedingCommits: catchupOnProceedingCommits,
+		ProposerIDs: proposerIDs,
 	}
 	go bat.batchPersister()
 	return bat
@@ -146,7 +81,7 @@ type AcceptorBookkeeping struct {
 	curBal    stdpaxosproto.Ballot
 	vBal      stdpaxosproto.Ballot
 	whoseCmds int32
-	sync.Mutex
+	//sync.Mutex
 }
 
 //append a log entry to stable storage
@@ -196,8 +131,8 @@ func checkAndCreateInstanceState(instanceState *map[int32]*AcceptorBookkeeping, 
 		(*instanceState)[inst] = &AcceptorBookkeeping{
 			status: NOT_STARTED,
 			cmds:   nil,
-			curBal: stdpaxosproto.Ballot{-1, -1},
-			vBal:   stdpaxosproto.Ballot{-1, -1},
+			curBal: stdpaxosproto.Ballot{Number: -1, PropID: -1},
+			vBal:   stdpaxosproto.Ballot{Number: -1, PropID: -1},
 		}
 	}
 }
@@ -306,7 +241,25 @@ func (a *standard) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Mess
 		fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 	}
 
-	msg := &stdpaxosproto.PrepareReply{
+	msg := a.getPrepareReply(prepare, inst)
+	go a.returnPrepareReply(msg, responseC)
+
+	return responseC
+}
+
+func (a *standard) returnPrepareReply(msg *stdpaxosproto.PrepareReply, responseC chan Message) {
+	toWhom := int32(msg.Req.PropID)
+	funcRet := func() uint8 { return a.prepareReplyRPC }
+	funcNeg := func() bool {
+		return !msg.Cur.Equal(msg.Req)
+	}
+	toRet := &protoMessage{giveToWhom(toWhom), funcRet, funcNeg, msg}
+	responseC <- toRet
+	close(responseC)
+}
+
+func (a *standard) getPrepareReply(prepare *stdpaxosproto.Prepare, inst int32) *stdpaxosproto.PrepareReply {
+	return &stdpaxosproto.PrepareReply{
 		Instance:   inst,
 		Req:        prepare.Ballot,
 		Cur:        a.instanceState[inst].curBal,
@@ -316,17 +269,6 @@ func (a *standard) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Mess
 		WhoseCmd:   a.instanceState[inst].whoseCmds,
 		Command:    a.instanceState[inst].cmds,
 	}
-	toWhom := int32(prepare.PropID)
-	funcRet := func() uint8 { return a.prepareReplyRPC }
-	funcNeg := func() bool {
-		return !msg.Cur.Equal(msg.Req)
-	}
-	toRet := &protoMessage{giveToWhom(toWhom), funcRet, funcNeg, msg}
-	go func() {
-		responseC <- toRet
-		close(responseC)
-	}()
-	return responseC
 }
 
 func (a *standard) getPhase(inst int32) stdpaxosproto.Phase {
@@ -358,25 +300,31 @@ func (a *standard) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message
 		fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 	}
 
-	go func(whoseCmds int32, cur stdpaxosproto.Ballot, phase stdpaxosproto.Phase) {
-		msg := &stdpaxosproto.AcceptReply{
-			Instance:   inst,
-			AcceptorId: a.meID,
-			WhoseCmd:   whoseCmds,
-			Req:        accept.Ballot,
-			Cur:        cur,
-			CurPhase:   phase,
-		}
+	acptReply := a.getAcceptReply(inst, accept)
+	go a.returnAcceptReply(acptReply, responseC)
 
-		responseC <- protoMessage{
-			towhom:       giveToWhom(int32(accept.PropID)),
-			isnegative:   func() bool { return !msg.Cur.Equal(msg.Req) },
-			gettype:      func() uint8 { return a.acceptReplyRPC },
-			Serializable: msg,
-		}
-		close(responseC)
-	}(abk.whoseCmds, abk.curBal, abk.getPhase())
 	return responseC
+}
+
+func (a *standard) getAcceptReply(inst int32, accept *stdpaxosproto.Accept) *stdpaxosproto.AcceptReply {
+	return &stdpaxosproto.AcceptReply{
+		Instance:   inst,
+		AcceptorId: a.meID,
+		WhoseCmd:   a.instanceState[inst].whoseCmds,
+		Req:        accept.Ballot,
+		Cur:        a.instanceState[inst].curBal,
+		CurPhase:   a.getPhase(inst),
+	}
+}
+
+func (a *standard) returnAcceptReply(acceptReply *stdpaxosproto.AcceptReply, responseC chan Message) {
+	responseC <- protoMessage{
+		towhom:       giveToWhom(int32(acceptReply.Req.PropID)),
+		isnegative:   func() bool { return !acceptReply.Cur.Equal(acceptReply.Req) },
+		gettype:      func() uint8 { return a.acceptReplyRPC },
+		Serializable: acceptReply,
+	}
+	close(responseC)
 }
 
 func nonDurableAccept(accept *stdpaxosproto.Accept, abk *AcceptorBookkeeping, stableStore stablestore.StableStore, durable bool) {
@@ -461,149 +409,6 @@ type incomingAcceptRequests struct {
 	incomingMsg *stdpaxosproto.Accept
 }
 
-type batching struct {
-	instanceState    map[int32]*AcceptorBookkeeping
-	stableStore      stablestore.StableStore
-	durable          bool
-	emuatedWriteTime time.Duration
-	emulatedSS       bool
-	maxBatchWait     time.Duration
-	batcher          struct {
-		promiseRequests chan incomingPromiseRequests
-		acceptRequests  chan incomingAcceptRequests
-		commits         chan incomingCommits
-	}
-	ProposerIDs []int32
-	meID        int32
-
-	acceptReplyRPC  uint8
-	prepareReplyRPC uint8
-	commitRPC       uint8
-	commitShortRPC  uint8
-}
-
-func (a *batching) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Message {
-	inst, bal := prepare.Instance, prepare.Ballot
-	c := make(chan Message)
-	checkAndCreateInstanceState(&a.instanceState, inst)
-	abk := a.instanceState[inst]
-
-	committed, cmtMsg := checkAndHandleCommitted(inst, abk)
-	if committed {
-		go func() {
-			c <- protoMessage{
-				giveToWhom(int32(prepare.PropID)),
-				func() uint8 { return a.commitRPC },
-				func() bool { return true },
-				cmtMsg,
-			}
-			close(c)
-		}()
-	} else {
-		if bal.GreaterThan(abk.curBal) || bal.Equal(abk.curBal) {
-			abk.status = PREPARED
-			abk.curBal = bal
-			recordInstanceMetadata(abk, a.stableStore, a.durable)
-		}
-		go func() {
-			a.batcher.promiseRequests <- incomingPromiseRequests{
-				retMsg:      c,
-				incomingMsg: prepare,
-			}
-		}()
-	}
-	return c
-}
-
-func (a *batching) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message {
-	inst, bal := accept.Instance, accept.Ballot
-	c := make(chan Message)
-	checkAndCreateInstanceState(&a.instanceState, inst)
-	abk := a.instanceState[inst]
-
-	committed, cmtMsg := checkAndHandleCommitted(inst, abk)
-
-	if committed {
-		go func() {
-			c <- protoMessage{
-				towhom:  giveToWhom(int32(accept.PropID)),
-				gettype: func() uint8 { return a.commitRPC },
-				isnegative: func() bool {
-					panic("not implemented")
-				},
-				Serializable: cmtMsg,
-			}
-			close(c)
-		}()
-	} else {
-		if bal.GreaterThan(abk.curBal) || bal.Equal(abk.curBal) {
-			nonDurableAccept(accept, abk, a.stableStore, a.durable)
-		}
-		go func() {
-			a.batcher.acceptRequests <- incomingAcceptRequests{
-				retMsg:      c,
-				incomingMsg: accept,
-			}
-		}()
-	}
-	return c
-}
-
-func (a *batching) handleCommit(inst int32, ballot stdpaxosproto.Ballot, cmds []*state.Command, whoseCmds int32) {
-	if a.instanceState[inst].status != COMMITTED {
-		if a.instanceState[inst].vBal.GreaterThan(ballot) { //ballot.GreaterThan(a.instanceState[inst].vBal) {
-			a.instanceState[inst].status = COMMITTED
-			a.instanceState[inst].curBal = ballot
-			a.instanceState[inst].vBal = ballot
-			a.instanceState[inst].cmds = cmds
-			a.instanceState[inst].whoseCmds = whoseCmds
-			recordInstanceMetadata(a.instanceState[inst], a.stableStore, a.durable)
-			recordCommands(a.instanceState[inst].cmds, a.stableStore, a.durable)
-		} else {
-			// if a ballot was chosen, then all proceeding ballots propose the same value
-			a.instanceState[inst].status = COMMITTED
-			a.instanceState[inst].curBal = ballot
-			a.instanceState[inst].vBal = ballot
-			recordInstanceMetadata(a.instanceState[inst], a.stableStore, a.durable)
-		}
-	}
-}
-
-func (a *batching) RecvCommitRemote(commit *stdpaxosproto.Commit) <-chan struct{} {
-	c := make(chan struct{})
-	checkAndCreateInstanceState(&a.instanceState, commit.Instance)
-	a.instanceState[commit.Instance].Lock()
-	a.handleCommit(commit.Instance, commit.Ballot, commit.Command, commit.WhoseCmd)
-	a.instanceState[commit.Instance].Unlock()
-	go func() {
-		a.batcher.commits <- incomingCommits{
-			done: c,
-			inst: commit.Instance,
-		}
-	}()
-	return c
-}
-
-func (a *batching) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) <-chan struct{} {
-	checkAndCreateInstanceState(&a.instanceState, commit.Instance)
-	a.instanceState[commit.Instance].Lock()
-	defer a.instanceState[commit.Instance].Unlock()
-	safe := a.instanceState[commit.Instance].cmds != nil || commit.GreaterThan(a.instanceState[commit.Instance].vBal)
-	if safe {
-		c := make(chan struct{})
-		a.handleCommit(commit.Instance, commit.Ballot, a.instanceState[commit.Instance].cmds, commit.WhoseCmd)
-		go func() {
-			a.batcher.commits <- incomingCommits{
-				done: c,
-				inst: commit.Instance,
-			}
-		}()
-		return c
-	} else {
-		panic("Got a short commits msg but we don't have any record of the value")
-	}
-}
-
 type outgoingPromiseResponses struct {
 	//	done       chan bool
 	retMsgChan chan Message
@@ -616,246 +421,34 @@ type outgoingAcceptResponses struct {
 	stdpaxosproto.Ballot
 }
 
-type responsesAwaiting struct {
-	propsPrepResps   map[int32]*outgoingPromiseResponses
-	propsAcceptResps map[int32]*outgoingAcceptResponses
-}
+type batchingAcceptor struct {
+	meID                   int32
+	maxInstance            int32
+	instanceState          map[int32]*AcceptorBookkeeping
+	awaitingPrepareReplies map[int32]map[int32]outgoingPromiseResponses
+	awaitingAcceptReplies  map[int32]map[int32]outgoingAcceptResponses
+	promiseRequests        chan incomingPromiseRequests
+	acceptRequests         chan incomingAcceptRequests
+	commits                chan incomingCommitMsgs
+	commitShorts           chan incomingCommitShortMsgs
 
-func (a *batching) returnPrepareAndAcceptResponses(store map[int32]*responsesAwaiting) {
-	//fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
-	//
-	//for inst, instStore := range store {
-	//	a.instanceState[inst].Lock()
-	//	for _, pid := range a.ProposerIDs {
-	//		if prep, pexists := instStore.propsPrepResps[pid]; pexists {
-	//			go func(toWhom int32, prepResp chan<- Message, msg *stdpaxosproto.PrepareReply) {
-	//				prepResp <- protoMessage{
-	//					giveToWhom(toWhom),
-	//					func() uint8 { return a.prepareReplyRPC },
-	//
-	//					msg,
-	//				}
-	//				close(prepResp)
-	//			}(pid, prep.retMsgChan, a.getPrepareReply(inst, prep.Ballot))
-	//			delete(instStore.propsPrepResps, pid)
-	//		} else if acc, aexists := instStore.propsAcceptResps[pid]; aexists {
-	//			go func(toWhom int32, accResp chan<- Message, msg *stdpaxosproto.AcceptReply) {
-	//				accResp <- protoMessage{
-	//					towhom:       giveToWhom(toWhom),
-	//					gettype:      func() uint8 { return a.acceptReplyRPC },
-	//					Serializable: msg,
-	//				}
-	//				close(accResp)
-	//			}(pid, acc.retMsgChan, a.getAcceptReply(inst, acc))
-	//			delete(instStore.propsAcceptResps, pid)
-	//		}
-	//	}
-	//	a.instanceState[inst].Unlock()
-	//}
-}
+	catchupOnProceedingCommits bool
 
-func (a *batching) getPhase(inst int32) stdpaxosproto.Phase {
-	var phase stdpaxosproto.Phase
-	if a.instanceState[inst].status == ACCEPTED {
-		phase = stdpaxosproto.ACCEPTANCE
-	} else if a.instanceState[inst].status == PREPARED {
-		phase = stdpaxosproto.PROMISE
-	} else {
-		panic("should not return phase when neither promised nor accepted")
-	}
-	return phase
-}
+	acceptReplyRPC  uint8
+	prepareReplyRPC uint8
+	commitRPC       uint8
+	commitShortRPC  uint8
 
-func (a *batching) getAcceptReply(inst int32, acc *outgoingAcceptResponses) *stdpaxosproto.AcceptReply {
-
-	return &stdpaxosproto.AcceptReply{
-		Instance:   inst,
-		AcceptorId: a.meID,
-		Cur:        a.instanceState[inst].curBal,
-		CurPhase:   a.getPhase(inst),
-		Req:        acc.Ballot,
-		WhoseCmd:   a.instanceState[inst].whoseCmds,
-	}
-}
-
-func (a *batching) getPrepareReply(inst int32, req stdpaxosproto.Ballot) *stdpaxosproto.PrepareReply {
-	return &stdpaxosproto.PrepareReply{
-		Instance:   inst,
-		Cur:        a.instanceState[inst].curBal,
-		Req:        req,
-		CurPhase:   a.getPhase(inst),
-		VBal:       a.instanceState[inst].vBal,
-		AcceptorId: a.meID,
-		WhoseCmd:   a.instanceState[inst].whoseCmds,
-		Command:    a.instanceState[inst].cmds,
-	}
-}
-
-func (a *batching) clearCurProposals(curProposals map[int32]*responsesAwaiting) {
-	curProposals = make(map[int32]*responsesAwaiting)
-}
-
-func (a *batching) respondAndClearCurProposals(curProposals map[int32]*responsesAwaiting) {
-	a.returnPrepareAndAcceptResponses(curProposals)
-	a.clearCurProposals(curProposals)
-}
-
-func (a *batching) batchPersister() {
-	curAwaiting := make(map[int32]*responsesAwaiting)
-
-	timeout := time.NewTimer(a.maxBatchWait)
-	for {
-		select {
-		case inc := <-a.batcher.commits:
-			a.batcherRecvCommit(inc, curAwaiting)
-			break
-		case inc := <-a.batcher.promiseRequests:
-			a.batcherUpdateProposerResponsePromise(inc, curAwaiting)
-			break
-		case inc := <-a.batcher.acceptRequests:
-			// if new max replace old max and return false
-			a.batcherUpdateProposerReponseAccept(inc, curAwaiting)
-			break
-		case <-timeout.C:
-			// return responses for max and not max
-			a.respondAndClearCurProposals(curAwaiting)
-			timeout.Reset(a.maxBatchWait)
-			break
-		}
-	}
-}
-
-func (a *batching) checkAndInitaliseCurProposals(curProposals map[int32]*AcceptorBookkeeping, inst int32) {
-	if _, exists := curProposals[inst]; !exists {
-		curProposals[inst] = &AcceptorBookkeeping{
-			status:    NOT_STARTED,
-			cmds:      nil,
-			curBal:    stdpaxosproto.Ballot{-1, -1},
-			vBal:      stdpaxosproto.Ballot{-1, -1},
-			whoseCmds: -1,
-		}
-	}
-}
-
-func (a *batching) checkAndInitaliseCurProposalsForInst(curProposals map[int32]*responsesAwaiting, inst int32) {
-	if _, exists := curProposals[inst]; !exists {
-		curProposals[inst] = &responsesAwaiting{
-			propsPrepResps:   make(map[int32]*outgoingPromiseResponses),
-			propsAcceptResps: make(map[int32]*outgoingAcceptResponses),
-		}
-	}
-}
-
-func (a *batching) batcherUpdateProposerReponseAccept(inc incomingAcceptRequests, curProposals map[int32]*responsesAwaiting) {
-	acc, msgChan := inc.incomingMsg, inc.retMsg
-	a.checkAndInitaliseCurProposalsForInst(curProposals, acc.Instance)
-
-	instProposals := curProposals[acc.Instance]
-	if propAccept, exists := instProposals.propsAcceptResps[int32(acc.PropID)]; exists {
-		if propAccept.Ballot.GreaterThan(acc.Ballot) {
-			close(msgChan)
-			return
-		}
-		close(propAccept.retMsgChan)
-	}
-
-	if propPrepare, exists := instProposals.propsPrepResps[int32(acc.PropID)]; exists {
-		if propPrepare.GreaterThan(acc.Ballot) {
-			close(msgChan)
-			return
-		}
-		close(propPrepare.retMsgChan)
-		delete(instProposals.propsPrepResps, int32(acc.PropID))
-	}
-
-	instProposals.propsAcceptResps[int32(acc.PropID)] = &outgoingAcceptResponses{
-		retMsgChan: msgChan,
-		Ballot:     acc.Ballot,
-	}
-}
-
-func (a *batching) batcherUpdateProposerResponsePromise(inc incomingPromiseRequests, curProposals map[int32]*responsesAwaiting) {
-	prep, msgChan := inc.incomingMsg, inc.retMsg
-	a.checkAndInitaliseCurProposalsForInst(curProposals, prep.Instance)
-
-	instProposals := curProposals[prep.Instance]
-	// if there is a previous accept waiting, close it
-	if propAccept, exists := instProposals.propsAcceptResps[int32(prep.PropID)]; exists {
-		// if the current accept is newer close newly received one
-		if propAccept.Ballot.GreaterThan(prep.Ballot) || propAccept.Ballot.Equal(prep.Ballot) {
-			// accept take precedent if equal
-			close(msgChan)
-			return
-		}
-		close(propAccept.retMsgChan)
-		delete(instProposals.propsAcceptResps, int32(prep.PropID))
-	}
-
-	if propPrepare, exists := instProposals.propsPrepResps[int32(prep.PropID)]; exists {
-		// if the current prepare is newer close newly received one
-		if propPrepare.Ballot.GreaterThan(prep.Ballot) {
-			close(msgChan)
-			return
-		}
-		// if there is a previous prepare waiting, close it
-		close(propPrepare.retMsgChan)
-		// don't need to delete as overwriting now
-	}
-
-	instProposals.propsPrepResps[int32(prep.PropID)] = &outgoingPromiseResponses{
-		retMsgChan: msgChan,
-		Ballot:     prep.Ballot,
-	}
-}
-
-func (a *batching) batcherRecvCommit(inc incomingCommits, curProposals map[int32]*responsesAwaiting) {
-	// must fsync here as previous proposals might not have been persisted yet
-	a.checkAndInitaliseCurProposalsForInst(curProposals, inc.inst)
-	for _, v := range curProposals[inc.inst].propsPrepResps {
-		if v == nil {
-			continue
-		}
-		close(v.retMsgChan)
-	}
-	for _, v := range curProposals[inc.inst].propsAcceptResps {
-		if v == nil {
-			continue
-		}
-		close(v.retMsgChan)
-	}
-	delete(curProposals, inc.inst)
-	a.returnPrepareAndAcceptResponses(curProposals)
-	go func() {
-		inc.done <- struct{}{}
-		close(inc.done)
-	}()
-}
-
-type betterBatcher struct {
-	awaitingResponses map[int32]*responsesAwaiting
-	instanceState     map[int32]*AcceptorBookkeeping
-	promiseRequests   chan incomingPromiseRequests
-	acceptRequests    chan incomingAcceptRequests
-	commits           chan incomingCommitMsgs
-	commitShorts      chan incomingCommitShortMsgs
-}
-
-type betterBatching struct {
 	stableStore      stablestore.StableStore
 	durable          bool
 	emuatedWriteTime time.Duration
 	emulatedSS       bool
 	maxBatchWait     time.Duration
+}
 
-	ProposerIDs                []int32
-	meID                       int32
-	batcher                    *betterBatcher
-	acceptReplyRPC             uint8
-	prepareReplyRPC            uint8
-	commitRPC                  uint8
-	commitShortRPC             uint8
-	maxInstance                int32
-	catchupOnProceedingCommits bool
+type betterBatching struct {
+	ProposerIDs []int32
+	batcher     *batchingAcceptor
 }
 
 func (a *betterBatching) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Message {
@@ -902,78 +495,83 @@ func (a *betterBatching) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort
 	return c
 }
 
-func (a *betterBatching) checkAndUpdateMaxInstance(inst int32) {
+func (a *batchingAcceptor) checkAndUpdateMaxInstance(inst int32) {
 	if a.maxInstance < inst {
 		a.maxInstance = inst
 	}
 }
 
+func (b *batchingAcceptor) handleCommitShort(inc incomingCommitShortMsgs) {
+	cmtMsg, resp := inc.incomingMsg, inc.done
+	inst := cmtMsg.Instance
+	b.checkAndUpdateMaxInstance(inst)
+
+	instState := b.getInstState(inst)
+	if instState.status == COMMITTED {
+		close(resp)
+		return
+	}
+
+	if instState.cmds == nil {
+		panic("committing with no value!!!")
+	}
+	// store commit
+	instState.status = COMMITTED
+	instState.curBal = cmtMsg.Ballot
+	instState.vBal = cmtMsg.Ballot
+
+	instState.whoseCmds = cmtMsg.WhoseCmd
+
+	go func() {
+		resp <- struct{}{}
+		close(resp)
+	}()
+}
+
+func (a *batchingAcceptor) handleCommit(inc incomingCommitMsgs) {
+	// store all data
+	cmtMsg, resp := inc.incomingMsg, inc.done
+	inst := cmtMsg.Instance
+	a.checkAndUpdateMaxInstance(inst)
+	instState := a.getInstState(inst)
+	if instState.status == COMMITTED {
+		go func() {
+			close(resp)
+		}()
+		return
+	}
+
+	// store commit
+	instState.status = COMMITTED
+	instState.curBal = cmtMsg.Ballot
+	instState.vBal = cmtMsg.Ballot
+	instState.cmds = cmtMsg.Command
+	instState.whoseCmds = cmtMsg.WhoseCmd
+	go func() {
+		resp <- struct{}{}
+		close(resp)
+	}()
+}
+
 func (a *betterBatching) batchPersister() {
-	timeout := time.NewTimer(a.maxBatchWait)
+	timeout := time.NewTimer(a.batcher.maxBatchWait)
 	for {
 		select {
 		case inc := <-a.batcher.commitShorts:
-			cmtMsg, resp := inc.incomingMsg, inc.done
-			inst := cmtMsg.Instance
-			a.checkAndUpdateMaxInstance(inst)
-
-			instState := a.getInstState(inst)
-			if instState.status == COMMITTED {
-				close(resp)
-				break
-			}
-
-			if instState.cmds == nil {
-				panic("committing with no value!!!")
-			}
-			// store commit
-			instState.status = COMMITTED
-			instState.curBal = cmtMsg.Ballot
-			instState.vBal = cmtMsg.Ballot
-
-			instState.whoseCmds = cmtMsg.WhoseCmd
-
-			go func() {
-				resp <- struct{}{}
-				close(resp)
-			}()
-
+			a.batcher.handleCommitShort(inc)
 			break
 		case inc := <-a.batcher.commits:
-			// store all data
-			cmtMsg, resp := inc.incomingMsg, inc.done
-			inst := cmtMsg.Instance
-			a.checkAndUpdateMaxInstance(inst)
-			instState := a.getInstState(inst)
-			if instState.status == COMMITTED {
-				go func() {
-					close(resp)
-
-				}()
-				break
-			}
-
-			// store commit
-			instState.status = COMMITTED
-			instState.curBal = cmtMsg.Ballot
-			instState.vBal = cmtMsg.Ballot
-			instState.cmds = cmtMsg.Command
-			instState.whoseCmds = cmtMsg.WhoseCmd
-			go func() {
-				resp <- struct{}{}
-				close(resp)
-			}()
-			break
+			a.batcher.handleCommit(inc)
 		case inc := <-a.batcher.promiseRequests:
-			a.recvPromiseRequest(inc)
+			a.batcher.recvPromiseRequest(inc)
 			break
 		case inc := <-a.batcher.acceptRequests:
-			a.recvAcceptRequest(inc)
+			a.batcher.recvAcceptRequest(inc)
 			break
 		case <-timeout.C:
 			// return responses for max and not max
-			a.doBatch()
-			timeout.Reset(a.maxBatchWait)
+			a.batcher.doBatch()
+			timeout.Reset(a.batcher.maxBatchWait)
 			break
 
 		}
@@ -981,28 +579,84 @@ func (a *betterBatching) batchPersister() {
 	}
 }
 
-func (a *betterBatching) doBatch() {
+func (a *batchingAcceptor) doBatch() {
 	dlog.AgentPrintfN(a.meID, "Acceptor batch starting, now persisting received ballots")
-	for instToResp, _ := range a.batcher.awaitingResponses {
-		abk := a.batcher.instanceState[instToResp]
+	for instToResp, _ := range a.awaitingPrepareReplies {
+		abk := a.instanceState[instToResp]
+		recordInstanceMetadata(abk, a.stableStore, a.durable)
+		//if abk.cmds != nil {
+		//	recordCommands(abk.cmds, a.stableStore, a.durable)
+		//}
+	}
+	for instToResp, _ := range a.awaitingAcceptReplies {
+		abk := a.instanceState[instToResp]
 		recordInstanceMetadata(abk, a.stableStore, a.durable)
 		if abk.cmds != nil {
 			recordCommands(abk.cmds, a.stableStore, a.durable)
 		}
 	}
+
 	fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
-	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses for %d instances", len(a.batcher.awaitingResponses))
+	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses for %d instances", len(a.awaitingPrepareReplies)+len(a.awaitingAcceptReplies))
 
-	for instToResp, awaitingResps := range a.batcher.awaitingResponses {
-		abk := a.batcher.instanceState[instToResp]
-		returnResponsesAndResetAwaitingResponses(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC, a.acceptReplyRPC, a.commitRPC)
-	}
-
-	a.batcher.awaitingResponses = make(map[int32]*responsesAwaiting, 100)
+	a.returnPrepareAndAcceptRepliesAndClear()
 	dlog.AgentPrintfN(a.meID, "Acceptor done returning responses")
 }
 
-func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
+func (a *batchingAcceptor) returnPrepareAndAcceptRepliesAndClear() {
+	a.returnPrepareRepliesAndClear()
+	a.returnAcceptRepliesAndClear()
+}
+
+func (a *batchingAcceptor) returnAcceptRepliesAndClear() {
+	for instToResp, awaitingResps := range a.awaitingAcceptReplies {
+		abk := a.instanceState[instToResp]
+		if abk.status == COMMITTED {
+			dlog.AgentPrintfN(a.meID, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", a.meID, instToResp)
+			for _, prepResp := range awaitingResps {
+				close(prepResp.retMsgChan)
+			}
+			continue
+		}
+
+		returnAcceptRepliesAwaiting(instToResp, a.meID, awaitingResps, abk, a.acceptReplyRPC)
+	}
+
+	a.awaitingAcceptReplies = make(map[int32]map[int32]outgoingAcceptResponses, 100)
+}
+
+func (a *batchingAcceptor) returnPrepareRepliesAndClear() {
+	for instToResp, awaitingResps := range a.awaitingPrepareReplies {
+		abk := a.instanceState[instToResp]
+		if abk.status == COMMITTED {
+			dlog.AgentPrintfN(a.meID, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", a.meID, instToResp)
+			for _, prepResp := range awaitingResps {
+				close(prepResp.retMsgChan)
+			}
+			continue
+		}
+		returnPrepareRepliesAwaiting(instToResp, a.meID, awaitingResps, abk, a.prepareReplyRPC)
+	}
+	a.awaitingPrepareReplies = make(map[int32]map[int32]outgoingPromiseResponses, 100)
+}
+
+func (a *batchingAcceptor) getAwaitingPrepareReplies(inst int32) map[int32]outgoingPromiseResponses {
+	_, awaitingRespsExists := a.awaitingPrepareReplies[inst]
+	if !awaitingRespsExists {
+		a.awaitingPrepareReplies[inst] = make(map[int32]outgoingPromiseResponses)
+	}
+	return a.awaitingPrepareReplies[inst]
+}
+
+func (a *batchingAcceptor) getAwaitingAcceptReplies(inst int32) map[int32]outgoingAcceptResponses {
+	_, awaitingRespsExists := a.awaitingAcceptReplies[inst]
+	if !awaitingRespsExists {
+		a.awaitingAcceptReplies[inst] = make(map[int32]outgoingAcceptResponses)
+	}
+	return a.awaitingAcceptReplies[inst]
+}
+
+func (a *batchingAcceptor) recvAcceptRequest(inc incomingAcceptRequests) {
 	dlog.AgentPrintfN(a.meID, "Acceptor received accept request for instance %d from %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.PropID, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 	accMsg, respHand, requestor := inc.incomingMsg, inc.retMsg, int32(inc.incomingMsg.PropID)
 	inst := accMsg.Instance
@@ -1015,27 +669,27 @@ func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
 		return
 	}
 
-	instAwaitingResponses := a.getAwaitingResponses(inst)
+	instAwaitingAcceptReplies := a.getAwaitingAcceptReplies(inst)
+	instAwaitingPrepareReplies := a.getAwaitingPrepareReplies(inst)
 	if instState.curBal.GreaterThan(accMsg.Ballot) {
 		dlog.AgentPrintfN(a.meID, "Acceptor intending to preempt ballot in instance %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 		//check if most recent ballot from proposer to return preempt to
-		prevAcc := instAwaitingResponses.propsAcceptResps[requestor]
-		if prevAcc != nil {
+		prevAcc, wasPrevAcc := instAwaitingAcceptReplies[requestor]
+		if wasPrevAcc {
 			if prevAcc.GreaterThan(accMsg.Ballot) {
 				close(respHand)
 				return
 			}
 		}
-
-		prevPrep := instAwaitingResponses.propsPrepResps[requestor]
-		if prevPrep != nil {
+		prevPrep, wasPrevPrep := instAwaitingPrepareReplies[requestor]
+		if wasPrevPrep {
 			if prevPrep.GreaterThan(accMsg.Ballot) {
 				close(respHand)
 				return
 			}
 		}
-		closeAllPreviousResponseToProposer(instAwaitingResponses, requestor)
-		a.batcher.awaitingResponses[inst].propsAcceptResps[requestor] = &outgoingAcceptResponses{
+		closeAllPreviousResponseToProposer(instAwaitingPrepareReplies, instAwaitingAcceptReplies, requestor)
+		instAwaitingAcceptReplies[requestor] = outgoingAcceptResponses{
 			retMsgChan: respHand,
 			Ballot:     accMsg.Ballot,
 		}
@@ -1050,15 +704,14 @@ func (a *betterBatching) recvAcceptRequest(inc incomingAcceptRequests) {
 	instState.whoseCmds = accMsg.WhoseCmd
 
 	// close any previous awaiting responses and store this current one
-	instAwaitingResps := a.getAwaitingResponses(inst)
-	closeAllPreviousResponseToProposer(instAwaitingResps, requestor)
-	a.batcher.awaitingResponses[inst].propsAcceptResps[requestor] = &outgoingAcceptResponses{
+	closeAllPreviousResponseToProposer(instAwaitingPrepareReplies, instAwaitingAcceptReplies, requestor)
+	instAwaitingAcceptReplies[requestor] = outgoingAcceptResponses{
 		retMsgChan: respHand,
 		Ballot:     accMsg.Ballot,
 	}
 }
 
-func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
+func (a *batchingAcceptor) recvPromiseRequest(inc incomingPromiseRequests) {
 	dlog.AgentPrintfN(a.meID, "Acceptor received promise request for instance %d from %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.PropID, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 	prepMsg, respHand, requestor := inc.incomingMsg, inc.retMsg, int32(inc.incomingMsg.PropID)
 
@@ -1071,27 +724,28 @@ func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
 		return
 	}
 
-	instAwaitingResponses := a.getAwaitingResponses(inst)
+	instAwaitingAcceptReplies := a.getAwaitingAcceptReplies(inst)
+	instAwaitingPrepareReplies := a.getAwaitingPrepareReplies(inst)
 	if instState.curBal.GreaterThan(prepMsg.Ballot) || (instState.curBal.Equal(prepMsg.Ballot) && instState.status == ACCEPTED) {
 		dlog.AgentPrintfN(a.meID, "Acceptor intending to preempt ballot in instance %d at ballot %d.%d", inc.incomingMsg.Instance, inc.incomingMsg.Ballot.Number, inc.incomingMsg.Ballot.PropID)
 		// check if most recent ballot from proposer to return preempt to
-		prevAcc := instAwaitingResponses.propsAcceptResps[requestor]
-		if prevAcc != nil {
+		prevAcc, wasPrevAcc := instAwaitingAcceptReplies[requestor]
+		if wasPrevAcc {
 			if prevAcc.GreaterThan(prepMsg.Ballot) || prevAcc.Equal(prepMsg.Ballot) {
 				close(respHand)
 				return
 			}
 		}
 
-		prevPrep := instAwaitingResponses.propsPrepResps[requestor]
-		if prevPrep != nil {
+		prevPrep, wasPrevPrep := instAwaitingPrepareReplies[requestor]
+		if wasPrevPrep {
 			if prevPrep.GreaterThan(prepMsg.Ballot) {
 				close(respHand)
 				return
 			}
 		}
-		closeAllPreviousResponseToProposer(a.batcher.awaitingResponses[inst], requestor)
-		a.batcher.awaitingResponses[inst].propsPrepResps[requestor] = &outgoingPromiseResponses{
+		closeAllPreviousResponseToProposer(instAwaitingPrepareReplies, instAwaitingAcceptReplies, requestor)
+		instAwaitingPrepareReplies[requestor] = outgoingPromiseResponses{
 			retMsgChan: respHand,
 			Ballot:     prepMsg.Ballot,
 		}
@@ -1104,15 +758,14 @@ func (a *betterBatching) recvPromiseRequest(inc incomingPromiseRequests) {
 	//recordInstanceMetadata(instState, a.stableStore, a.durable)
 
 	// close any previous awaiting responses and store this current one
-	instAwaitingResps := a.getAwaitingResponses(inst)
-	closeAllPreviousResponseToProposer(instAwaitingResps, requestor)
-	instAwaitingResps.propsPrepResps[requestor] = &outgoingPromiseResponses{
+	closeAllPreviousResponseToProposer(instAwaitingPrepareReplies, instAwaitingAcceptReplies, requestor)
+	instAwaitingPrepareReplies[requestor] = outgoingPromiseResponses{
 		retMsgChan: respHand,
 		Ballot:     prepMsg.Ballot,
 	}
 }
 
-func (a *betterBatching) handleMsgAlreadyCommitted(requestor int32, inst int32, respHand chan Message) {
+func (a *batchingAcceptor) handleMsgAlreadyCommitted(requestor int32, inst int32, respHand chan Message) {
 	if requestor == a.meID { // todo change to have a local accept and prepare and a remote one too
 		close(respHand)
 		return
@@ -1125,7 +778,7 @@ func (a *betterBatching) handleMsgAlreadyCommitted(requestor int32, inst int32, 
 
 	wg := sync.WaitGroup{}
 	for i := maxInstToTryReturn; i >= inst; i-- {
-		iState, exists := a.batcher.instanceState[i]
+		iState, exists := a.instanceState[i]
 		if !exists {
 			continue
 		}
@@ -1157,42 +810,43 @@ func (a *betterBatching) handleMsgAlreadyCommitted(requestor int32, inst int32, 
 	}()
 }
 
-func (a *betterBatching) getInstState(inst int32) *AcceptorBookkeeping {
-	_, exists := a.batcher.instanceState[inst]
+func (a *batchingAcceptor) getInstState(inst int32) *AcceptorBookkeeping {
+	_, exists := a.instanceState[inst]
 	if !exists {
-		a.batcher.instanceState[inst] = &AcceptorBookkeeping{
+		a.instanceState[inst] = &AcceptorBookkeeping{
 			status:    0,
 			cmds:      nil,
 			curBal:    stdpaxosproto.Ballot{-1, -1},
 			vBal:      stdpaxosproto.Ballot{-1, -1},
 			whoseCmds: -1,
-			Mutex:     sync.Mutex{},
+			//Mutex:     sync.Mutex{},
 		}
 	}
-	return a.batcher.instanceState[inst]
+	return a.instanceState[inst]
 }
 
-func (a *betterBatching) getAwaitingResponses(inst int32) *responsesAwaiting {
-	_, awaitingRespsExists := a.batcher.awaitingResponses[inst]
-	if !awaitingRespsExists {
-		a.batcher.awaitingResponses[inst] = &responsesAwaiting{
-			propsPrepResps:   make(map[int32]*outgoingPromiseResponses),
-			propsAcceptResps: make(map[int32]*outgoingAcceptResponses),
-		}
-	}
-	return a.batcher.awaitingResponses[inst]
-}
-func closeAllPreviousResponseToProposer(instAwaitingResps *responsesAwaiting, proposer int32) {
-	prop, existsp := instAwaitingResps.propsPrepResps[proposer]
+//func (a *batchingAcceptor) getAwaitingResponses(inst int32) *responsesAwaiting {
+//	_, awaitingRespsExists := a.awaitingResponses[inst]
+//	if !awaitingRespsExists {
+//		a.awaitingResponses[inst] = &responsesAwaiting{
+//			propsPrepResps:   make(map[int32]*outgoingPromiseResponses),
+//			propsAcceptResps: make(map[int32]*outgoingAcceptResponses),
+//		}
+//	}
+//	return a.awaitingResponses[inst]
+//}
+
+func closeAllPreviousResponseToProposer(awaitingPrepareReplies map[int32]outgoingPromiseResponses, awaitingAcceptReplies map[int32]outgoingAcceptResponses, proposer int32) {
+	prop, existsp := awaitingPrepareReplies[proposer]
 	//go func() {
 	if existsp {
 		close(prop.retMsgChan)
-		delete(instAwaitingResps.propsPrepResps, proposer)
+		delete(awaitingPrepareReplies, proposer)
 	}
-	acc, existsa := instAwaitingResps.propsAcceptResps[proposer]
+	acc, existsa := awaitingAcceptReplies[proposer]
 	if existsa {
 		close(acc.retMsgChan)
-		delete(instAwaitingResps.propsAcceptResps, proposer)
+		delete(awaitingAcceptReplies, proposer)
 	}
 	//}()
 }
@@ -1221,53 +875,28 @@ func (abk *AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
 	return phase
 }
 
-func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingResps *responsesAwaiting, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
-	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of %d responses for instance %d", myId, len(awaitingResps.propsAcceptResps)+len(awaitingResps.propsPrepResps), inst)
-	if abk.status == COMMITTED {
-		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)
-		for _, prepResp := range awaitingResps.propsPrepResps {
-			close(prepResp.retMsgChan)
+//func returnPrepareAndAcceptResponses(inst int32, myId int32, awaitingPromiseResps map[int32]outgoingPromiseResponses, awaitingAcceptResps map[int32]outgoingAcceptResponses, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
+//	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of %d responses for instance %d", myId, len(awaitingPromiseResps)+len(awaitingAcceptResps), inst)
+//	if abk.status == COMMITTED {
+//		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)
+//		for _, prepResp := range awaitingPromiseResps {
+//			close(prepResp.retMsgChan)
+//
+//		}
+//		for _, accResp := range awaitingAcceptResps {
+//			close(accResp.retMsgChan)
+//		}
+//		return
+//	}
+//
+//	returnPrepareRepliesAwaiting(inst, myId, awaitingPromiseResps, abk, prepareReplyRPC)
+//
+//	returnAcceptRepliesAwaiting(inst, myId, awaitingAcceptResps, abk, acceptReplyRPC)
+//}
 
-		}
-		for _, accResp := range awaitingResps.propsAcceptResps {
-			close(accResp.retMsgChan)
-		}
-		return
-	}
-
-	for pid, prepResp := range awaitingResps.propsPrepResps {
-		prep := &stdpaxosproto.PrepareReply{
-			Instance:   inst,
-			Cur:        abk.curBal,
-			CurPhase:   abk.getPhase(),
-			Req:        prepResp.Ballot,
-			VBal:       abk.vBal,
-			AcceptorId: myId,
-			WhoseCmd:   abk.whoseCmds,
-			Command:    abk.cmds,
-		}
-		preempt := !prep.Cur.Equal(prep.Req)
-		typeRespS := "promise"
-		if preempt {
-			typeRespS = "preempt"
-		}
-		dlog.AgentPrintfN(myId, "Acceptor returning Prepare Reply (%s) to Replica %d for instance %d at current ballot %d.%d when requested %d.%d", typeRespS, pid,
-			inst, abk.curBal.Number, abk.curBal.PropID, prepResp.Number, prepResp.PropID)
-
-		resp, lpid := prepResp, pid
-		go func() {
-			resp.retMsgChan <- protoMessage{
-				towhom:       giveToWhom(lpid),
-				gettype:      func() uint8 { return prepareReplyRPC },
-				isnegative:   func() bool { return preempt },
-				Serializable: prep,
-			}
-			close(resp.retMsgChan)
-		}()
-	}
-
+func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingAcceptResponses, abk *AcceptorBookkeeping, acceptReplyRPC uint8) {
 	outOfOrderAccept := false
-	for pid, accResp := range awaitingResps.propsAcceptResps {
+	for pid, accResp := range awaitingResps {
 
 		if abk.curBal.GreaterThan(accResp.Ballot) {
 			outOfOrderAccept = true
@@ -1315,32 +944,65 @@ func returnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingRe
 	}
 }
 
-func returnCommitsToAwaitingInstanceResponses(awaitingResps *responsesAwaiting, cmtMsg *stdpaxosproto.Commit, commitRPC uint8, meId int32) {
-	for pid, prepResp := range awaitingResps.propsPrepResps {
-		if pid == meId {
-			close(prepResp.retMsgChan)
-			continue
+func returnPrepareRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingPromiseResponses, abk *AcceptorBookkeeping, prepareReplyRPC uint8) {
+	for pid, prepResp := range awaitingResps {
+		prep := &stdpaxosproto.PrepareReply{
+			Instance:   inst,
+			Cur:        abk.curBal,
+			CurPhase:   abk.getPhase(),
+			Req:        prepResp.Ballot,
+			VBal:       abk.vBal,
+			AcceptorId: myId,
+			WhoseCmd:   abk.whoseCmds,
+			Command:    abk.cmds,
 		}
-		prepResp.retMsgChan <- protoMessage{
-			towhom:       giveToWhom(pid),
-			gettype:      func() uint8 { return commitRPC },
-			isnegative:   func() bool { return true },
-			Serializable: cmtMsg,
+		preempt := !prep.Cur.Equal(prep.Req)
+		typeRespS := "promise"
+		if preempt {
+			typeRespS = "preempt"
 		}
-		close(prepResp.retMsgChan)
-	}
+		dlog.AgentPrintfN(myId, "Acceptor returning Prepare Reply (%s) to Replica %d for instance %d at current ballot %d.%d when requested %d.%d", typeRespS, pid,
+			inst, abk.curBal.Number, abk.curBal.PropID, prepResp.Number, prepResp.PropID)
 
-	for pid, accResp := range awaitingResps.propsAcceptResps {
-		if pid == meId {
-			close(accResp.retMsgChan)
-			continue
-		}
-		accResp.retMsgChan <- protoMessage{
-			towhom:       giveToWhom(pid),
-			gettype:      func() uint8 { return commitRPC },
-			isnegative:   func() bool { return true },
-			Serializable: cmtMsg,
-		}
-		close(accResp.retMsgChan)
+		resp, lpid := prepResp, pid
+		go func() {
+			resp.retMsgChan <- protoMessage{
+				towhom:       giveToWhom(lpid),
+				gettype:      func() uint8 { return prepareReplyRPC },
+				isnegative:   func() bool { return preempt },
+				Serializable: prep,
+			}
+			close(resp.retMsgChan)
+		}()
 	}
 }
+
+//func returnCommitsToAwaitingInstanceResponses(awaitingResps *responsesAwaiting, cmtMsg *stdpaxosproto.Commit, commitRPC uint8, meId int32) {
+//	for pid, prepResp := range awaitingResps.propsPrepResps {
+//		if pid == meId {
+//			close(prepResp.retMsgChan)
+//			continue
+//		}
+//		prepResp.retMsgChan <- protoMessage{
+//			towhom:       giveToWhom(pid),
+//			gettype:      func() uint8 { return commitRPC },
+//			isnegative:   func() bool { return true },
+//			Serializable: cmtMsg,
+//		}
+//		close(prepResp.retMsgChan)
+//	}
+//
+//	for pid, accResp := range awaitingResps.propsAcceptResps {
+//		if pid == meId {
+//			close(accResp.retMsgChan)
+//			continue
+//		}
+//		accResp.retMsgChan <- protoMessage{
+//			towhom:       giveToWhom(pid),
+//			gettype:      func() uint8 { return commitRPC },
+//			isnegative:   func() bool { return true },
+//			Serializable: cmtMsg,
+//		}
+//		close(accResp.retMsgChan)
+//	}
+//}

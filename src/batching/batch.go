@@ -127,3 +127,6 @@ func (b *proposalBatcher) getBatch() *batch {
 	}
 	return batchC
 }
+
+// todo
+//func whatisbatchload?

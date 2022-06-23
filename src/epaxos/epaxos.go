@@ -566,7 +566,7 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	if r.sendToFastestQrm {
 		order = r.GetPeerOrderLatency()
 	} else {
-		order = r.GetAliveRandomPeerOrder()
+		order = r.GetRandomPeerOrder()
 	}
 	if len(order) < r.SlowQuorumSize() {
 		r.SendToGroup(order, r.prepareRPC, args)
@@ -611,7 +611,7 @@ func (r *Replica) bcastPreAccept(replica int32, instance int32) {
 	if r.sendToFastestQrm {
 		order = r.GetPeerOrderLatency()
 	} else {
-		order = r.GetAliveRandomPeerOrder()
+		order = r.GetRandomPeerOrder()
 	}
 	if len(order) < r.FastQuorumSize() {
 		r.SendToGroup(order, r.preAcceptRPC, pa)
@@ -653,7 +653,7 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 	tpa.Seq = lb.seq
 	tpa.Deps = lb.deps
 
-	peers := r.GetAliveRandomPeerOrder()
+	peers := r.GetRandomPeerOrder()
 	r.SendToGroup(peers, r.tryPreAcceptRPC, tpa)
 	//for q := int32(0); q < int32(r.N); q++ {
 	//	if q == r.id {
@@ -691,7 +691,7 @@ func (r *Replica) bcastAccept(replica int32, instance int32) {
 	if r.sendToFastestQrm {
 		order = r.GetPeerOrderLatency()
 	} else {
-		order = r.GetAliveRandomPeerOrder()
+		order = r.GetRandomPeerOrder()
 	}
 
 	if len(order) < r.SlowQuorumSize() {
@@ -723,7 +723,7 @@ func (r *Replica) bcastCommit(replica int32, instance int32) {
 
 	//	r.CalculateAlive()
 	//	r.RandomisePeerOrder()
-	peers := r.GetAliveRandomPeerOrder()
+	peers := r.GetRandomPeerOrder()
 	r.SendToGroup(peers, r.commitRPC, ec)
 	//for q := 0; q < r.N-1; q++ {
 	//

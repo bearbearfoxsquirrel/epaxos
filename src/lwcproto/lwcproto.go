@@ -2,6 +2,7 @@ package lwcproto
 
 import (
 	"state"
+	"stdpaxosproto"
 )
 
 type Configuration interface {
@@ -36,7 +37,7 @@ type ConfigurationRound interface {
 
 type ConfigBal struct {
 	Config int32
-	Ballot
+	stdpaxosproto.Ballot
 }
 
 //
@@ -64,80 +65,80 @@ type ConfigBal struct {
 //	return &ConfBalOrdering{a, b}
 //}
 
-type Ordering interface {
-	IsLessThan() bool
-	IsGreaterThan() bool
-	IsEqual() bool
-}
-
-type BalOrdering struct {
-	a, b Ballot
-}
-
-// a is less than b
-func (c BalOrdering) IsLessThan() bool {
-	if c.a.Number < c.b.Number {
-		return true
-	} else {
-		if c.a.PropID < c.b.PropID {
-			return true
-		} else {
-			return false
-		}
-	}
-}
-
-// a is greater than b
-func (c BalOrdering) IsGreaterThan() bool {
-	if c.a.Number > c.b.Number {
-		return true
-	} else {
-		if c.a.PropID > c.b.PropID {
-			return true
-		} else {
-			return false
-		}
-	}
-}
-
-func (c *BalOrdering) IsEqual() bool {
-	return c.a.Number == c.b.Number && c.a.PropID == c.b.PropID
-}
-
-type ConfBalOrdering struct {
-	a, b ConfigBal
-}
-
-func (c *ConfBalOrdering) IsGreaterThan() bool {
-	if c.a.Config > c.b.Config {
-		return true
-	} else {
-		balGreaterThan := BalOrdering{c.a.Ballot, c.b.Ballot}.IsGreaterThan()
-		if c.a.Config == c.b.Config && balGreaterThan {
-			return true
-		} else {
-			return false
-		}
-	}
-}
-
-func (c *ConfBalOrdering) IsLessThan() bool {
-	if c.a.Config < c.b.Config {
-		return true
-	} else {
-		balLessThan := BalOrdering{c.a.Ballot, c.b.Ballot}.IsLessThan()
-		if c.a.Config == c.b.Config && balLessThan {
-			return true
-		} else {
-			return false
-		}
-	}
-}
-
-func (c *ConfBalOrdering) IsEqual() bool {
-	balOrdering := BalOrdering{c.a.Ballot, c.b.Ballot}
-	return c.a.Config == c.b.Config && balOrdering.IsEqual()
-}
+//type Ordering interface {
+//	IsLessThan() bool
+//	IsGreaterThan() bool
+//	IsEqual() bool
+//}
+//
+//type BalOrdering struct {
+//	a, b Ballot
+//}
+//
+//// a is less than b
+//func (c BalOrdering) IsLessThan() bool {
+//	if c.a.Number < c.b.Number {
+//		return true
+//	} else {
+//		if c.a.PropID < c.b.PropID {
+//			return true
+//		} else {
+//			return false
+//		}
+//	}
+//}
+//
+//// a is greater than b
+//func (c BalOrdering) IsGreaterThan() bool {
+//	if c.a.Number > c.b.Number {
+//		return true
+//	} else {
+//		if c.a.PropID > c.b.PropID {
+//			return true
+//		} else {
+//			return false
+//		}
+//	}
+//}
+//
+//func (c *BalOrdering) IsEqual() bool {
+//	return c.a.Number == c.b.Number && c.a.PropID == c.b.PropID
+//}
+//
+//type ConfBalOrdering struct {
+//	a, b ConfigBal
+//}
+//
+//func (c *ConfBalOrdering) IsGreaterThan() bool {
+//	if c.a.Config > c.b.Config {
+//		return true
+//	} else {
+//		balGreaterThan := BalOrdering{c.a.Ballot, c.b.Ballot}.IsGreaterThan()
+//		if c.a.Config == c.b.Config && balGreaterThan {
+//			return true
+//		} else {
+//			return false
+//		}
+//	}
+//}
+//
+//func (c *ConfBalOrdering) IsLessThan() bool {
+//	if c.a.Config < c.b.Config {
+//		return true
+//	} else {
+//		balLessThan := BalOrdering{c.a.Ballot, c.b.Ballot}.IsLessThan()
+//		if c.a.Config == c.b.Config && balLessThan {
+//			return true
+//		} else {
+//			return false
+//		}
+//	}
+//}
+//
+//func (c *ConfBalOrdering) IsEqual() bool {
+//	balOrdering := BalOrdering{c.a.Ballot, c.b.Ballot}
+//	return c.a.Config == c.b.Config && balOrdering.IsEqual()
+//}
 
 //type Orderable interface {
 //	order(Orderable)
@@ -191,7 +192,7 @@ func (c *ConfBalOrdering) IsEqual() bool {
 func (confBal ConfigBal) IsZero() bool {
 	zero := ConfigBal{
 		Config: -1,
-		Ballot: Ballot{-1, -1},
+		Ballot: stdpaxosproto.Ballot{-1, -1},
 	}
 	return confBal.Equal(zero)
 }
@@ -204,26 +205,6 @@ func (configBal ConfigBal) Equal(cmp ConfigBal) bool {
 	return configBal.Config == cmp.Config && configBal.Ballot.Equal(cmp.Ballot)
 }
 
-func (bal Ballot) GreaterThan(cmp Ballot) bool {
-	return bal.Number > cmp.Number || (bal.Number == cmp.Number && bal.PropID > cmp.PropID)
-}
-
-func (bal Ballot) Equal(cmp Ballot) bool {
-	return bal.Number == cmp.Number && bal.PropID == cmp.PropID
-}
-
-func (bal Ballot) IsZero() bool {
-	return bal.Equal(Ballot{
-		Number: -1,
-		PropID: -1,
-	})
-}
-
-type Ballot struct {
-	Number int32
-	PropID int16
-}
-
 type Prepare struct {
 	LeaderId int32
 	Instance int32
@@ -231,11 +212,13 @@ type Prepare struct {
 }
 type PrepareReply struct {
 	Instance   int32
-	ConfigBal  ConfigBal
-	VConfigBal ConfigBal
+	Req        ConfigBal
+	Cur        ConfigBal
+	CurPhase   stdpaxosproto.Phase
+	VBal       ConfigBal
 	AcceptorId int32
 	WhoseCmd   int32
-	Command    []state.Command
+	Command    []*state.Command
 }
 
 type Accept struct {
@@ -243,7 +226,7 @@ type Accept struct {
 	Instance int32
 	ConfigBal
 	WhoseCmd int32
-	Command  []state.Command
+	Command  []*state.Command
 }
 
 type AcceptReply struct {
@@ -251,6 +234,7 @@ type AcceptReply struct {
 	AcceptorId int32
 	Cur        ConfigBal
 	Req        ConfigBal
+	CurPhase   stdpaxosproto.Phase
 	WhoseCmd   int32
 }
 
@@ -260,7 +244,7 @@ type Commit struct {
 	ConfigBal
 	WhoseCmd   int32
 	MoreToCome int32
-	Command    []state.Command
+	Command    []*state.Command
 }
 
 type CommitShort struct {
