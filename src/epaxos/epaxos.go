@@ -654,6 +654,7 @@ func (r *Replica) bcastTryPreAccept(replica int32, instance int32) {
 	tpa.Deps = lb.deps
 
 	peers := r.GetRandomPeerOrder()
+	peers = r.GetPeerOrderLatency()
 	r.SendToGroup(peers, r.tryPreAcceptRPC, tpa)
 	//for q := int32(0); q < int32(r.N); q++ {
 	//	if q == r.id {

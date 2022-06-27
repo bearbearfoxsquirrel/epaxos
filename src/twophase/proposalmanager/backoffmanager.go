@@ -90,7 +90,11 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 
 	var next int32
 	if !bm.constBackoff {
-		next = bm.minBackoff + rand.Int31n(bm.minBackoff*int32(math.Pow(2, float64(preemptNum))))
+		upTo := bm.minBackoff * int32(math.Pow(2, float64(preemptNum)))
+		if upTo < 0 {
+			upTo = bm.maxInitBackoff
+		}
+		next = bm.minBackoff + rand.Int31n(upTo)
 	}
 
 	if bm.constBackoff {
@@ -101,6 +105,9 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 		next = bm.maxBackoff
 	}
 
+	if next < bm.minBackoff {
+		next = bm.minBackoff
+	}
 	if next < 0 {
 		panic("can't have negative backoff")
 	}

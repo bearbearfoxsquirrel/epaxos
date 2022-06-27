@@ -65,6 +65,9 @@ func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.ProposingB
 	if pbk.Status == proposalmanager.NOT_BEGUN || pbk.Status == proposalmanager.CLOSED {
 		return
 	}
+	//if pbk.Status == proposalmanager.PROPOSING {
+	//	return
+	//}
 	if pbk.PropCurBal.GreaterThan(ballot) || pbk.PropCurBal.Equal(ballot) {
 		return
 	}

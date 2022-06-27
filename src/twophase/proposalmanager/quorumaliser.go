@@ -13,6 +13,10 @@ type Quormaliser interface {
 	AcceptorQrmInfo
 }
 
+//type Quorumable interface {
+//	BeginQrm(map[int32]map[stdpaxosproto.Ballot]A)
+//}
+
 type ProposerQuorumaliser interface {
 	StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32)
 }

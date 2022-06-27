@@ -12,6 +12,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"mathextra"
 	"net"
 	"os"
 	"sort"
@@ -87,13 +88,24 @@ type Replica struct {
 
 	Stats *genericsmrproto.Stats
 
-	lastHeardFrom      []time.Time
-	deadTime           int32
-	heartbeatFrequency time.Duration
-	ewmaWeight         float64
-	batchFlush         bool
-	batchWait          time.Duration
-	buffersFull        []chan struct{}
+	lastHeardFrom           []time.Time
+	deadTime                int32
+	heartbeatFrequency      time.Duration
+	ewmaWeight              float64
+	batchFlush              bool
+	batchWait               time.Duration
+	buffersFull             []chan struct{}
+	mostRecentRepliedBeacon []beaconresp
+
+	lastSentBeacons   []map[int64]beaconresp
+	toRemoveI         []chan int64
+	curBeaconsSentLat []int64
+	//EwmaSent          []float
+}
+
+type beaconresp struct {
+	got  int64
+	send int64
 }
 
 /* Client API */
@@ -300,7 +312,6 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 			beac := &Beacon{int32(rid), gbeacon.Timestamp}
 			r.ReplyBeacon(beac)
 			break
-
 		case genericsmrproto.GENERIC_SMR_BEACON_REPLY:
 			if err = gbeaconReply.Unmarshal(reader); err != nil {
 				break
@@ -310,7 +321,8 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 			if r.Alive[rid] == false {
 				r.Alive[rid] = true
 			}
-			r.lastHeardFrom[rid] = time.Now()
+			t := time.Now()
+			r.lastHeardFrom[rid] = t
 			r.updateLatencyWithReply(rid, gbeaconReply)
 			r.Mutex.Unlock()
 			break
@@ -546,9 +558,35 @@ func (r *Replica) SendBeacon(peerId int32) {
 	}
 	//log.Println("sending beacon to", peerId)
 	w.WriteByte(genericsmrproto.GENERIC_SMR_BEACON)
-	beacon := &genericsmrproto.Beacon{Timestamp: time.Now().UnixNano()}
+	t := time.Now().UnixNano()
+	beacon := &genericsmrproto.Beacon{Timestamp: t}
 	beacon.Marshal(w)
 	dlog.Println("send beacon ", beacon.Timestamp, " to ", peerId)
+
+	// for inital tell to track
+
+	//r.lastSentBeacons[t]
+
+	//r.EwmaSent[peerId] = mathextra.EwmaAdd(r.EwmaSent[peerId], r.ewmaWeight, float64(t))
+
+	// if there is a signal to add new one not responded, delete oldest
+
+	//r.lastSentBeacons[peerId][t] = beaconresp{
+	//	got:  0,
+	//	send: t,
+	//}
+	//if len(r.lastSentBeacons[peerId]) > 20 {
+	//	i := <-r.toRemoveI[peerId]
+	//	delete(r.lastSentBeacons[peerId], i)
+	//}
+	//r.toRemoveI[peerId] <- t // (i + 1) % 20
+
+	//l := 0
+	//for j := 0; j < 20; j++ {
+	//	r.lastSentBeacons[peerId][j] =
+	//}
+	//r.curBeaconsSentLat[peerId] =
+
 	if r.checkAndHandleBatchMessaging(peerId) {
 		return
 	}
@@ -588,6 +626,8 @@ func (r *Replica) Crash() {
 }
 
 func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, failures int, storageParentDir string, deadTime int32, batchFlush bool, batchWait time.Duration) *Replica {
+	slidingW := 20
+
 	r := &Replica{
 		len(peerAddrList),
 		int32(id),
@@ -621,11 +661,15 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 		&genericsmrproto.Stats{make(map[string]int)},
 		make([]time.Time, len(peerAddrList)),
 		deadTime,
-		time.Duration(200 * time.Millisecond),
+		time.Duration(250 * time.Millisecond),
 		0.1,
 		batchFlush,
 		batchWait,
 		make([]chan struct{}, len(peerAddrList)),
+		make([]beaconresp, len(peerAddrList)),
+		make([]map[int64]beaconresp, len(peerAddrList)),
+		make([]chan int64, len(peerAddrList)),
+		make([]int64, len(peerAddrList)),
 	}
 
 	storage = storageParentDir
@@ -638,12 +682,20 @@ func NewReplica(id int, peerAddrList []string, thrifty bool, exec bool, lread bo
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	for i := int32(0); i < int32(r.N); i++ {
+		r.lastSentBeacons[i] = make(map[int64]beaconresp, slidingW)
+		r.toRemoveI[i] = make(chan int64, slidingW)
+		//for j := 0; j < slidingW; j++ {
+		//r.toRemoveI[i] <-
+		//}
+
 		if r.Id == i {
 			r.Alive[i] = true
 		}
 		r.Ewma[i] = 0.0
 		r.ReplicasLatenciesOrders[i] = i
+		//r.mostRecentRepliedBeacon[i] = //math.MaxInt64
 	}
 
 	if r.batchFlush {
@@ -702,7 +754,6 @@ func testEq(a, b []int32) bool {
 			return false
 		}
 	}
-
 	return true
 }
 
@@ -744,9 +795,24 @@ func (r *Replica) RandomisePeerOrder() {
 }
 
 func (r *Replica) updateLatencyWithReply(rid int, gbeaconReply genericsmrproto.BeaconReply) {
-	//r.Mutex.Lock()
-	r.Ewma[rid] = (1-r.ewmaWeight)*r.Ewma[rid] + r.ewmaWeight*float64(time.Now().UnixNano()-gbeaconReply.Timestamp)
-	//r.Mutex.Unlock()
+	//if _, e := r.lastSentBeacons[rid][gbeaconReply.Timestamp]; e {
+	//	r.lastSentBeacons[rid][gbeaconReply.Timestamp] = beaconresp{
+	//		got:  t,
+	//		send: gbeaconReply.Timestamp,
+	//	}
+	//}
+	//r.mostRecentRepliedBeacon[rid].got-r.mostRecentRepliedBeacon[rid].send
+	t := time.Now().UnixNano()
+	r.Ewma[rid] = mathextra.EwmaAdd(r.Ewma[rid], r.ewmaWeight, float64(t-gbeaconReply.Timestamp)) //(1-r.ewmaWeight)*r.Ewma[rid] + r.ewmaWeight*)
+	if gbeaconReply.Timestamp < r.mostRecentRepliedBeacon[rid].send {
+		return
+	}
+	r.mostRecentRepliedBeacon[rid] = beaconresp{
+		got:  t,
+		send: gbeaconReply.Timestamp,
+	}
+	//
+	//r.mostRecentRepliedBeacon[rid]
 }
 
 type LatencyOracle interface {
@@ -780,6 +846,25 @@ func (r *Replica) GetPeerLatencies() []time.Duration {
 	return lat
 }
 
+func (r *Replica) GetAliveRandomPeerOrder() []int32 {
+	r.Mutex.Lock()
+	defer r.Mutex.Unlock()
+	reps := make([]int32, 1, r.N)
+	reps[0] = r.Id
+	for i := int32(0); i < int32(r.N); i++ {
+		if r.Id == i || !r.Alive[i] {
+			continue
+		}
+		//reps[i] = i
+		reps = append(reps, i)
+	}
+	toShuff := reps[1:]
+	rand.Shuffle(len(toShuff), func(i, j int) {
+		toShuff[i], toShuff[j] = toShuff[j], toShuff[i]
+	})
+	return reps
+}
+
 // returns all alive acceptors ordered by random (including self)
 func (r *Replica) GetRandomPeerOrder() []int32 {
 	// returns a random preference order for sending messages, except we are always first
@@ -791,27 +876,62 @@ func (r *Replica) GetRandomPeerOrder() []int32 {
 		if r.Id == i {
 			continue
 		}
+		//reps[i] = i
 		reps = append(reps, i)
 	}
 	toShuff := reps[1:]
 	rand.Shuffle(len(toShuff), func(i, j int) {
 		toShuff[i], toShuff[j] = toShuff[j], toShuff[i]
 	})
-
 	return reps
 }
 
 // returns all alive acceptors ordered by latency (including self)
 func (r *Replica) GetPeerOrderLatency() []int32 {
 	r.Mutex.Lock()
-	//aliveReps := r.getAlivePeers()
-	peers := make([]int32, r.N)
-	for i, _ := range peers {
-		peers[i] = int32(i)
+	peers := make([]int32, 1, r.N)
+	peers[0] = r.Id
+	for i := int32(0); i < int32(r.N); i++ {
+		if r.Id == i {
+			continue
+		}
+		//peers[i] = i
+		peers = append(peers, i)
 	}
-	sort.Slice(peers, func(i, j int) bool {
-		return r.Ewma[i] < r.Ewma[j]
+
+	if true {
+
+	}
+	now := time.Now().UnixNano()
+	pl := peers[1:]
+
+	//latencies := make([]int64, r.N)
+	//for p := 0; p < r.N; p++ {
+	//	if int32(p) == r.Id {
+	//		continue
+	//	}
+	//	for _, beac := range r.lastSentBeacons[p] {
+	//		//for j := 0; j < 20; j++ {
+	//		recv := beac.got
+	//		if recv == 0 {
+	//			recv = now
+	//		}
+	//		latencies[p] += recv - beac.send
+	//	}
+	//	latencies[p] = latencies[p] / 20
+	//}
+
+	sort.Slice(pl, func(i, j int) bool {
+		lhs := r.Ewma[pl[i]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[pl[i]].send)*r.ewmaWeight
+		rhs := r.Ewma[pl[j]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[pl[j]].send)*r.ewmaWeight
+		return lhs < rhs //now-r.mostRecentRepliedBeacon[pl[i]] < now-r.mostRecentRepliedBeacon[pl[j]]
 	})
+	////
+	//lat := make([]float64, r.N)
+	//for i := 0; i < r.N; i++ {
+	//	lat[i] = r.Ewma[peers[i]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[peers[i]].send)*r.ewmaWeight
+	//}
+	dlog.AgentPrintfN(r.Id, "for this we send to %v", peers)
 	r.Mutex.Unlock()
 	return peers
 }

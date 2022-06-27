@@ -4,6 +4,7 @@ import (
 	"dlog"
 	"instanceagentmapper"
 	"lwcproto"
+	"mathextra"
 	"stdpaxosproto"
 )
 
@@ -259,7 +260,7 @@ func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*Propo
 		}
 		if _, e := decider.conflictsSeen[inst][ballot]; !e {
 			old := decider.conflictEWMA
-			decider.conflictEWMA = ewmaAdd(decider.conflictEWMA, decider.ewmaWeight, 1)
+			decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, 1)
 			dlog.AgentPrintfN(decider.id, "Conflict encountered, increasing EWMA from %f to %f", old, decider.conflictEWMA)
 
 		}
@@ -274,7 +275,7 @@ func (decider *DynamicMappedGlobalManager) DecideRetry(pbk *ProposingBookkeeping
 		return doRetry
 	}
 	old := decider.conflictEWMA
-	decider.conflictEWMA = ewmaAdd(decider.conflictEWMA, decider.ewmaWeight*3, -1)
+	decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight*3, -1)
 	dlog.AgentPrintfN(decider.id, "Retry needed on instance %d because failures are occurring or there is not enough system load, decreasing EWMA from %f to %f", retry.Inst, old, decider.conflictEWMA)
 	return doRetry
 }
@@ -318,7 +319,7 @@ func (decider *DynamicMappedGlobalManager) LearnBallotChosen(instanceSpace *[]*P
 		}
 		if _, e := decider.conflictsSeen[inst][ballot]; !e {
 			old := decider.conflictEWMA
-			decider.conflictEWMA = ewmaAdd(decider.conflictEWMA, decider.ewmaWeight, 1)
+			decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, 1)
 			dlog.AgentPrintfN(decider.id, "Conflict encountered, increasing EWMA from %f to %f", old, decider.conflictEWMA)
 		}
 	}
@@ -335,16 +336,13 @@ func movingPointAvg(a, ob float64) float64 {
 	a += ob / 1000
 	return a
 }
-func ewmaAdd(ewma float64, weight float64, ob float64) float64 {
-	return (1-weight)*ewma + weight*ob
-}
 
 func (decider *DynamicMappedGlobalManager) LearnNoop(inst int32, who int32) {
 	//if who != decider.id {
 	//	return
 	//}
 	old := decider.conflictEWMA
-	decider.conflictEWMA = ewmaAdd(decider.conflictEWMA, decider.ewmaWeight, -1)
+	decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, -1)
 	dlog.AgentPrintfN(decider.id, "Learnt NOOP, decreasing EWMA from %f to %f", old, decider.conflictEWMA)
 }
 
@@ -415,7 +413,7 @@ func (decider *SimpleHedgedBets) LearnBallotChosen(instanceSpace *[]*ProposingBo
 	decider.updateConfs(inst, ballot)
 	decider.OpenInstSignal.CheckChosen(pbk, inst, ballot)
 	decider.SingleInstanceManager.HandleProposalChosen(pbk, inst, ballot)
-	decider.conflictEWMA = ewmaAdd(decider.conflictEWMA, decider.ewmaWeight, float64(len(decider.confs[inst])))
+	decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, float64(len(decider.confs[inst])))
 	delete(decider.confs, inst) // will miss some as a result but its okie to avoid too much memory growth
 }
 

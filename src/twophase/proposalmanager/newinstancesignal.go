@@ -49,12 +49,10 @@ func (sig *SimpleSig) CheckBallot(pbk *ProposingBookkeeping, inst int32, ballot 
 		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 2", inst)
 		return
 	}
-
 	if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == sig.id) {
 		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 3", inst)
 		return
 	}
-
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted or there is an accepted ballot")
 	go func() { sig.sigNewInst <- struct{}{} }()
 	delete(sig.instsStarted, inst)

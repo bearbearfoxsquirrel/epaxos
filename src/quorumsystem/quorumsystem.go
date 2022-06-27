@@ -224,7 +224,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	if qrmSys.broadcastFastest {
 		peerList = qrmSys.Replica.GetPeerOrderLatency()
 	} else {
-		peerList = qrmSys.Replica.GetRandomPeerOrder()
+		peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
 	}
 
 	//log.Println("peer list ", peerList)

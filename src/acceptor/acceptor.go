@@ -242,7 +242,7 @@ func (a *standard) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Mess
 	}
 
 	msg := a.getPrepareReply(prepare, inst)
-	go a.returnPrepareReply(msg, responseC)
+	a.returnPrepareReply(msg, responseC)
 
 	return responseC
 }
@@ -301,7 +301,7 @@ func (a *standard) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message
 	}
 
 	acptReply := a.getAcceptReply(inst, accept)
-	go a.returnAcceptReply(acptReply, responseC)
+	a.returnAcceptReply(acptReply, responseC)
 
 	return responseC
 }

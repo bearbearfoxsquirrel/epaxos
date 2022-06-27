@@ -104,11 +104,17 @@ type patientProposals struct {
 	pidsPropRecv        map[int32]map[int32]struct{}
 	doPatient           bool
 	Ewma                []float64
+	closed              map[int32]struct{}
 	ProposerGroupGetter
 }
 
 func (patient *patientProposals) learnOfProposal(inst int32, ballot stdpaxosproto.Ballot) {
-	if _, e := patient.promisesRequestedAt[inst]; !e {
+	//if _, e := patient.promisesRequestedAt[inst]; !e {
+	//	dlog.AgentPrintfN(patient.myId, "No longer considering proposals received for instance %d in patient proposals", inst)
+	//	return
+
+	//}
+	if _, e := patient.closed[inst]; e {
 		dlog.AgentPrintfN(patient.myId, "No longer considering proposals received for instance %d in patient proposals", inst)
 		return
 	}
@@ -129,7 +135,7 @@ func (patient *patientProposals) alreadyHeardFrom(inst int32, id int32) bool {
 }
 
 func (patient *patientProposals) gotPromise(inst int32, ballot stdpaxosproto.Ballot, from int32) {
-	if _, e := patient.promisesRequestedAt[inst]; !e {
+	if _, e := patient.closed[inst]; e {
 		dlog.AgentPrintfN(patient.myId, "No longer considering promises received for instance %d in patient proposals", inst)
 		return
 	}
@@ -149,6 +155,7 @@ func (patient *patientProposals) startedProposal(inst int32, ballot stdpaxosprot
 func (patient *patientProposals) stoppingProposals(inst int32, ballot stdpaxosproto.Ballot) {
 	delete(patient.promisesRequestedAt, inst)
 	delete(patient.pidsPropRecv, inst)
+	patient.closed[inst] = struct{}{}
 }
 
 // Maximum latency we should expect from a replica -- based on who is alive
@@ -189,5 +196,5 @@ func (patient *patientProposals) getTimeToDelayProposal(inst int32, ballot stdpa
 	if !patient.doPatient {
 		return 0
 	}
-	return 0 //expectedMaxLatency - acqLat
+	return expectedMaxLatency - acqLat
 }
