@@ -931,7 +931,7 @@ func (r *Replica) GetPeerOrderLatency() []int32 {
 	//for i := 0; i < r.N; i++ {
 	//	lat[i] = r.Ewma[peers[i]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[peers[i]].send)*r.ewmaWeight
 	//}
-	dlog.AgentPrintfN(r.Id, "for this we send to %v", peers)
+	//dlog.AgentPrintfN(r.Id, "for this we send to %v", peers)
 	r.Mutex.Unlock()
 	return peers
 }

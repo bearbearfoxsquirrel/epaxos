@@ -814,9 +814,9 @@ func (r *Replica) bcastPrepare(instance int32) {
 	}
 	if r.doStats {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
-		speed := r.beginTracking(instID, args.Ballot, sentTo, "Phase 1", "Phase 1")
-		dlog.AgentPrintfN(r.Id, "Broadcasted prepare for instance %d at ballot %d.%d to replicas %v (a %s quorum)", args.Instance, args.Number, args.PropID, sentTo, speed)
 	}
+	speed := r.beginTracking(instID, args.Ballot, sentTo, "Phase 1", "Phase 1")
+	dlog.AgentPrintfN(r.Id, "Broadcasted prepare for instance %d at ballot %d.%d to replicas %v (a %s quorum)", args.Instance, args.Number, args.PropID, sentTo, speed)
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PREPARING, r.timeout, r.prepareRPC, args)
 }
 
@@ -917,9 +917,9 @@ func (r *Replica) bcastAccept(instance int32) {
 	}
 	if r.doStats {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
-		speed := r.beginTracking(instID, args.Ballot, sentTo, "Phase 2", "Phase 2")
-		dlog.AgentPrintfN(r.Id, "Broadcasting accept for instance %d with whose commands %d, at ballot %d.%d to Replicas %v (a %s quorum)", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo, speed)
 	}
+	speed := r.beginTracking(instID, args.Ballot, sentTo, "Phase 2", "Phase 2")
+	dlog.AgentPrintfN(r.Id, "Broadcasting accept for instance %d with whose commands %d, at ballot %d.%d to Replicas %v (a %s quorum)", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo, speed)
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PROPOSING, r.timeout, r.acceptRPC, args)
 }
 
