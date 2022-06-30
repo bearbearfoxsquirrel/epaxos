@@ -129,10 +129,11 @@ func fsync(stableStore stablestore.StableStore, durable bool, emulatedSS bool, e
 func checkAndCreateInstanceState(instanceState *map[int32]*AcceptorBookkeeping, inst int32) {
 	if _, exists := (*instanceState)[inst]; !exists {
 		(*instanceState)[inst] = &AcceptorBookkeeping{
-			status: NOT_STARTED,
-			cmds:   nil,
-			curBal: stdpaxosproto.Ballot{Number: -1, PropID: -1},
-			vBal:   stdpaxosproto.Ballot{Number: -1, PropID: -1},
+			status:    NOT_STARTED,
+			cmds:      nil,
+			curBal:    stdpaxosproto.Ballot{Number: -1, PropID: -1},
+			vBal:      stdpaxosproto.Ballot{Number: -1, PropID: -1},
+			whoseCmds: -1,
 		}
 	}
 }

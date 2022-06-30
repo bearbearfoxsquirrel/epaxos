@@ -276,7 +276,7 @@ func main() {
 
 	flag.Parse()
 	runtime.GOMAXPROCS(*procs)
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano() * int64(os.Getpid()))
 
 	if clientId == -1 {
 		clientId = int64(uuid.New().ID())

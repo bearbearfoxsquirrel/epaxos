@@ -86,10 +86,16 @@ type EagerSig struct {
 }
 
 func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
-	return &EagerSig{
+	e := &EagerSig{
 		SimpleSig:    simpleSig,
 		MaxOpenInsts: maxOI,
 	}
+	go func() {
+		for i := int32(0); i < maxOI; i++ {
+			e.sigNewInst <- struct{}{}
+		}
+	}()
+	return e
 }
 
 func (manager *EagerSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
@@ -171,6 +177,11 @@ func (sig *HedgedSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot 
 	for _, i := range curHedge.relatedHedges {
 		delete(sig.currentHedges, i)
 	}
+
+	// check percentage of choosing
+	// if we are above a threshold then reduce
+	// if we are below, then increase
+
 	//sig.checkInstChosenByMe(pbk, inst, ballot)
 }
 

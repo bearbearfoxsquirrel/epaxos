@@ -70,9 +70,12 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *ProposingBookkeeping
 	if pbk.Status == CLOSED {
 		return false
 	}
-	if pbk.PropCurBal.Equal(ballot) {
+	if int32(ballot.PropID) == man.id {
 		return false
 	}
+	//if pbk.PropCurBal.Equal(ballot) {
+	//	return false
+	//}
 
 	if pbk.MaxKnownBal.GreaterThan(ballot) {
 		return false
@@ -86,6 +89,10 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *ProposingBookkeeping
 
 	// NOTE: HERE WE WANT TO INCREASE BACKOFF EACH TIME THERE IS A NEW PROPOSAL SEEN
 	backedOff, botime := man.BackoffManager.CheckAndHandleBackoff(inst, pbk.PropCurBal, ballot, phase)
+
+	//if ballot.IsZero() {
+	//	panic("askldjfalskdjf")
+	//}
 	if backedOff {
 		dlog.AgentPrintfN(man.id, "Backing off instance %d for %d microseconds because our current ballot %d.%d is preempted by ballot %d.%d",
 			inst, botime, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, ballot.Number, ballot.PropID)
@@ -123,7 +130,7 @@ func (man *SimpleInstanceManager) HandleProposalChosen(pbk *ProposingBookkeeping
 	if ballot.GreaterThan(pbk.MaxKnownBal) {
 		pbk.MaxKnownBal = ballot
 	}
-	dlog.AgentPrintfN(man.id, "Instance %d learnt to be chosen at ballot %d.%d.%d", inst, ballot.Number, ballot.PropID)
+	dlog.AgentPrintfN(man.id, "Instance %d learnt to be chosen at ballot %d.%d", inst, ballot.Number, ballot.PropID)
 	man.howManyAttemptsToChoose(pbk, inst)
 
 	if man.doStats {

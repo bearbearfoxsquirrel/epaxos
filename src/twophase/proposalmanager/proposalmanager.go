@@ -2,9 +2,11 @@ package proposalmanager
 
 import (
 	"dlog"
+	"genericsmr"
 	"instanceagentmapper"
 	"lwcproto"
 	"mathextra"
+	"proposerstate"
 	"stdpaxosproto"
 )
 
@@ -40,6 +42,195 @@ type SimpleGlobalManager struct {
 	id int32
 }
 
+type EagerForwardInductionProposalManager struct {
+	n           int32
+	crtInstance int32
+	SingleInstanceManager
+	*EagerSig
+	*BackoffManager
+	id int32
+	*genericsmr.Replica
+	stateRpc     uint8
+	reservations map[int32]struct{}
+}
+
+func EagerForwardInductionProposalManagerNew(n int32, id int32, signal *EagerSig, iManager SingleInstanceManager, backoffManager *BackoffManager, replica *genericsmr.Replica, stateRPC uint8) *EagerForwardInductionProposalManager {
+	return &EagerForwardInductionProposalManager{
+		n:                     n,
+		crtInstance:           -1,
+		SingleInstanceManager: iManager,
+		EagerSig:              signal,
+		BackoffManager:        backoffManager,
+		id:                    id,
+		Replica:               replica,
+		stateRpc:              stateRPC,
+		reservations:          make(map[int32]struct{}),
+	}
+}
+
+func (manager *EagerForwardInductionProposalManager) GetCrtInstance() int32 {
+	return manager.crtInstance
+}
+
+func (manager *EagerForwardInductionProposalManager) StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32 {
+	for i, _ := range manager.reservations {
+		if (*instanceSpace)[i] == nil {
+			(*instanceSpace)[i] = GetEmptyInstance()
+		}
+
+		if (*instanceSpace)[i].Status != BACKING_OFF && (*instanceSpace)[i].Status != NOT_BEGUN {
+			panic("we are beginning an instance we should reserve")
+		}
+		//if (*instanceSpace)[manager.crtInstance].Status != NOT_BEGUN {
+		//	continue
+		//}
+		(*instanceSpace)[i] = manager.SingleInstanceManager.InitInstance(i)
+		startFunc(i)
+		opened := []int32{i}
+		manager.EagerSig.Opened(opened)
+		dlog.AgentPrintfN(manager.id, "Starting instance %d", manager.crtInstance)
+		return opened
+	}
+
+	manager.crtInstance++
+	(*instanceSpace)[manager.crtInstance] = manager.SingleInstanceManager.InitInstance(manager.crtInstance)
+	startFunc(manager.crtInstance)
+	opened := []int32{manager.crtInstance}
+	manager.EagerSig.Opened(opened)
+	return opened
+
+	//for gotInstance := false; !gotInstance; {
+	//	manager.crtInstance++
+	//	if (*instanceSpace)[manager.crtInstance] == nil {
+	//		(*instanceSpace)[manager.crtInstance] = GetEmptyInstance()
+	//	}
+	//	if (*instanceSpace)[manager.crtInstance].Status != NOT_BEGUN {
+	//		continue
+	//	}
+	//	gotInstance = true
+	//	dlog.AgentPrintfN(manager.id, "Starting instance %d", manager.crtInstance)
+	//}
+	//startFunc(manager.crtInstance)
+	//opened := []int32{manager.crtInstance}
+	//manager.EagerSig.Opened(opened)
+	//return opened
+}
+
+func (manager *EagerForwardInductionProposalManager) DecideRetry(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+	return manager.SingleInstanceManager.ShouldRetryInstance(pbk, retry)
+}
+
+func (manager *EagerForwardInductionProposalManager) StartNextProposal(pbk *ProposingBookkeeping, inst int32) {
+	manager.SingleInstanceManager.StartProposal(pbk, inst)
+	if _, e := manager.reservations[inst]; e {
+		dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to propose in", inst)
+		delete(manager.reservations, inst)
+	}
+}
+
+func (manager *EagerForwardInductionProposalManager) HandleNewInstance(instsanceSpace *[]*ProposingBookkeeping, inst int32) {
+	//if (*instsanceSpace)[inst] != nil {
+	//	return
+	//}
+	//(*instsanceSpace)[inst] = GetEmptyInstance()
+
+	if manager.crtInstance > inst {
+		return
+	}
+	for i := manager.crtInstance + 1; i <= inst; i++ {
+		(*instsanceSpace)[i] = GetEmptyInstance()
+		if i == inst {
+			break
+		}
+		(*instsanceSpace)[i].Status = BACKING_OFF
+		_, bot := manager.CheckAndHandleBackoff(inst, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
+		dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", inst, bot)
+	}
+	manager.crtInstance = inst
+}
+
+//const RESEVATION = lwcproto.ConfigBal{
+//	Config: -2,
+//	Ballot: stdpaxosproto.Ballot{-2, -2},
+//}
+
+func (manager *EagerForwardInductionProposalManager) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+	manager.HandleNewInstance(instanceSpace, inst)
+	pbk := (*instanceSpace)[inst]
+	if ballot.Equal(lwcproto.ConfigBal{Config: -2, Ballot: stdpaxosproto.Ballot{Number: -2, PropID: -2}}) {
+		if !pbk.MaxKnownBal.GreaterThan(lwcproto.ConfigBal{-1, stdpaxosproto.Ballot{10000, -1}}) {
+			dlog.AgentPrintfN(manager.id, "ignoring invitation of reservation for %d to propose in ", inst)
+			return false
+		}
+		manager.reservations[inst] = struct{}{}
+		dlog.AgentPrintfN(manager.id, "Reserving instance %d to propose in", inst)
+		return false
+	}
+
+	manager.EagerSig.CheckBallot(pbk, inst, ballot, phase)
+	newBal := manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
+
+	if !ballot.Equal(lwcproto.ConfigBal{Config: -2, Ballot: stdpaxosproto.Ballot{Number: -2, PropID: -2}}) {
+		if _, e := manager.reservations[inst]; e {
+			dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to propose in", inst)
+			delete(manager.reservations, inst)
+		}
+	}
+
+	if int32(ballot.PropID) == manager.id || ballot.PropID == -1 {
+		return newBal
+	}
+
+	if phase == stdpaxosproto.PROMISE && (ballot.GreaterThan(pbk.MaxKnownBal) || ballot.Equal(pbk.MaxKnownBal) || !pbk.ProposeValueBal.IsZero()) {
+		return newBal
+	}
+
+	if phase == stdpaxosproto.ACCEPTANCE {
+		return newBal
+	}
+
+	// Give reservation
+
+	manager.Replica.SendMsg(int32(ballot.PropID), manager.stateRpc, &proposerstate.State{
+		ProposerID:      manager.id,
+		CurrentInstance: manager.crtInstance + 1,
+	})
+
+	dlog.AgentPrintfN(manager.id, "Assuming that proposer %d is going to make a new proposal to instance %d following this preempt or notification of already acceptance", ballot.PropID, manager.crtInstance+1)
+
+	manager.LearnOfBallot(instanceSpace, manager.crtInstance+1, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: 10000, PropID: -1}}, stdpaxosproto.PROMISE)
+
+	return newBal
+}
+
+func (manager *EagerForwardInductionProposalManager) LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, at lwcproto.ConfigBal) {
+	manager.HandleNewInstance(instanceSpace, inst)
+	if at.IsZero() {
+		panic("asjdflasdlkfj")
+	}
+	pbk := (*instanceSpace)[inst]
+	manager.EagerSig.CheckChosen(pbk, inst, at)
+	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, at)
+
+	if _, e := manager.reservations[inst]; e {
+		dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to propose in", inst)
+		delete(manager.reservations, inst)
+	}
+
+	if int32(at.PropID) == manager.id {
+		return
+	}
+
+	//manager.Replica.SendMsg(int32(at.PropID), manager.stateRpc, &proposerstate.State{
+	//	ProposerID:      manager.id,
+	//	CurrentInstance: manager.crtInstance + 1,
+	//})
+	//
+	//dlog.AgentPrintfN(manager.id, "Assuming that proposer %d is going to make a new proposal to instance %d following this chosen receipt", at.PropID, manager.crtInstance+1)
+	//manager.LearnOfBallot(instanceSpace, manager.crtInstance+1, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: 10000, PropID: -1}}, stdpaxosproto.PROMISE)
+	////}
+}
+
 func SimpleProposalManagerNew(id int32, signal OpenInstSignal, iManager SingleInstanceManager, backoffManager *BackoffManager) *SimpleGlobalManager {
 	return &SimpleGlobalManager{
 		crtInstance:           -1,
@@ -70,14 +261,15 @@ func (manager *SimpleGlobalManager) StartNextProposal(pbk *ProposingBookkeeping,
 }
 
 func (manager *SimpleGlobalManager) HandleNewInstance(instsanceSpace *[]*ProposingBookkeeping, inst int32) {
+	// take advantage of inductive backoff property
 	for i := manager.crtInstance + 1; i <= inst; i++ {
 		(*instsanceSpace)[i] = GetEmptyInstance()
-		// take advantage of inductive backoff property
-		if i != inst {
-			(*instsanceSpace)[i].Status = BACKING_OFF
-			_, bot := manager.CheckAndHandleBackoff(inst, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
-			dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", inst, bot)
+		if i == inst {
+			break
 		}
+		(*instsanceSpace)[i].Status = BACKING_OFF
+		_, bot := manager.CheckAndHandleBackoff(inst, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
+		dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", inst, bot)
 	}
 	manager.crtInstance = inst
 }
@@ -186,6 +378,7 @@ func (manager *MappedGlobalManager) LearnOfBallot(instanceSpace *[]*ProposingBoo
 }
 
 func (manager *MappedGlobalManager) checkAndSetNewInstance(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+	// todo check if all prior instances are opened?
 	if (*instanceSpace)[inst] == nil {
 		(*instanceSpace)[inst] = GetEmptyInstance()
 		dlog.AgentPrintfN(manager.id, "Witnessed new instance %d, we have set instance %d now to be our current instance", inst, manager.crtInstance)
