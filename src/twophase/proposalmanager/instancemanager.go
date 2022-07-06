@@ -56,7 +56,7 @@ func (man *SimpleInstanceManager) StartProposal(pbk *ProposingBookkeeping, inst 
 
 func (man *SimpleInstanceManager) ShouldRetryInstance(pbk *ProposingBookkeeping, retry RetryInfo) bool {
 	if pbk.Status != BACKING_OFF {
-		dlog.AgentPrintfN(man.id, "Skipping retry of instance %d due to it being closed", retry.Inst)
+		dlog.AgentPrintfN(man.id, "Skipping retry of instance %d due to it no longer being backed off", retry.Inst)
 		return false
 	}
 	if !man.BackoffManager.StillRelevant(retry) || !pbk.PropCurBal.Equal(retry.AttemptedBal) {

@@ -7,9 +7,9 @@ import (
 )
 
 type OpenInstSignal interface {
-	Opened(opened []int32) // todo decide whether to make two interfaces for hedged variants or not?
-	CheckBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase)
-	//CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot)
+	Opened(opened []int32)
+	CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase)
+	CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
 	CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal)
 }
 
@@ -36,26 +36,48 @@ func (sig *SimpleSig) Opened(opened []int32) {
 	}
 }
 
-func (sig *SimpleSig) CheckBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+func (sig *SimpleSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if pbk.Status == CLOSED {
 		return
 	}
+	if int32(ballot.PropID) == sig.id {
+		return
+	}
 	if _, e := sig.instsStarted[inst]; !e {
-		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 1", inst)
 		return
 	}
-	// we have the most recent ballot preparing
-	if phase == stdpaxosproto.PROMISE && (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) || int32(ballot.PropID) == sig.id {
-		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 2", inst)
+	if (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) && phase == stdpaxosproto.PROMISE {
 		return
 	}
-	if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == sig.id) {
-		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 3", inst)
+	if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
 		return
 	}
-	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted or there is an accepted ballot")
-	go func() { sig.sigNewInst <- struct{}{} }()
+	//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
+	//	return
+	//}
+
+	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
 	delete(sig.instsStarted, inst)
+	go func() { sig.sigNewInst <- struct{}{} }()
+}
+
+func (sig *SimpleSig) CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+	if pbk.Status == CLOSED {
+		return
+	}
+	if int32(ballot.PropID) == sig.id {
+		return
+	}
+	if _, e := sig.instsStarted[inst]; !e {
+		return
+	}
+	if whosecmds == sig.id {
+		return
+	}
+
+	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as there is an accepted ballot")
+	delete(sig.instsStarted, inst)
+	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
 func (sig *SimpleSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
@@ -72,8 +94,8 @@ func (sig *SimpleSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot 
 	}
 
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
-	go func() { sig.sigNewInst <- struct{}{} }()
 	delete(sig.instsStarted, inst)
+	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
 //func (sig *SimpleSig) CheckPreempted(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, reason string) {
@@ -98,15 +120,48 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 	return e
 }
 
+//func (sig *EagerSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+//	if pbk.Status == CLOSED {
+//		return
+//	}
+//
+//	_, e := sig.instsStarted[inst]
+//	if !e {
+//		return
+//	}
+//
+//	if int32(ballot.PropID) == sig.id && pbk.Status != PROPOSING {
+//		return
+//	}
+//
+//	if (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) && phase == stdpaxosproto.PROMISE {
+//		return
+//	}
+//
+//	if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
+//		return
+//	}
+//
+//
+//	//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
+//	//	return
+//	//}
+//
+//	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
+//	go func() { sig.sigNewInst <- struct{}{} }()
+//	delete(sig.instsStarted, inst)
+//}
+
 func (manager *EagerSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
 	if pbk.Status == CLOSED {
 		return
 	}
-	if _, e := manager.instsStarted[inst]; e {
-		dlog.AgentPrintfN(manager.id, "Signalling to open new instance as this instance %d is chosen", inst)
-		go func() { manager.sigNewInst <- struct{}{} }()
-		delete(manager.instsStarted, inst)
+	if _, e := manager.instsStarted[inst]; !e {
+		return
 	}
+	dlog.AgentPrintfN(manager.id, "Signalling to open new instance as this instance %d is chosen", inst)
+	delete(manager.instsStarted, inst)
+	go func() { manager.sigNewInst <- struct{}{} }()
 }
 
 type HedgedSig struct {
@@ -132,11 +187,11 @@ func (sig *HedgedSig) Opened(opened []int32) {
 	}
 }
 
-func (sig *HedgedSig) CheckBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+func (sig *HedgedSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	//sig.checkInstFailed(pbk, inst, ballot)
-	if pbk.Status == CLOSED {
-		return
-	}
+	//if pbk.Status == CLOSED {
+	//	return
+	//}
 
 	curHedge, e := sig.currentHedges[inst]
 	if !e {
@@ -148,18 +203,19 @@ func (sig *HedgedSig) CheckBallot(pbk *ProposingBookkeeping, inst int32, ballot 
 		return
 	}
 
-	if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == sig.id) {
-		return
-	}
+	//if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == sig.id) {
+	//	return
+	//}
+
 	curHedge.preempted = true
 	dlog.AgentPrintfN(sig.id, "Noting that instance %d has failed", inst)
 	sig.checkNeedsSig(pbk, inst)
 }
 
 func (sig *HedgedSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
-	if pbk.Status == CLOSED {
-		return
-	}
+	//if pbk.Status == CLOSED {
+	//	return
+	//}
 	//sig.checkInstFailed(pbk, inst, ballot)
 	curHedge, e := sig.currentHedges[inst]
 	if !e {
@@ -183,6 +239,10 @@ func (sig *HedgedSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot 
 	// if we are below, then increase
 
 	//sig.checkInstChosenByMe(pbk, inst, ballot)
+}
+
+func (sig *HedgedSig) CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+
 }
 
 func (sig *HedgedSig) checkNeedsSig(pbk *ProposingBookkeeping, inst int32) {

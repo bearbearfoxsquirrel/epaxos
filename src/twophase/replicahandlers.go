@@ -50,29 +50,30 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 	resp := acc.RecvPrepareRemote(prepare)
 	go func() {
 		for msg := range resp {
-			if isAccMsgFilter {
-				if msg.IsNegative() {
-					c := make(chan bool, 1)
-					msgFilter <- &messageFilterComm{
-						inst: prepare.Instance,
-						ret:  c,
-					}
-					if yes := <-c; yes {
-						if msg.GetType() == rpc.commit {
-							cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
-							dlog.AgentPrintfN(id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
-						}
+			//if isAccMsgFilter {
+			//	if msg.IsNegative() {
+			//		c := make(chan bool, 1)
+			//		msgFilter <- &messageFilterComm{
+			//			inst: prepare.Instance,
+			//			ret:  c,
+			//		}
+			//		if yes := <-c; yes {
+			//			if msg.GetType() == rpc.commit {
+			//				cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
+			//				dlog.AgentPrintfN(id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+			//			}
+			//
+			//			if msg.GetType() == rpc.prepareReply {
+			//				preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
+			//				isPreemptStr := isPreemptOrPromise(preply)
+			//				dlog.AgentPrintfN(id, "Filtered Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+			//					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, preply.Req.Number, preply.Req.PropID)
+			//			}
+			//			continue
+			//		}
+			//	}
+			//}
 
-						if msg.GetType() == rpc.prepareReply {
-							preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
-							isPreemptStr := isPreemptOrPromise(preply)
-							dlog.AgentPrintfN(id, "Filtered Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
-								isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, preply.Req.Number, preply.Req.PropID)
-						}
-						continue
-					}
-				}
-			}
 			if msg.GetType() == rpc.commit {
 				cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
 				dlog.AgentPrintfN(id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
@@ -111,15 +112,17 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 			if msg.IsNegative() {
 				return
 			}
-			acceptanceChan <- acc
-			if bcastAcceptance { // send acceptances to everyone
-				for i := 0; i < replica.N; i++ {
-					if i == int(id) {
-						continue
-					}
-					replica.SendMsg(int32(i), msg.GetType(), msg)
-				}
+			if !bcastAcceptance { // send acceptances to everyone
+				acceptanceChan <- acc
+				return
 			}
+			for i := 0; i < replica.N; i++ {
+				if i == int(id) {
+					continue
+				}
+				replica.SendMsg(int32(i), msg.GetType(), msg)
+			}
+			acceptanceChan <- acc
 		}
 	}()
 }
@@ -138,43 +141,43 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 	responseC := acc.RecvAcceptRemote(accept)
 	go func() {
 		for resp := range responseC {
-			if isAccMsgFilter {
-				if resp.GetType() == rpc.commit {
-					cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
-					dlog.AgentPrintfN(id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-				}
-
-				if resp.GetType() == rpc.acceptReply {
-					areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
-					isPreemptStr := isPreemptOrAccept(areply)
-					dlog.AgentPrintfN(id, "Returning Accept Reply (%d) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
-						isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-				}
-
-				if resp.IsNegative() {
-					c := make(chan bool, 1)
-					msgFilter <- &messageFilterComm{
-						inst: accept.Instance,
-						ret:  c,
-					}
-					if yes := <-c; yes {
-						if resp.GetType() == rpc.commit {
-							cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
-							dlog.AgentPrintfN(id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-						}
-
-						if resp.GetType() == rpc.acceptReply {
-							preply := resp.GetSerialisable().(*stdpaxosproto.PrepareReply)
-							isPreemptStr := isPreemptOrPromise(preply)
-							dlog.AgentPrintfN(id, "Filtered Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
-								isPreemptStr, accept.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-						}
-						return
-					}
-					replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
-					continue
-				}
-			}
+			//if isAccMsgFilter {
+			//	if resp.GetType() == rpc.commit {
+			//		cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
+			//		dlog.AgentPrintfN(id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+			//	}
+			//
+			//	if resp.GetType() == rpc.acceptReply {
+			//		areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
+			//		isPreemptStr := isPreemptOrAccept(areply)
+			//		dlog.AgentPrintfN(id, "Returning Accept Reply (%d) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+			//			isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+			//	}
+			//
+			//	if resp.IsNegative() {
+			//		c := make(chan bool, 1)
+			//		msgFilter <- &messageFilterComm{
+			//			inst: accept.Instance,
+			//			ret:  c,
+			//		}
+			//		if yes := <-c; yes {
+			//			if resp.GetType() == rpc.commit {
+			//				cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
+			//				dlog.AgentPrintfN(id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+			//			}
+			//
+			//			if resp.GetType() == rpc.acceptReply {
+			//				preply := resp.GetSerialisable().(*stdpaxosproto.PrepareReply)
+			//				isPreemptStr := isPreemptOrPromise(preply)
+			//				dlog.AgentPrintfN(id, "Filtered Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+			//					isPreemptStr, accept.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+			//			}
+			//			return
+			//		}
+			//		replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
+			//		continue
+			//	}
+			//}
 
 			if resp.GetType() == rpc.acceptReply {
 				areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
@@ -183,21 +186,23 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
 
-			if bcastAcceptance { // if acceptance broadcast
-				if resp.IsNegative() {
-					replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
-					return
+			if resp.IsNegative() {
+				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
+				return
+			}
+
+			if !bcastAcceptance { // if acceptance broadcast
+				acceptanceChan <- resp.GetSerialisable()
+				return
+			}
+
+			for i := 0; i < replica.N; i++ {
+				if i == int(id) {
+					continue
 				}
-				for i := 0; i < replica.N; i++ {
-					if i == int(id) {
-						acceptanceChan <- resp.GetSerialisable()
-						continue
-					}
-					replica.SendMsg(int32(i), resp.GetType(), resp)
-				}
-			} else {
 				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
 			}
+			acceptanceChan <- resp.GetSerialisable()
 		}
 	}()
 }

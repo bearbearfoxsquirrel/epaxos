@@ -132,6 +132,7 @@ var batchFlushWait *int = flag.Int("batchflushwait", -1, "How long to wait befor
 
 var patientProposals *bool = flag.Bool("patprops", false, "Use patient proposals to minimise preempted accept messages")
 var prewriteAcc *bool = flag.Bool("pwa", false, "Use Prewriting acceptor to reduce writes in phase 1")
+var eagerFwInduction *bool = flag.Bool("fwi", false, "Use forward induction for eager promise quorums")
 
 func main() {
 
@@ -324,7 +325,7 @@ func main() {
 			*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			*mappedProposersNum, int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
-			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm)
+			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction)
 		runnable = rep
 		rpc.Register(rep)
 		//}
