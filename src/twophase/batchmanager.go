@@ -10,19 +10,19 @@ import (
 )
 
 type ValuePreemptedHandler interface {
-	learnOfBallot(pbk *proposalmanager.ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal)
+	learnOfBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal)
 }
 
 type AcceptedValueHandler interface {
-	learnOfAcceptedBallot(pbk *proposalmanager.ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32)
+	learnOfAcceptedBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32)
 }
 
 type ValueChosenHandler interface {
-	valueChosen(pbk *proposalmanager.ProposingBookkeeping, inst int32, whoseCmds int32, cmds []*state.Command)
+	valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command)
 }
 
 type ClientBatchProposedHandler interface {
-	intendingToProposeBatch(pbk *proposalmanager.ProposingBookkeeping, inst int32, batch batching.ProposalBatch)
+	intendingToProposeBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch)
 }
 
 // ProposedClientValuesManager handles information that could affect proposed values and uses it to inform future values to be
@@ -52,12 +52,12 @@ func ProposedClientValuesManagerNew(id int32, tsStats *stats.TimeseriesStats, do
 	}
 }
 
-func (manager *SimpleBatchManager) intendingToProposeBatch(pbk *proposalmanager.ProposingBookkeeping, inst int32, batch batching.ProposalBatch) {
+func (manager *SimpleBatchManager) intendingToProposeBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
 	pbk.PutBatch(batch)
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal) {
 	//todo log
 	if pbk.ClientProposals == nil {
 		return
@@ -83,7 +83,7 @@ func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.ProposingB
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+func (manager *SimpleBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 	if pbk.ClientProposals == nil {
 		return
 	}
@@ -118,7 +118,7 @@ const (
 	ProposedAndChosen
 )
 
-func whatHappenedToClientProposals(pbk *proposalmanager.ProposingBookkeeping, whoseCmds int32, myId int32) ClientProposalStory {
+func whatHappenedToClientProposals(pbk *proposalmanager.PBK, whoseCmds int32, myId int32) ClientProposalStory {
 	if whoseCmds != myId && pbk.ClientProposals != nil {
 		return ProposedButNotChosen
 	} else if pbk.ClientProposals != nil && whoseCmds == myId {
@@ -128,7 +128,7 @@ func whatHappenedToClientProposals(pbk *proposalmanager.ProposingBookkeeping, wh
 	}
 }
 
-func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.ProposingBookkeeping, inst int32, whoseCmds int32, cmds []*state.Command) {
+func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command) {
 	if pbk.WhoseCmds == manager.id && pbk.ClientProposals == nil {
 		panic("client values chosen but we won't recognise that")
 	}
@@ -179,7 +179,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.ProposingBoo
 //	}
 //}
 //
-//func (manager *HedgedBetsBatchManager) intendingToProposeBatch(pbk *proposalmanager.ProposingBookkeeping, inst int32, batch batching.ProposalBatch) {
+//func (manager *HedgedBetsBatchManager) intendingToProposeBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
 //	// this counts up how many times we are attempting to tryPropose a batch at the same time
 //	if pbk.Status == proposalmanager.CLOSED {
 //		panic("Should not be attempting instance that is chosen")
@@ -210,7 +210,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.ProposingBoo
 //}
 //
 //// is this after or before
-//func (manager *HedgedBetsBatchManager) learnOfBallot(pbk *proposalmanager.ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot) {
+//func (manager *HedgedBetsBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst int32, ballot stdpaxosproto.Ballot) {
 //	// should we do anything here? - in future track preempting?
 //	if pbk.ClientProposals == nil {
 //		return
@@ -251,7 +251,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.ProposingBoo
 //}
 //
 //// is this after or before
-//func (manager *HedgedBetsBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
+//func (manager *HedgedBetsBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.PBK, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
 //	// consider the instance preempted?
 //	if pbk.ClientProposals == nil {
 //		return
@@ -290,7 +290,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.ProposingBoo
 //	return len(manager.chosen[batch.GetUID()]) == 0 && manager.isAllAccountedFor(batch)
 //}
 //
-//func (manager *HedgedBetsBatchManager) valueChosen(pbk *proposalmanager.ProposingBookkeeping, inst int32, whoseCmds int32, cmds []*state.Command) {
+//func (manager *HedgedBetsBatchManager) valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command) {
 //	if pbk.WhoseCmds == manager.id && pbk.ClientProposals == nil {
 //		panic("client values chosen but we won't recognise that")
 //	}
@@ -335,10 +335,10 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.ProposingBoo
 //	delete(manager.failedAttempts, batch.GetUID())
 //}
 
-//func (manager *HedgedBetsBatchManager) shouldPropose(pbk *ProposingBookkeeping, inst int32, batch batching.ProposalBatch) bool {
+//func (manager *HedgedBetsBatchManager) shouldPropose(pbk *PBK, inst int32, batch batching.ProposalBatch) bool {
 //	return false
 //}
-//func (manager *HedgedBetsBatchManager) tryPropose(pbk *ProposingBookkeeping, inst int32) bool {
+//func (manager *HedgedBetsBatchManager) tryPropose(pbk *PBK, inst int32) bool {
 //	if !pbk.ProposeValueBal.IsZero() {
 //		//if r.doStats {
 //		//	r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)

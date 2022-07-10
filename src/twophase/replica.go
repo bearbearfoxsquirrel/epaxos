@@ -109,7 +109,7 @@ type Replica struct {
 	commitShortRPC                uint8
 	prepareReplyRPC               uint8
 	acceptReplyRPC                uint8
-	instanceSpace                 []*proposalmanager.ProposingBookkeeping // the space of all instances (used and not yet used)
+	instanceSpace                 []*proposalmanager.PBK // the space of all instances (used and not yet used)
 	Shutdown                      bool
 	counter                       int
 	flush                         bool
@@ -231,7 +231,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		commitShortRPC:              0,
 		prepareReplyRPC:             0,
 		acceptReplyRPC:              0,
-		instanceSpace:               make([]*proposalmanager.ProposingBookkeeping, 15*1024*1024),
+		instanceSpace:               make([]*proposalmanager.PBK, 15*1024*1024),
 		Shutdown:                    false,
 		counter:                     0,
 		flush:                       true,
@@ -1012,7 +1012,7 @@ func (r *Replica) beginNextInstance() {
 	r.GlobalInstanceManager.StartNextInstance(&r.instanceSpace, do)
 }
 
-func getPrepareMessage(id int32, inst int32, curInst *proposalmanager.ProposingBookkeeping) *stdpaxosproto.Prepare {
+func getPrepareMessage(id int32, inst int32, curInst *proposalmanager.PBK) *stdpaxosproto.Prepare {
 	prepMsg := &stdpaxosproto.Prepare{
 		LeaderId: id,
 		Instance: inst,
@@ -1044,7 +1044,7 @@ func (r *Replica) tryNextAttempt(next proposalmanager.RetryInfo) {
 	}
 }
 
-func (r *Replica) recordStatsPreempted(inst int32, pbk *proposalmanager.ProposingBookkeeping) {
+func (r *Replica) recordStatsPreempted(inst int32, pbk *proposalmanager.PBK) {
 	if pbk.Status != proposalmanager.BACKING_OFF && r.doStats {
 		id := stats.InstanceID{Log: 0, Seq: inst}
 		if pbk.Status == proposalmanager.PREPARING || pbk.Status == proposalmanager.READY_TO_PROPOSE {
@@ -1107,7 +1107,7 @@ func (r *Replica) proposerWittnessAcceptedValue(inst int32, aid int32, accepted 
 	return newVal
 }
 
-func addToAcceptanceQuorum(inst int32, aid int32, accepted stdpaxosproto.Ballot, pbk *proposalmanager.ProposingBookkeeping, lnrQrm proposalmanager.LearnerQuorumaliser, accQrm proposalmanager.AcceptorQrmInfo) {
+func addToAcceptanceQuorum(inst int32, aid int32, accepted stdpaxosproto.Ballot, pbk *proposalmanager.PBK, lnrQrm proposalmanager.LearnerQuorumaliser, accQrm proposalmanager.AcceptorQrmInfo) {
 	if !accQrm.IsInQrm(inst, aid) {
 		return
 	}
@@ -1162,7 +1162,7 @@ func (r *Replica) learnerHandleAcceptedValue(inst int32, aid int32, accepted std
 	}
 }
 
-func setProposingValue(pbk *proposalmanager.ProposingBookkeeping, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
+func setProposingValue(pbk *proposalmanager.PBK, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
 	pbk.WhoseCmds = whoseCmds
 	pbk.ProposeValueBal = lwcproto.ConfigBal{Config: -1, Ballot: bal}
 	pbk.Cmds = val
@@ -1253,7 +1253,7 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	r.tryInitaliseForPropose(preply.Instance, preply.Req)
 }
 
-func (r *Replica) bcastAcceptCheckVBalPReply(preply *stdpaxosproto.PrepareReply, pbk *proposalmanager.ProposingBookkeeping) bool {
+func (r *Replica) bcastAcceptCheckVBalPReply(preply *stdpaxosproto.PrepareReply, pbk *proposalmanager.PBK) bool {
 	if r.bcastAcceptLearning.IsAlreadyClosed(preply.Instance) {
 		dlog.AgentPrintfN(r.Id, "Discarding Prepare Reply from Replica %d in instance %d at requested ballot %d.%d because it's already chosen", preply.AcceptorId, preply.Instance, preply.Req.Number, preply.Req.PropID)
 		return true
@@ -1445,7 +1445,7 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 	r.bcastAccept(inst)
 }
 
-func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanager.ProposingBookkeeping) {
+func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanager.PBK) {
 	t := time.NewTimer(r.noopWait)
 	go func(curBal stdpaxosproto.Ballot) {
 		var bat batching.ProposalBatch = nil
@@ -1475,7 +1475,7 @@ func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanage
 	dlog.AgentPrintfN(r.Id, "Decided there no need to propose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, r.noopWait.Milliseconds())
 }
 
-func (r *Replica) setProposal(inst int32, priorAttempts int, b batching.ProposalBatch, pbk *proposalmanager.ProposingBookkeeping) bool {
+func (r *Replica) setProposal(inst int32, priorAttempts int, b batching.ProposalBatch, pbk *proposalmanager.PBK) bool {
 	proposeF := func() {
 		r.ProposedClientValuesManager.intendingToProposeBatch(pbk, inst, b)
 		setProposingValue(pbk, r.Id, pbk.PropCurBal.Ballot, pbk.ClientProposals.GetCmds())
@@ -1651,7 +1651,7 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	r.learnerHandleAcceptedValue(areply.Instance, areply.AcceptorId, areply.Cur, pbk.Cmds, areply.WhoseCmd)
 }
 
-func (r *Replica) bcastAcceptCheckIfChosenValue(areply *stdpaxosproto.AcceptReply, pbk *proposalmanager.ProposingBookkeeping) {
+func (r *Replica) bcastAcceptCheckIfChosenValue(areply *stdpaxosproto.AcceptReply, pbk *proposalmanager.PBK) {
 	dlog.AgentPrintfN(r.Id, "Acceptance received for proposal in instance %d with ballot %d.%d", areply.Instance, areply.Cur.Number, areply.Cur.PropID)
 	if r.bcastAcceptLearning.IsAlreadyClosed(areply.Instance) {
 		dlog.AgentPrintfN(r.Id, "Ignoring acceptance in instance %d at ballot %d.%d as it is already learnt", areply.Instance, areply.Cur.Number, areply.Cur.PropID)
@@ -1718,13 +1718,13 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 	}
 }
 
-func (r *Replica) replyToNondurablyClients(pbk *proposalmanager.ProposingBookkeeping) {
+func (r *Replica) replyToNondurablyClients(pbk *proposalmanager.PBK) {
 	for i := 0; i < len(pbk.Cmds); i++ {
 		r.replyToClientOfCmd(pbk, i, state.NIL())
 	}
 }
 
-func (r *Replica) replyToClientOfCmd(pbk *proposalmanager.ProposingBookkeeping, i int, value state.Value) {
+func (r *Replica) replyToClientOfCmd(pbk *proposalmanager.PBK, i int, value state.Value) {
 	proposals := pbk.ClientProposals.GetProposals()
 	propreply := &genericsmrproto.ProposeReplyTS{
 		1,
@@ -1819,7 +1819,7 @@ func (r *Replica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 }
 
 func (r *Replica) handleState(state *proposerstate.State) {
-	r.GlobalInstanceManager.LearnOfBallot(&r.instanceSpace, state.CurrentInstance, lwcproto.ConfigBal{-2, stdpaxosproto.Ballot{-2, -2}}, stdpaxosproto.PROMISE)
+	r.GlobalInstanceManager.LearnOfBallot(&r.instanceSpace, state.CurrentInstance, lwcproto.ConfigBal{-2, stdpaxosproto.Ballot{-2, int16(state.ProposerID)}}, stdpaxosproto.PROMISE)
 	//r.checkAndHandleNewlyReceivedInstance(state.CurrentInstance)
 }
 

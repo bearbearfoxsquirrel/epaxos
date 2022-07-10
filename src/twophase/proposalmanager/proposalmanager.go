@@ -2,6 +2,7 @@ package proposalmanager
 
 import (
 	"dlog"
+	"fmt"
 	"genericsmr"
 	"instanceagentmapper"
 	"lwcproto"
@@ -12,13 +13,13 @@ import (
 )
 
 type ProposalManager interface {
-	StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32
-	StartNextProposal(initiator *ProposingBookkeeping, inst int32)
-	//ProposingValue(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot)
-	LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool // returns if proposer's ballot is preempted
-	LearnOfBallotAccepted(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
-	LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal)
-	DecideRetry(pbk *ProposingBookkeeping, retry RetryInfo) bool
+	StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32
+	StartNextProposal(initiator *PBK, inst int32)
+	//ProposingValue(instanceSpace *[]*PBK, inst int32, ballot stdpaxosproto.Ballot)
+	LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool // returns if proposer's ballot is preempted
+	LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
+	LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal)
+	DecideRetry(pbk *PBK, retry RetryInfo) bool
 }
 
 type CrtInstanceOracle interface {
@@ -43,7 +44,7 @@ type SimpleGlobalManager struct {
 	id int32
 }
 
-type EagerForwardInductionProposalManager struct {
+type Eager struct {
 	n           int32
 	crtInstance int32
 	SingleInstanceManager
@@ -52,12 +53,18 @@ type EagerForwardInductionProposalManager struct {
 	id int32
 	*genericsmr.Replica
 	stateRpc             uint8
-	reservationsMade     map[int32]struct{}
-	reservationsGivenOut map[int32]map[int32]struct{}
+	reservationsMade     map[int32]struct{}           // our reservations
+	reservationsGivenOut map[int32]map[int32]struct{} // avoid duplication in response to prepare, accept, and chosen per instance
+	propWithReservation  map[int32]int32              // reservation on an instance given out to others -- need to track to break ties
+	instanceagentmapper.InstanceSetMapper
 }
 
-func EagerForwardInductionProposalManagerNew(n int32, id int32, signal *EagerSig, iManager SingleInstanceManager, backoffManager *BackoffManager, replica *genericsmr.Replica, stateRPC uint8) *EagerForwardInductionProposalManager {
-	return &EagerForwardInductionProposalManager{
+func EagerForwardInductionProposalManagerNew(n int32, id int32, signal *EagerSig, iManager SingleInstanceManager, backoffManager *BackoffManager, replica *genericsmr.Replica, stateRPC uint8) *Eager {
+	ids := make([]int, n)
+	for i := 0; i < int(n); i++ {
+		ids[i] = i
+	}
+	return &Eager{
 		n:                     n,
 		crtInstance:           -1,
 		SingleInstanceManager: iManager,
@@ -68,184 +75,265 @@ func EagerForwardInductionProposalManagerNew(n int32, id int32, signal *EagerSig
 		stateRpc:              stateRPC,
 		reservationsMade:      make(map[int32]struct{}),
 		reservationsGivenOut:  make(map[int32]map[int32]struct{}),
+		propWithReservation:   make(map[int32]int32),
+
+		InstanceSetMapper: instanceagentmapper.InstanceSetMapper{
+			Ids: ids,
+			G:   int(n),
+			N:   int(n),
+		},
 	}
 }
 
-func (manager *EagerForwardInductionProposalManager) GetCrtInstance() int32 {
+func (manager *Eager) GetCrtInstance() int32 {
 	return manager.crtInstance
 }
 
-func (manager *EagerForwardInductionProposalManager) StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32 {
-	min := int32(math.MaxInt32)
+func (manager *Eager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
+	next := int32(-1)
 	if len(manager.reservationsMade) == 0 {
-		min = manager.crtInstance + 1
+		dlog.AgentPrintfN(manager.id, "Starting next instance in log")
+		next = manager.crtInstance + 1
 		manager.crtInstance++
+
+		if (*instanceSpace)[next] != nil {
+			panic("alsdjfalksdjf;e")
+		}
+
 	} else {
+		//min := int32(0)
+		//for i, _ := range manager.reservationsMade { // does this improve likelihood that we choose correct reservation?
+		//	if i > min {
+		//		min = i
+		//	}
+		//}
+
+		min := int32(math.MaxInt32)
 		for i, _ := range manager.reservationsMade {
 			if i < min {
 				min = i
 			}
 		}
 		delete(manager.reservationsMade, min)
+		next = min
+		dlog.AgentPrintfN(manager.id, "Starting reserved instance")
+
+		if next >= manager.crtInstance {
+			manager.HandleNewInstance(instanceSpace, next)
+		}
 	}
-	manager.reservationsGivenOut[min] = make(map[int32]struct{})
-	(*instanceSpace)[min] = manager.SingleInstanceManager.InitInstance(min)
-	startFunc(min)
-	opened := []int32{min}
+
+	manager.reservationsGivenOut[next] = make(map[int32]struct{})
+	(*instanceSpace)[next] = manager.SingleInstanceManager.InitInstance(next)
+	startFunc(next)
+	opened := []int32{next}
 	manager.EagerSig.Opened(opened)
 	return opened
 }
 
-func (manager *EagerForwardInductionProposalManager) DecideRetry(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+func (manager *Eager) DecideRetry(pbk *PBK, retry RetryInfo) bool {
 	return manager.SingleInstanceManager.ShouldRetryInstance(pbk, retry)
 }
 
-func (manager *EagerForwardInductionProposalManager) StartNextProposal(pbk *ProposingBookkeeping, inst int32) {
+func (manager *Eager) StartNextProposal(pbk *PBK, inst int32) {
 	manager.SingleInstanceManager.StartProposal(pbk, inst)
-	if _, e := manager.reservationsMade[inst]; e {
-		dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to propose in", inst)
-		delete(manager.reservationsMade, inst)
-	}
+	//if _, e := manager.reservationsMade[inst]; e {
+	//	dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to propose in", inst)
+	delete(manager.reservationsMade, inst)
+	//}
 }
 
-func (manager *EagerForwardInductionProposalManager) HandleNewInstance(instsanceSpace *[]*ProposingBookkeeping, inst int32) {
+func (manager *Eager) HandleNewInstance(iSpace *[]*PBK, inst int32) {
 	if manager.crtInstance >= inst {
 		return
 	}
 
 	for i := manager.crtInstance + 1; i <= inst; i++ {
 		manager.reservationsGivenOut[i] = make(map[int32]struct{})
-
-		(*instsanceSpace)[i] = GetEmptyInstance()
+		(*iSpace)[i] = GetEmptyInstance()
 		if _, e := manager.reservationsMade[i]; e {
 			continue
 		}
 
-		if i == inst {
+		if inst == i { // will be handled by caller
 			break
 		}
 
-		(*instsanceSpace)[i].Status = BACKING_OFF
-		_, bot := manager.CheckAndHandleBackoff(inst, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
-		dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", inst, bot)
+		(*iSpace)[i].Status = BACKING_OFF
+		nilB := lwcproto.GetNilConfigBal()
+		_, bot := manager.CheckAndHandleBackoff(i, nilB, nilB, stdpaxosproto.PROMISE)
+		if bot == -1 {
+			panic("??")
+		}
+		dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", i, bot)
 	}
 	manager.crtInstance = inst
 }
 
-func (manager *EagerForwardInductionProposalManager) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
-	manager.HandleNewInstance(instanceSpace, inst)
-	// reservation taken away
-	pbk := (*instanceSpace)[inst]
-	// given reservation
-	if manager.checkIfGivenReservation(ballot, pbk, inst) {
+func (manager *Eager) prepareShouldGiveOutReservation(ballot lwcproto.ConfigBal, inst int32, pbk *PBK) bool {
+	if int32(ballot.PropID) == manager.id || ballot.PropID == -1 {
 		return false
 	}
-	manager.checkIfLostReservation(ballot, inst)
-
-	manager.EagerSig.CheckOngoingBallot(pbk, inst, ballot, phase)
-	newBal := manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
-
-	// Should not give out reservation?
-	if int32(ballot.PropID) == manager.id || ballot.PropID == -1 {
-		return newBal
-	}
 	if _, e := manager.reservationsGivenOut[inst][int32(ballot.PropID)]; e {
-		return newBal
+		return false
 	}
-	if ballot.GreaterThan(pbk.MaxKnownBal) || ballot.Equal(pbk.MaxKnownBal) || !pbk.ProposeValueBal.IsZero() {
-		return newBal
+	if ballot.GreaterThan(pbk.MaxKnownBal) || ballot.Equal(pbk.MaxKnownBal) { //|| !pbk.ProposeValueBal.IsZero() {
+		return false
 	}
-
-	// Give reservation
-	manager.reservationsGivenOut[inst][int32(ballot.PropID)] = struct{}{}
-	manager.Replica.SendMsg(int32(ballot.PropID), manager.stateRpc, &proposerstate.State{
-		ProposerID:      manager.id,
-		CurrentInstance: manager.crtInstance + 1,
-	})
-	dlog.AgentPrintfN(manager.id, "Assuming that proposer %d is going to make a new proposal to instance %d following this preempt or acceptance message", ballot.PropID, manager.crtInstance+1)
-	manager.LearnOfBallot(instanceSpace, manager.crtInstance+1, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: 10000, PropID: -1}}, stdpaxosproto.PROMISE)
-	return newBal
+	return true
 }
 
-func (manager *EagerForwardInductionProposalManager) checkIfGivenReservation(ballot lwcproto.ConfigBal, pbk *ProposingBookkeeping, inst int32) bool {
-	if ballot.Equal(lwcproto.ConfigBal{Config: -2, Ballot: stdpaxosproto.Ballot{Number: -2, PropID: -2}}) {
-		if pbk.MaxKnownBal.GreaterThan(lwcproto.ConfigBal{-1, stdpaxosproto.Ballot{10000, -1}}) { // have we reserved for someone else??
-			dlog.AgentPrintfN(manager.id, "ignoring invitation of reservation for %d to propose in ", inst)
-			return true
+func (manager *Eager) acceptedShouldGiveReservation(inst int32, ballot lwcproto.ConfigBal) bool {
+	if int32(ballot.PropID) == manager.id {
+		return false
+	}
+	if _, e := manager.reservationsGivenOut[inst][int32(ballot.PropID)]; e {
+		return false
+	}
+	return true
+}
+
+func (manager *Eager) chosenShouldGiveOutReservation(at lwcproto.ConfigBal, inst int32) bool {
+	if int32(at.PropID) == manager.id {
+		return false
+	}
+	if _, e := manager.reservationsGivenOut[inst][int32(at.PropID)]; e {
+		return false
+	}
+	return true
+}
+
+func (manager *Eager) checkIfIsGivenReservation(iSpace *[]*PBK, ballot lwcproto.ConfigBal, pbk *PBK, inst int32) bool {
+	if ballot.Number == -2 {
+		dlog.AgentPrintfN(manager.id, "Got invitation to reserve instance %d from %d", inst, ballot.PropID)
+
+		//if r, e := manager.reservationsGivenOut[inst]; e {
+		//	if len(r) > 0 {
+		//		dlog.AgentPrintfN(manager.id, "Ignoring invitation of reservation for instance %d to propose in. We have given out another", inst)
+		//		return true
+		//	}
+		//}
+
+		if pbk != nil {
+			rBal := getReservationGivenBal()
+			if pbk.MaxKnownBal.GreaterThan(rBal) { // have we reserved for someone else??
+				dlog.AgentPrintfN(manager.id, "Ignoring invitation of reservation for instance %d to propose in. We've received another proposal for instance", inst)
+				return true
+			}
+
+			if givenTo, e := manager.propWithReservation[inst]; e {
+				g := manager.InstanceSetMapper.GetGroup(int(inst))
+				for _, pid := range g {
+					if pid == int(givenTo) {
+						dlog.AgentPrintfN(manager.id, "Ignoring as we have given out before to someone with priority")
+						return true
+					}
+
+					if pid == int(manager.id) {
+						break
+					}
+				}
+			}
+
+			//if pbk.MaxKnownBal.Equal(rBal) && manager.id < int32(ballot.PropID) {
+			//	dlog.AgentPrintfN(manager.id, "Ignoring as we have given out before and we have a greater voting right")
+			//	return true
+			//}
 		}
+
+		manager.HandleNewInstance(iSpace, inst)
 		manager.reservationsMade[inst] = struct{}{}
 		dlog.AgentPrintfN(manager.id, "Reserving instance %d to attempt next", inst)
+		// todo if give reservation, then make sure that the next ones we give follow it
+		//manager.EagerSig.DoSig()
 		return true
 	}
 	return false
 }
 
-func (manager *EagerForwardInductionProposalManager) checkIfLostReservation(ballot lwcproto.ConfigBal, inst int32) {
-	if !ballot.Equal(lwcproto.ConfigBal{Config: -2, Ballot: stdpaxosproto.Ballot{Number: -2, PropID: -2}}) {
-		if _, e := manager.reservationsMade[inst]; e {
-			dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to attempt next", inst)
-			delete(manager.reservationsMade, inst)
-		}
+func (manager *Eager) giveReservationTo(instanceSpace *[]*PBK, inst int32, prop int32, reason string) {
+	manager.reservationsGivenOut[inst][prop] = struct{}{}
+	//if len(manager.reservationsGivenOut[inst]) > 1 {
+	//	panic("asdfjasdfkl")
+	//}
+	manager.Replica.SendMsg(prop, manager.stateRpc, manager.GetReservationMsg())
+
+	// todo recursive giveaway? -- if we give to someone with a higher priority, then give the next one
+
+	dlog.AgentPrintfN(manager.id, "Assuming that proposer %d is going to make a new proposal to instance %d following %s", prop, manager.crtInstance+1, reason)
+	if _, e := manager.propWithReservation[manager.crtInstance+1]; e {
+		panic("askdjfllkeja;")
+	}
+	manager.propWithReservation[manager.crtInstance+1] = prop
+	manager.LearnOfBallot(instanceSpace, manager.crtInstance+1, getReservationGivenBal(), stdpaxosproto.PROMISE)
+}
+
+func (manager *Eager) GetReservationMsg() *proposerstate.State {
+	return &proposerstate.State{
+		ProposerID:      manager.id,
+		CurrentInstance: manager.crtInstance + 1,
 	}
 }
 
-func (manager *EagerForwardInductionProposalManager) LearnOfBallotAccepted(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-	manager.HandleNewInstance(instanceSpace, inst)
-	pbk := (*instanceSpace)[inst]
-	manager.EagerSig.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
+func getReservationGivenBal() lwcproto.ConfigBal {
+	return lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: 10000, PropID: -1}}
+}
 
+func (manager *Eager) checkIfLostReservation(ballot lwcproto.ConfigBal, inst int32) {
 	if _, e := manager.reservationsMade[inst]; e {
 		dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to attempt next", inst)
 		delete(manager.reservationsMade, inst)
 	}
-
-	if _, e := manager.reservationsGivenOut[inst][int32(ballot.PropID)]; e {
-		return
-	}
-	if int32(ballot.PropID) == manager.id {
-		return
-	}
-
-	manager.reservationsGivenOut[inst][int32(ballot.PropID)] = struct{}{}
-	manager.Replica.SendMsg(int32(ballot.PropID), manager.stateRpc, &proposerstate.State{
-		ProposerID:      manager.id,
-		CurrentInstance: manager.crtInstance + 1,
-	})
-	dlog.AgentPrintfN(manager.id, "Assuming that proposer %d is going to make a new proposal to instance %d following this notification of already acceptance", ballot.PropID, manager.crtInstance+1)
-	manager.LearnOfBallot(instanceSpace, manager.crtInstance+1, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: 10000, PropID: -1}}, stdpaxosproto.PROMISE)
-
 }
 
-func (manager *EagerForwardInductionProposalManager) LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, at lwcproto.ConfigBal) {
-	if _, e := manager.reservationsMade[inst]; e {
-		dlog.AgentPrintfN(manager.id, "No longer reserving instance %d to propose in", inst)
-		delete(manager.reservationsMade, inst)
+func (manager *Eager) LearnOfBallot(iSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+	if manager.checkIfIsGivenReservation(iSpace, ballot, (*iSpace)[inst], inst) {
+		return false
 	}
 
+	// actual proposal
+	manager.HandleNewInstance(iSpace, inst)
+	pbk := (*iSpace)[inst]
+	manager.checkIfLostReservation(ballot, inst)
+	manager.EagerSig.CheckOngoingBallot(pbk, inst, ballot, phase)
+	newBal := manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
+	if !manager.prepareShouldGiveOutReservation(ballot, inst, pbk) {
+		return newBal
+	}
+	str := "preempt"
+	if phase == stdpaxosproto.ACCEPTANCE && pbk.MaxKnownBal.Equal(ballot) {
+		str = "acceptance"
+	}
+	manager.giveReservationTo(iSpace, inst, int32(ballot.PropID), fmt.Sprintf("this %s message", str))
+	return newBal
+}
+
+func (manager *Eager) LearnOfBallotAccepted(iSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+	manager.HandleNewInstance(iSpace, inst)
+	pbk := (*iSpace)[inst]
+	manager.EagerSig.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
+	manager.checkIfLostReservation(ballot, inst)
+	if !manager.acceptedShouldGiveReservation(inst, ballot) {
+		return
+	}
+	manager.giveReservationTo(iSpace, inst, int32(ballot.PropID), "this notification of already acceptance")
+}
+
+func (manager *Eager) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, at lwcproto.ConfigBal) {
 	manager.HandleNewInstance(instanceSpace, inst)
+	pbk := (*instanceSpace)[inst]
+	manager.checkIfLostReservation(at, inst)
 	if at.IsZero() {
 		panic("asjdflasdlkfj")
 	}
-	pbk := (*instanceSpace)[inst]
 	manager.EagerSig.CheckChosen(pbk, inst, at)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, at)
 
-	if int32(at.PropID) == manager.id {
-		return
-	}
-	if _, e := manager.reservationsGivenOut[inst][int32(at.PropID)]; e {
+	if !manager.chosenShouldGiveOutReservation(at, inst) {
 		return
 	}
 
-	manager.reservationsGivenOut[inst][int32(at.PropID)] = struct{}{}
-	manager.Replica.SendMsg(int32(at.PropID), manager.stateRpc, &proposerstate.State{
-		ProposerID:      manager.id,
-		CurrentInstance: manager.crtInstance + 1,
-	})
-
-	dlog.AgentPrintfN(manager.id, "Assuming that proposer %d is going to make a new proposal to instance %d following this chosen receipt", at.PropID, manager.crtInstance+1)
-	manager.LearnOfBallot(instanceSpace, manager.crtInstance+1, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: 10000, PropID: -1}}, stdpaxosproto.PROMISE)
-	//}
+	manager.giveReservationTo(instanceSpace, inst, int32(at.PropID), fmt.Sprintf("learning instance %d is chosen", inst))
 }
 
 func SimpleProposalManagerNew(id int32, signal OpenInstSignal, iManager SingleInstanceManager, backoffManager *BackoffManager) *SimpleGlobalManager {
@@ -260,7 +348,7 @@ func SimpleProposalManagerNew(id int32, signal OpenInstSignal, iManager SingleIn
 
 func (manager *SimpleGlobalManager) GetCrtInstance() int32 { return manager.crtInstance }
 
-func (manager *SimpleGlobalManager) StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32 {
+func (manager *SimpleGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
 	manager.crtInstance++
 	(*instanceSpace)[manager.crtInstance] = manager.SingleInstanceManager.InitInstance(manager.crtInstance)
 	startFunc(manager.crtInstance)
@@ -269,15 +357,15 @@ func (manager *SimpleGlobalManager) StartNextInstance(instanceSpace *[]*Proposin
 	return opened
 }
 
-func (manager *SimpleGlobalManager) DecideRetry(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+func (manager *SimpleGlobalManager) DecideRetry(pbk *PBK, retry RetryInfo) bool {
 	return manager.SingleInstanceManager.ShouldRetryInstance(pbk, retry)
 }
 
-func (manager *SimpleGlobalManager) StartNextProposal(pbk *ProposingBookkeeping, inst int32) {
+func (manager *SimpleGlobalManager) StartNextProposal(pbk *PBK, inst int32) {
 	manager.SingleInstanceManager.StartProposal(pbk, inst)
 }
 
-func (manager *SimpleGlobalManager) UpdateCurrentInstance(instsanceSpace *[]*ProposingBookkeeping, inst int32) {
+func (manager *SimpleGlobalManager) UpdateCurrentInstance(instsanceSpace *[]*PBK, inst int32) {
 	if inst <= manager.crtInstance {
 		return
 	}
@@ -288,21 +376,21 @@ func (manager *SimpleGlobalManager) UpdateCurrentInstance(instsanceSpace *[]*Pro
 			break
 		}
 		(*instsanceSpace)[i].Status = BACKING_OFF
-		_, bot := manager.CheckAndHandleBackoff(inst, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
-		dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", inst, bot)
+		_, bot := manager.CheckAndHandleBackoff(i, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
+		dlog.AgentPrintfN(manager.id, "Backing off newly received instance %d for %d microseconds", i, bot)
 	}
 	dlog.AgentPrintfN(manager.id, "Setting instance %d as current instance", inst)
 	manager.crtInstance = inst
 }
 
-func (manager *SimpleGlobalManager) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+func (manager *SimpleGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	manager.UpdateCurrentInstance(instanceSpace, inst)
 	pbk := (*instanceSpace)[inst]
 	manager.OpenInstSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
-func (manager *SimpleGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+func (manager *SimpleGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	if inst > manager.crtInstance {
 		manager.UpdateCurrentInstance(instanceSpace, inst)
 	}
@@ -311,7 +399,7 @@ func (manager *SimpleGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*Prop
 	//return //manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot)
 }
 
-func (manager *SimpleGlobalManager) LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, at lwcproto.ConfigBal) {
+func (manager *SimpleGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, at lwcproto.ConfigBal) {
 	manager.UpdateCurrentInstance(instanceSpace, inst)
 	pbk := (*instanceSpace)[inst]
 	manager.OpenInstSignal.CheckChosen(pbk, inst, at)
@@ -347,7 +435,7 @@ func (manager *MappedGlobalManager) GetInstanceMapper() instanceagentmapper.Inst
 	return manager.InstanceAgentMapper
 }
 
-func (manager *MappedGlobalManager) StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32 {
+func (manager *MappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
 	for gotInstance := false; !gotInstance; {
 		manager.crtInstance++
 		if (*instanceSpace)[manager.crtInstance] == nil {
@@ -388,13 +476,13 @@ func inGroup(mapped []int, id int) bool {
 
 // todo should retry only if still in group
 
-func (manager *MappedGlobalManager) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+func (manager *MappedGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	manager.checkAndSetNewInstance(instanceSpace, inst, ballot, phase)
 	return manager.SimpleGlobalManager.LearnOfBallot(instanceSpace, inst, ballot, phase)
 	//return manager.SingleInstanceManager.HandleReceivedBallot((*instanceSpace)[inst], inst, ballot, phase)
 }
 
-func (manager *MappedGlobalManager) checkAndSetNewInstance(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+func (manager *MappedGlobalManager) checkAndSetNewInstance(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	// todo check if all prior instances are opened?
 	if (*instanceSpace)[inst] == nil {
 		(*instanceSpace)[inst] = GetEmptyInstance()
@@ -402,7 +490,7 @@ func (manager *MappedGlobalManager) checkAndSetNewInstance(instanceSpace *[]*Pro
 	}
 }
 
-func (manager *MappedGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+func (manager *MappedGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	if (*instanceSpace)[inst] == nil {
 		(*instanceSpace)[inst] = GetEmptyInstance()
 	}
@@ -411,7 +499,7 @@ func (manager *MappedGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*Prop
 	//return //manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot)
 }
 
-func (manager *MappedGlobalManager) LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (manager *MappedGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal) {
 	if (*instanceSpace)[inst] == nil {
 		(*instanceSpace)[inst] = GetEmptyInstance()
 	}
@@ -464,12 +552,12 @@ func mapper(i, iS, iE float64, oS, oE int32) int32 {
 	return o
 }
 
-func (decider *DynamicMappedGlobalManager) StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32 {
+func (decider *DynamicMappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
 	decider.updateGroupSize()
 	return decider.MappedGlobalManager.StartNextInstance(instanceSpace, startFunc)
 }
 
-func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	decider.MappedGlobalManager.checkAndSetNewInstance(instanceSpace, inst, ballot, phase)
 
 	pbk := (*instanceSpace)[inst]
@@ -488,7 +576,7 @@ func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*Propo
 	return decider.MappedGlobalManager.LearnOfBallot(instanceSpace, inst, ballot, phase)
 }
 
-func (decider *DynamicMappedGlobalManager) DecideRetry(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+func (decider *DynamicMappedGlobalManager) DecideRetry(pbk *PBK, retry RetryInfo) bool {
 	doRetry := decider.SimpleGlobalManager.DecideRetry(pbk, retry)
 	if !doRetry {
 		return doRetry
@@ -530,7 +618,7 @@ func (decider *DynamicMappedGlobalManager) updateGroupSize() {
 	}
 }
 
-func (decider *DynamicMappedGlobalManager) LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (decider *DynamicMappedGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal) {
 	pbk := (*instanceSpace)[inst]
 	if ballot.GreaterThan(pbk.PropCurBal) && !pbk.PropCurBal.IsZero() {
 		if _, e := decider.conflictsSeen[inst]; !e {
@@ -595,7 +683,7 @@ func HedgedBetsProposalManagerNew(id int32, manager *SimpleGlobalManager, n int3
 	return dMappedDecicider
 }
 
-func (manager *SimpleHedgedBets) StartNextInstance(instanceSpace *[]*ProposingBookkeeping, startFunc func(inst int32)) []int32 {
+func (manager *SimpleHedgedBets) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
 	manager.updateHedgeSize()
 	opened := make([]int32, 0, manager.currentHedgeNum)
 	for i := int32(0); i < manager.currentHedgeNum; i++ {
@@ -605,7 +693,7 @@ func (manager *SimpleHedgedBets) StartNextInstance(instanceSpace *[]*ProposingBo
 	return opened
 }
 
-func (manager *SimpleHedgedBets) LearnOfBallot(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+func (manager *SimpleHedgedBets) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	if inst > manager.crtInstance {
 		manager.SimpleGlobalManager.UpdateCurrentInstance(instanceSpace, inst)
 	}
@@ -616,7 +704,7 @@ func (manager *SimpleHedgedBets) LearnOfBallot(instanceSpace *[]*ProposingBookke
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
-func (manager *SimpleHedgedBets) LearnOfBallotAccepted(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+func (manager *SimpleHedgedBets) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	if inst > manager.crtInstance {
 		manager.SimpleGlobalManager.UpdateCurrentInstance(instanceSpace, inst)
 	}
@@ -634,7 +722,7 @@ func (manager *SimpleHedgedBets) updateConfs(inst int32, ballot lwcproto.ConfigB
 	dlog.AgentPrintfN(manager.id, "Now observing %d attempts in instance %d", len(manager.confs[inst]), inst)
 }
 
-func (manager *SimpleHedgedBets) LearnBallotChosen(instanceSpace *[]*ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (manager *SimpleHedgedBets) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal) {
 	if inst > manager.crtInstance {
 		manager.SimpleGlobalManager.UpdateCurrentInstance(instanceSpace, inst)
 	}
@@ -646,7 +734,7 @@ func (manager *SimpleHedgedBets) LearnBallotChosen(instanceSpace *[]*ProposingBo
 	delete(manager.confs, inst) // will miss some as a result but its okie to avoid too much memory growth
 }
 
-func (manager *SimpleHedgedBets) DecideRetry(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+func (manager *SimpleHedgedBets) DecideRetry(pbk *PBK, retry RetryInfo) bool {
 	doRetry := manager.SimpleGlobalManager.DecideRetry(pbk, retry)
 	//if !doRetry {
 	//	return doRetry

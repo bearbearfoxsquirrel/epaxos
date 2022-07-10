@@ -18,11 +18,11 @@ type Quormaliser interface {
 //}
 
 type ProposerQuorumaliser interface {
-	StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32)
+	StartPromiseQuorumOnCurBal(pbk *PBK, inst int32)
 }
 
 type LearnerQuorumaliser interface {
-	TrackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal lwcproto.ConfigBal)
+	TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcproto.ConfigBal)
 }
 
 type AcceptorQrmInfo interface {
@@ -43,13 +43,13 @@ func (qrmliser *Standard) IsInQrm(inst int32, aid int32) bool {
 	return true
 }
 
-func (qrmliser *Standard) StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32) {
+func (qrmliser *Standard) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(qrmliser.Aids)
 	pbk.Qrms[pbk.PropCurBal] = quorumaliser
 	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
 }
 
-func (qrmliser *Standard) TrackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal lwcproto.ConfigBal) {
+func (qrmliser *Standard) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcproto.ConfigBal) {
 	quorumaliser := qrmliser.SynodQuorumSystemConstructor.Construct(qrmliser.Aids)
 	pbk.Qrms[bal] = quorumaliser
 	quorumaliser.StartAcceptanceQuorum()
@@ -69,7 +69,7 @@ type Minimal struct {
 	MyID int32
 }
 
-func (qrmliser *Minimal) StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, inst int32) {
+func (qrmliser *Minimal) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
 	//make quorum
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
 		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
@@ -82,7 +82,7 @@ func (qrmliser *Minimal) StartPromiseQuorumOnCurBal(pbk *ProposingBookkeeping, i
 	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
 }
 
-func (qrmliser *Minimal) TrackProposalAcceptance(pbk *ProposingBookkeeping, inst int32, bal lwcproto.ConfigBal) {
+func (qrmliser *Minimal) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcproto.ConfigBal) {
 	//make quorum
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
 		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))

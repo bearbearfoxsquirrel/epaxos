@@ -9,12 +9,12 @@ import (
 )
 
 type SingleInstanceManager interface {
-	InitInstance(inst int32) *ProposingBookkeeping
-	StartProposal(pbk *ProposingBookkeeping, inst int32)
-	ShouldRetryInstance(pbk *ProposingBookkeeping, retry RetryInfo) bool
-	HandleReceivedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool
-	//HandleAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, cmd []state.Command)
-	HandleProposalChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal)
+	InitInstance(inst int32) *PBK
+	StartProposal(pbk *PBK, inst int32)
+	ShouldRetryInstance(pbk *PBK, retry RetryInfo) bool
+	HandleReceivedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool
+	//HandleAcceptedBallot(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, cmd []state.Command)
+	HandleProposalChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal)
 }
 
 type SimpleInstanceManager struct {
@@ -41,11 +41,11 @@ func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter Ballot
 	}
 }
 
-func (man *SimpleInstanceManager) InitInstance(inst int32) *ProposingBookkeeping {
+func (man *SimpleInstanceManager) InitInstance(inst int32) *PBK {
 	return GetEmptyInstance()
 }
 
-func (man *SimpleInstanceManager) StartProposal(pbk *ProposingBookkeeping, inst int32) {
+func (man *SimpleInstanceManager) StartProposal(pbk *PBK, inst int32) {
 	pbk.Status = PREPARING
 	nextBal := man.Balloter.GetNextProposingBal(pbk.MaxKnownBal.Config, pbk.MaxKnownBal.Number)
 	pbk.PropCurBal = nextBal
@@ -54,7 +54,7 @@ func (man *SimpleInstanceManager) StartProposal(pbk *ProposingBookkeeping, inst 
 	dlog.AgentPrintfN(man.id, "Starting new proposal for instance %d with ballot %d.%d", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 }
 
-func (man *SimpleInstanceManager) ShouldRetryInstance(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+func (man *SimpleInstanceManager) ShouldRetryInstance(pbk *PBK, retry RetryInfo) bool {
 	if pbk.Status != BACKING_OFF {
 		dlog.AgentPrintfN(man.id, "Skipping retry of instance %d due to it no longer being backed off", retry.Inst)
 		return false
@@ -66,7 +66,7 @@ func (man *SimpleInstanceManager) ShouldRetryInstance(pbk *ProposingBookkeeping,
 	return true
 }
 
-func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	if pbk.Status == CLOSED {
 		return false
 	}
@@ -100,12 +100,12 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *ProposingBookkeeping
 	return true
 }
 
-func (man *SimpleInstanceManager) howManyAttemptsToChoose(pbk *ProposingBookkeeping, inst int32) {
+func (man *SimpleInstanceManager) howManyAttemptsToChoose(pbk *PBK, inst int32) {
 	attempts := man.Balloter.GetAttemptNumber(pbk.ProposeValueBal.Number)
 	dlog.AgentPrintfN(man.id, "Instance %d took %d attempts to be chosen", inst, attempts)
 }
 
-func (man *SimpleInstanceManager) HandleProposalChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
 	if pbk.Status == CLOSED {
 		return
 	}
@@ -156,7 +156,7 @@ func MinimalProposersInstanceManagerNew(manager *SimpleInstanceManager, minimalP
 	}
 }
 
-func (man *MinimalProposersInstanceManager) StartProposal(pbk *ProposingBookkeeping, inst int32) {
+func (man *MinimalProposersInstanceManager) StartProposal(pbk *PBK, inst int32) {
 	if man.ShouldSkipInstance(inst) {
 		panic("should not start next proposal on instance fulfilled")
 	}
@@ -165,7 +165,7 @@ func (man *MinimalProposersInstanceManager) StartProposal(pbk *ProposingBookkeep
 	man.MinimalProposersShouldMaker.startedMyProposal(inst, pbk.PropCurBal)
 }
 
-func (man *MinimalProposersInstanceManager) ShouldRetryInstance(pbk *ProposingBookkeeping, retry RetryInfo) bool {
+func (man *MinimalProposersInstanceManager) ShouldRetryInstance(pbk *PBK, retry RetryInfo) bool {
 	if man.MinimalProposersShouldMaker.ShouldSkipInstance(retry.Inst) {
 		if pbk.Status == CLOSED {
 			dlog.AgentPrintfN(man.id, "Skipping retry of instance %d due to it being closed", retry.Inst)
@@ -179,12 +179,12 @@ func (man *MinimalProposersInstanceManager) ShouldRetryInstance(pbk *ProposingBo
 	return man.SimpleInstanceManager.ShouldRetryInstance(pbk, retry)
 }
 
-func (man *MinimalProposersInstanceManager) HandleReceivedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
+func (man *MinimalProposersInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	man.minimalProposersLearnOfBallot(ballot, inst)
 	return man.SimpleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
-func (man *MinimalProposersInstanceManager) HandleProposalChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (man *MinimalProposersInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
 	man.MinimalProposersShouldMaker.Cleanup(inst)
 	man.SimpleInstanceManager.HandleProposalChosen(pbk, inst, ballot)
 }
@@ -210,9 +210,9 @@ func (man *MinimalProposersInstanceManager) minimalProposersLearnOfBallot(ballot
 //}
 //
 //
-//StartProposal(pbk *ProposingBookkeeping, inst int32)
-//ShouldRetryInstance(pbk *ProposingBookkeeping, retry RetryInfo) bool
-//HandleReceivedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, phase stdpaxosproto.Phase) bool
+//StartProposal(pbk *PBK, inst int32)
+//ShouldRetryInstance(pbk *PBK, retry RetryInfo) bool
+//HandleReceivedBallot(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, phase stdpaxosproto.Phase) bool
 //
-////HandleAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, cmd []state.Command)
-//HandleProposalChosen(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot)
+////HandleAcceptedBallot(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, cmd []state.Command)
+//HandleProposalChosen(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot)

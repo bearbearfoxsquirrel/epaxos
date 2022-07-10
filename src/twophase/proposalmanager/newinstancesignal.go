@@ -8,9 +8,9 @@ import (
 
 type OpenInstSignal interface {
 	Opened(opened []int32)
-	CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase)
-	CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
-	CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal)
+	CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase)
+	CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
+	CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal)
 }
 
 type SimpleSig struct {
@@ -36,7 +36,7 @@ func (sig *SimpleSig) Opened(opened []int32) {
 	}
 }
 
-func (sig *SimpleSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+func (sig *SimpleSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if pbk.Status == CLOSED {
 		return
 	}
@@ -61,7 +61,7 @@ func (sig *SimpleSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, 
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
-func (sig *SimpleSig) CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	if pbk.Status == CLOSED {
 		return
 	}
@@ -80,7 +80,7 @@ func (sig *SimpleSig) CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32,
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
-func (sig *SimpleSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (sig *SimpleSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
 	if pbk.Status == CLOSED {
 		return
 	}
@@ -98,7 +98,7 @@ func (sig *SimpleSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot 
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
-//func (sig *SimpleSig) CheckPreempted(pbk *ProposingBookkeeping, inst int32, ballot stdpaxosproto.Ballot, reason string) {
+//func (sig *SimpleSig) CheckPreempted(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, reason string) {
 //
 //}
 
@@ -120,7 +120,7 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 	return e
 }
 
-//func (sig *EagerSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+//func (sig *EagerSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 //	if pbk.Status == CLOSED {
 //		return
 //	}
@@ -152,7 +152,7 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 //	delete(sig.instsStarted, inst)
 //}
 
-func (manager *EagerSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (manager *EagerSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
 	if pbk.Status == CLOSED {
 		return
 	}
@@ -162,6 +162,10 @@ func (manager *EagerSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ball
 	dlog.AgentPrintfN(manager.id, "Signalling to open new instance as this instance %d is chosen", inst)
 	delete(manager.instsStarted, inst)
 	go func() { manager.sigNewInst <- struct{}{} }()
+}
+
+func (sig *EagerSig) DoSig() {
+	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
 type HedgedSig struct {
@@ -187,7 +191,7 @@ func (sig *HedgedSig) Opened(opened []int32) {
 	}
 }
 
-func (sig *HedgedSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+func (sig *HedgedSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	//sig.checkInstFailed(pbk, inst, ballot)
 	//if pbk.Status == CLOSED {
 	//	return
@@ -212,7 +216,7 @@ func (sig *HedgedSig) CheckOngoingBallot(pbk *ProposingBookkeeping, inst int32, 
 	sig.checkNeedsSig(pbk, inst)
 }
 
-func (sig *HedgedSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal) {
+func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
 	//if pbk.Status == CLOSED {
 	//	return
 	//}
@@ -241,11 +245,11 @@ func (sig *HedgedSig) CheckChosen(pbk *ProposingBookkeeping, inst int32, ballot 
 	//sig.checkInstChosenByMe(pbk, inst, ballot)
 }
 
-func (sig *HedgedSig) CheckAcceptedBallot(pbk *ProposingBookkeeping, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+func (sig *HedgedSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 
 }
 
-func (sig *HedgedSig) checkNeedsSig(pbk *ProposingBookkeeping, inst int32) {
+func (sig *HedgedSig) checkNeedsSig(pbk *PBK, inst int32) {
 	curHedge, e := sig.currentHedges[inst]
 	if !e || pbk.Status == CLOSED {
 		return

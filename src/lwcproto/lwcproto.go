@@ -40,6 +40,10 @@ type ConfigBal struct {
 	stdpaxosproto.Ballot
 }
 
+func GetNilConfigBal() ConfigBal {
+	return ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}
+}
+
 //
 //func (cb *ConfigBal) GetHash() interface{} {
 //	return cb
