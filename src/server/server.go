@@ -114,7 +114,7 @@ var proposalStatsFilename *string = flag.String("proposalstatsfilename", "", "Na
 var logFilename *string = flag.String("logfilename", "", "Name for log file")
 
 var sendProposerState *bool = flag.Bool("sendproposerstate", false, "Proposers periodically send their current state to each other")
-var proactivePrepareOnPreempt *bool = flag.Bool("proactivePrepareOnPreempt", false, "Upon being preempted, the proposer prepares on the preempting ballot")
+var proactivepreempt *bool = flag.Bool("proactivepreempt", false, "Upon being preempted, the proposer prepares on the preempting ballot")
 var batchingAcceptor *bool = flag.Bool("batchingacceptor", false, "Acceptor batches responses and disk writes")
 var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 5, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
 
@@ -322,7 +322,7 @@ func main() {
 			int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, *doStats, *statsLoc,
 			*catchUpFallenBehind, int32(*deadTime), *maxBatchSizeBytes, *constBackoff, *requeueOnPreempt,
 			*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
-			*proactivePrepareOnPreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
+			*proactivepreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			*mappedProposersNum, int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction)

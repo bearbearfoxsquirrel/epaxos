@@ -150,11 +150,11 @@ type prewritePromiseAcceptor struct {
 
 //todo add proactive preempt
 
-func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool, promiseLeasesRet chan PromiseLease, iWriteAhead int32) *prewritePromiseAcceptor {
+func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool, promiseLeasesRet chan PromiseLease, iWriteAhead int32, proactivePreemptOnNewB bool) *prewritePromiseAcceptor {
 	a := &prewritePromiseAcceptor{
 		standard:         *StandardAcceptorNew(file, durable, emulatedSS, emulatedWriteTime, id, prepareReplyRPC, acceptReplyRPC, commitRPC, commitShortRPC, catchupOnProceedingCommits),
 		prewriter:        *PrewriterNew(promiseLeasesRet, iWriteAhead, file),
-		proactivePreempt: true,
+		proactivePreempt: proactivePreemptOnNewB,
 	}
 
 	a.prewriter.updateInstancesToPrewriteBasedOnIBound(a.meID)

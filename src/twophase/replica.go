@@ -205,7 +205,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	emulatedWriteTime time.Duration, catchupBatchSize int32, timeout time.Duration, group1Size int, flushCommit bool,
 	softFac bool, doStats bool, statsParentLoc string, commitCatchup bool, deadTime int32, batchSize int,
 	constBackoff bool, requeueOnPreempt bool, tsStatsFilename string, instStatsFilename string,
-	propsStatsFilename string, sendProposerState bool, proactivePrepareOnPreempt bool, batchingAcceptor bool,
+	propsStatsFilename string, sendProposerState bool, proactivePreemptOnNewB bool, batchingAcceptor bool,
 	maxAccBatchWait time.Duration, sendPreparesToAllAcceptors bool, minimalProposers bool, timeBasedBallots bool,
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
@@ -257,7 +257,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		doStats:                     doStats,
 		sendProposerState:           sendProposerState,
 		noopWait:                    time.Duration(noopwait) * time.Microsecond,
-		proactivelyPrepareOnPreempt: proactivePrepareOnPreempt,
+		proactivelyPrepareOnPreempt: proactivePreemptOnNewB,
 		expectedBatchedRequests:     200,
 		sendPreparesToAllAcceptors:  sendPreparesToAllAcceptors,
 		startInstanceSig:            make(chan struct{}, 100),
@@ -335,7 +335,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		} else {
 			r.StableStore = r.StableStorage
 			r.Acceptor = acceptor.PrewritePromiseAcceptorNew(r.StableStore, durable, emulatedSS, emulatedWriteTime, int32(id),
-				r.prepareReplyRPC, r.acceptReplyRPC, r.commitRPC, r.commitShortRPC, commitCatchup, r.promiseLeases, r.iWriteAhead)
+				r.prepareReplyRPC, r.acceptReplyRPC, r.commitRPC, r.commitShortRPC, commitCatchup, r.promiseLeases, r.iWriteAhead, proactivePreemptOnNewB)
 		}
 	} else {
 		if batchingAcceptor {
@@ -1064,7 +1064,7 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	dlog.AgentPrintfN(r.Id, "Replica received a Prepare from Replica %d in instance %d at ballot %d.%d", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
 	if int32(prepare.PropID) == r.Id {
 		dlog.AgentPrintfN(r.Id, "Giving Prepare from Replica %d in instance %d at ballot %d.%d to acceptor as it is needed for safety or can form a quorum", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
-		acceptorHandlePrepareLocal(r.Id, r.Acceptor, prepare, r.PrepareResponsesRPC, r.prepareReplyChan)
+		acceptorHandlePrepareLocal(r.Id, r.Acceptor, r.Replica, prepare, r.PrepareResponsesRPC, r.prepareReplyChan)
 		return
 	}
 
@@ -1338,13 +1338,13 @@ func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot
 		var bat batching.ProposalBatch = nil
 		for stopSelect := false; !stopSelect; {
 			select {
-			//case b := <-r.Queueing.GetHead():
-			//	r.Queueing.Dequeued(b, func() {
-			//		bat = b
-			//		dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d which is currently sleeping", b.GetUID(), inst)
-			//		stopSelect = true
-			//	})
-			//	break
+			case b := <-r.Queueing.GetHead():
+				r.Queueing.Dequeued(b, func() {
+					bat = b
+					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d which is currently sleeping", b.GetUID(), inst)
+					stopSelect = true
+				})
+				break
 			case <-timer.C:
 				timesUp = true
 				stopSelect = true
