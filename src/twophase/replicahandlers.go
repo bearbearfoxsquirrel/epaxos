@@ -13,28 +13,27 @@ type PrepareResponsesRPC struct {
 	commit       uint8
 }
 
-func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, promiseChan chan<- fastrpc.Serializable) {
+func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *genericsmr.Replica, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, promiseChan chan<- fastrpc.Serializable) {
 	c := acc.RecvPrepareRemote(prepare)
 	go func() {
-		msg, msgokie := <-c
-		if !msgokie {
-			return
+		for msg := range c {
+			if msg.ToWhom() != id {
+				replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
+				continue
+			}
+			preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
+			if msg.IsNegative() {
+				continue
+			}
+			if msg.GetType() == rpc.prepareReply {
+				isPreemptStr := isPreemptOrPromise(preply)
+				dlog.AgentPrintfN(id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+			}
+			promiseChan <- preply
 		}
-		if msg.GetType() != rpc.prepareReply {
-			return
-		}
-
-		preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
-		if msg.IsNegative() {
-			return
-		}
-		if msg.GetType() == rpc.prepareReply {
-			isPreemptStr := isPreemptOrPromise(preply)
-			dlog.AgentPrintfN(id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
-				isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
-		}
-		promiseChan <- preply
 	}()
+
 }
 
 func isPreemptOrPromise(preply *stdpaxosproto.PrepareReply) string {
@@ -85,6 +84,9 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 				dlog.AgentPrintfN(id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
 					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
 			}
+			if msg.ToWhom() == id {
+				continue
+			}
 			replica.SendMsg(msg.ToWhom(), msg.GetType(), msg)
 		}
 	}()
@@ -98,10 +100,12 @@ type AcceptResponsesRPC struct {
 func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, acceptanceChan chan<- fastrpc.Serializable, replica *genericsmr.Replica, bcastAcceptance bool) {
 	c := accptr.RecvAcceptRemote(accept)
 	go func() {
-		if msg, msgokie := <-c; msgokie {
-			if msg.GetType() != rpc.acceptReply {
-				return
+		for msg := range c {
+			if msg.ToWhom() != id {
+				replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
+				continue
 			}
+
 			acc := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 			if msg.GetType() == rpc.acceptReply {
 				areply := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
@@ -110,11 +114,11 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
 			if msg.IsNegative() {
-				return
+				continue
 			}
 			if !bcastAcceptance { // send acceptances to everyone
 				acceptanceChan <- acc
-				return
+				continue
 			}
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
@@ -141,6 +145,9 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 	responseC := acc.RecvAcceptRemote(accept)
 	go func() {
 		for resp := range responseC {
+			if resp.ToWhom() == id {
+				continue
+			}
 			//if isAccMsgFilter {
 			//	if resp.GetType() == rpc.commit {
 			//		cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
@@ -188,12 +195,12 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 
 			if resp.IsNegative() {
 				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
-				return
+				continue
 			}
 
 			if !bcastAcceptance { // if acceptance broadcast
 				acceptanceChan <- resp.GetSerialisable()
-				return
+				continue
 			}
 
 			for i := 0; i < replica.N; i++ {

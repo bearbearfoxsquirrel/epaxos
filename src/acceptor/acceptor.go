@@ -244,11 +244,11 @@ func (a *standard) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Mess
 
 	msg := a.getPrepareReply(prepare, inst)
 	a.returnPrepareReply(msg, responseC)
-
+	close(responseC)
 	return responseC
 }
 
-func (a *standard) returnPrepareReply(msg *stdpaxosproto.PrepareReply, responseC chan Message) {
+func (a *standard) returnPrepareReply(msg *stdpaxosproto.PrepareReply, responseC chan<- Message) {
 	toWhom := int32(msg.Req.PropID)
 	funcRet := func() uint8 { return a.prepareReplyRPC }
 	funcNeg := func() bool {
@@ -256,7 +256,6 @@ func (a *standard) returnPrepareReply(msg *stdpaxosproto.PrepareReply, responseC
 	}
 	toRet := &protoMessage{giveToWhom(toWhom), funcRet, funcNeg, msg}
 	responseC <- toRet
-	close(responseC)
 }
 
 func (a *standard) getPrepareReply(prepare *stdpaxosproto.Prepare, inst int32) *stdpaxosproto.PrepareReply {
@@ -303,7 +302,7 @@ func (a *standard) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message
 
 	acptReply := a.getAcceptReply(inst, accept)
 	a.returnAcceptReply(acptReply, responseC)
-
+	close(responseC)
 	return responseC
 }
 
@@ -318,14 +317,13 @@ func (a *standard) getAcceptReply(inst int32, accept *stdpaxosproto.Accept) *std
 	}
 }
 
-func (a *standard) returnAcceptReply(acceptReply *stdpaxosproto.AcceptReply, responseC chan Message) {
+func (a *standard) returnAcceptReply(acceptReply *stdpaxosproto.AcceptReply, responseC chan<- Message) {
 	responseC <- protoMessage{
 		towhom:       giveToWhom(int32(acceptReply.Req.PropID)),
 		isnegative:   func() bool { return !acceptReply.Cur.Equal(acceptReply.Req) },
 		gettype:      func() uint8 { return a.acceptReplyRPC },
 		Serializable: acceptReply,
 	}
-	close(responseC)
 }
 
 func nonDurableAccept(accept *stdpaxosproto.Accept, abk *AcceptorBookkeeping, stableStore stablestore.StableStore, durable bool) {

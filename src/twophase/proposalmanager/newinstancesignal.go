@@ -120,6 +120,13 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 	return e
 }
 
+func (sig *EagerSig) Opened(o []int32) {
+	if int32(len(sig.instsStarted)) >= sig.MaxOpenInsts {
+		panic("saldkjfakl;jfls;kdfj")
+	}
+	sig.SimpleSig.Opened(o)
+}
+
 //func (sig *EagerSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 //	if pbk.Status == CLOSED {
 //		return
@@ -151,6 +158,9 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 //	go func() { sig.sigNewInst <- struct{}{} }()
 //	delete(sig.instsStarted, inst)
 //}
+func (manager *EagerSig) Close(inst int32) {
+	delete(manager.instsStarted, inst)
+}
 
 func (manager *EagerSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
 	if pbk.Status == CLOSED {

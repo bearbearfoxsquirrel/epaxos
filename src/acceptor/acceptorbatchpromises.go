@@ -145,12 +145,16 @@ func (a *prewriter) clearPendingPrewrites() {
 type prewritePromiseAcceptor struct {
 	standard
 	prewriter
+	proactivePreempt bool
 }
+
+//todo add proactive preempt
 
 func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool, promiseLeasesRet chan PromiseLease, iWriteAhead int32) *prewritePromiseAcceptor {
 	a := &prewritePromiseAcceptor{
-		standard:  *StandardAcceptorNew(file, durable, emulatedSS, emulatedWriteTime, id, prepareReplyRPC, acceptReplyRPC, commitRPC, commitShortRPC, catchupOnProceedingCommits),
-		prewriter: *PrewriterNew(promiseLeasesRet, iWriteAhead, file),
+		standard:         *StandardAcceptorNew(file, durable, emulatedSS, emulatedWriteTime, id, prepareReplyRPC, acceptReplyRPC, commitRPC, commitShortRPC, catchupOnProceedingCommits),
+		prewriter:        *PrewriterNew(promiseLeasesRet, iWriteAhead, file),
+		proactivePreempt: true,
 	}
 
 	a.prewriter.updateInstancesToPrewriteBasedOnIBound(a.meID)
@@ -164,7 +168,7 @@ func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emul
 func (a *prewritePromiseAcceptor) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Message {
 	dlog.AgentPrintfN(a.meID, "Acceptor received prepare request for instance %d from %d at ballot %d.%d", prepare.Instance, prepare.PropID, prepare.Ballot.Number, prepare.Ballot.PropID)
 	inst, bal, requestor := prepare.Instance, prepare.Ballot, int32(prepare.PropID)
-	responseC := make(chan Message, 1)
+	responseC := make(chan Message, 2)
 	checkAndCreateInstanceState(&a.instanceState, inst)
 	abk := a.instanceState[inst]
 
@@ -188,21 +192,52 @@ func (a *prewritePromiseAcceptor) RecvPrepareRemote(prepare *stdpaxosproto.Prepa
 	//}
 
 	if bal.GreaterThan(abk.curBal) {
+		if !abk.curBal.IsZero() && a.proactivePreempt {
+			a.returnPreemptMsg(inst, prepare.Ballot, stdpaxosproto.PROMISE, responseC)
+		}
 		abk.status = PREPARED
 		abk.curBal = bal
 	}
 
 	msg := a.getPrepareReply(prepare, inst)
 	a.returnPrepareReply(msg, responseC)
-
+	close(responseC)
 	return responseC
+}
+
+func (a *prewritePromiseAcceptor) returnPreemptMsg(inst int32, newBal stdpaxosproto.Ballot, newPhase stdpaxosproto.Phase, responseC chan<- Message) {
+	abk := a.instanceState[inst]
+	if abk.status == PREPARED {
+		preply := &stdpaxosproto.PrepareReply{
+			Instance:   inst,
+			Req:        abk.curBal,
+			Cur:        newBal,
+			CurPhase:   newPhase,
+			VBal:       abk.vBal,
+			AcceptorId: a.meID,
+			WhoseCmd:   abk.whoseCmds,
+			Command:    abk.cmds,
+		}
+		a.returnPrepareReply(preply, responseC)
+		return
+	}
+
+	areply := &stdpaxosproto.AcceptReply{
+		Instance:   inst,
+		Req:        abk.curBal,
+		Cur:        newBal,
+		CurPhase:   newPhase,
+		AcceptorId: a.meID,
+		WhoseCmd:   abk.whoseCmds,
+	}
+	a.returnAcceptReply(areply, responseC)
 }
 
 func (a *prewritePromiseAcceptor) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message {
 	dlog.AgentPrintfN(a.meID, "Acceptor received accept request for instance %d from %d at ballot %d.%d", accept.Instance, accept.PropID, accept.Ballot.Number, accept.Ballot.PropID)
 
 	inst, bal, requestor := accept.Instance, accept.Ballot, int32(accept.PropID)
-	responseC := make(chan Message, 1)
+	responseC := make(chan Message, 2)
 	checkAndCreateInstanceState(&a.instanceState, inst)
 	abk := a.instanceState[inst]
 
@@ -212,6 +247,10 @@ func (a *prewritePromiseAcceptor) RecvAcceptRemote(accept *stdpaxosproto.Accept)
 	}
 
 	if bal.GreaterThan(abk.curBal) || bal.Equal(abk.curBal) {
+		if !abk.curBal.IsZero() && a.proactivePreempt && bal.GreaterThan(abk.curBal) {
+			a.returnPreemptMsg(inst, accept.Ballot, stdpaxosproto.PROMISE, responseC)
+		}
+
 		a.prewriter.updateMaxInstance(a.maxInst)
 		a.writePrewritesToStableStorageUNSAFE()
 		nonDurableAccept(accept, abk, a.stableStore, a.durable)
@@ -222,7 +261,7 @@ func (a *prewritePromiseAcceptor) RecvAcceptRemote(accept *stdpaxosproto.Accept)
 
 	acptReply := a.getAcceptReply(inst, accept)
 	a.returnAcceptReply(acptReply, responseC)
-
+	close(responseC)
 	return responseC
 }
 
