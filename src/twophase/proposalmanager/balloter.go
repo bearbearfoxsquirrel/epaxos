@@ -24,7 +24,8 @@ func (balloter *Balloter) UpdateValueSelected() {
 }
 
 func (balloter *Balloter) GetNextProposingBal(config int32, maxPrevRoundNum int32) lwcproto.ConfigBal {
-	mini := ((maxPrevRoundNum/balloter.MaxInc)+1)*balloter.MaxInc + balloter.N
+
+	mini := ((maxPrevRoundNum / balloter.MaxInc) + 1) * balloter.MaxInc
 	var max int32
 	//zero := time.Time{}
 	max = mini + balloter.MaxInc
@@ -54,7 +55,7 @@ func (balloter *Balloter) GetNextProposingBal(config int32, maxPrevRoundNum int3
 	if balloter.PropID < 0 || next < mini {
 		panic("bad round num")
 	}
-	return lwcproto.ConfigBal{Config: config, Ballot: stdpaxosproto.Ballot{next - balloter.PropID, int16(balloter.PropID)}}
+	return lwcproto.ConfigBal{Config: config, Ballot: stdpaxosproto.Ballot{next, int16(balloter.PropID)}}
 
 }
 

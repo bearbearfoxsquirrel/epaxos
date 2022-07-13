@@ -456,7 +456,12 @@ func SimpleProposalManagerNew(id int32, signal OpenInstSignal, iManager SingleIn
 func (manager *SimpleGlobalManager) GetCrtInstance() int32 { return manager.crtInstance }
 
 func (manager *SimpleGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
-	manager.crtInstance++
+	manager.crtInstance = manager.crtInstance + 1
+
+	if (*instanceSpace)[manager.crtInstance] != nil {
+		panic("aslkdjfalksjflekjals;kdfj")
+	}
+
 	(*instanceSpace)[manager.crtInstance] = manager.SingleInstanceManager.InitInstance(manager.crtInstance)
 	startFunc(manager.crtInstance)
 	opened := []int32{manager.crtInstance}
@@ -470,6 +475,9 @@ func (manager *SimpleGlobalManager) DecideRetry(pbk *PBK, retry RetryInfo) bool 
 
 func (manager *SimpleGlobalManager) StartNextProposal(pbk *PBK, inst int32) {
 	manager.SingleInstanceManager.StartProposal(pbk, inst)
+	//if pbk.PropCurBal.Number > 20000 {
+	//	panic("askdfjasldkfj")
+	//}
 }
 
 func (manager *SimpleGlobalManager) UpdateCurrentInstance(instsanceSpace *[]*PBK, inst int32) {
@@ -498,9 +506,9 @@ func (manager *SimpleGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, inst in
 }
 
 func (manager *SimpleGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-	if inst > manager.crtInstance {
-		manager.UpdateCurrentInstance(instanceSpace, inst)
-	}
+	//if inst > manager.crtInstance {
+	manager.UpdateCurrentInstance(instanceSpace, inst)
+	//}
 	pbk := (*instanceSpace)[inst]
 	manager.OpenInstSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
 	return //manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot)

@@ -466,9 +466,9 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	simpleGlobalManager := proposalmanager.SimpleProposalManagerNew(r.Id, openInstSig, instanceManager, backoffManager)
 	var globalManager proposalmanager.GlobalInstanceManager = simpleGlobalManager
 
-	if doEager && forwardInduction {
-		globalManager = proposalmanager.EagerForwardInductionProposalManagerNew(int32(r.N), r.Id, openInstSig.(*proposalmanager.EagerSig), instanceManager, backoffManager, r.Replica, r.stateChanRPC)
-	}
+	//if doEager && forwardInduction {
+	//	globalManager = proposalmanager.EagerForwardInductionProposalManagerNew(int32(r.N), r.Id, openInstSig.(*proposalmanager.EagerSig), instanceManager, backoffManager, r.Replica, r.stateChanRPC)
+	//}
 
 	if instsToOpenPerBatch < 1 {
 		panic("Will not open any instances")
@@ -784,6 +784,10 @@ func (r *Replica) beginTracking(instID stats.InstanceID, ballot stdpaxosproto.Ba
 
 func (r *Replica) bcastPrepare(instance int32) {
 	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].PropCurBal.Ballot}
+
+	//if args.Ballot.Number > 20000 {
+	//	panic("aslkdjf;laksdjfals;kdfjasl;dkfja")
+	//}
 	pbk := r.instanceSpace[instance]
 	//dlog.Println("sending prepare for instance", instance, "and ballot", pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 	var sentTo []int
@@ -1560,6 +1564,8 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	}
 
 	if r.bcastAcceptance {
+		//if r.bcastAcceptLearning.IsAlreadyClosed(accept.Instance) {
+		//}
 		if r.checkAcceptLateForBcastAcceptLearner(accept) {
 			//return
 		}
@@ -1610,6 +1616,10 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	dlog.AgentPrintfN(r.Id, "Replica received Accept Reply from Replica %d in instance %d at requested ballot %d.%d and current ballot %d.%d", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID, areply.Cur.Number, areply.Cur.PropID)
 	pbk := r.instanceSpace[areply.Instance]
 	if r.bcastAcceptance {
+		if r.bcastAcceptLearning.IsAlreadyClosed(areply.Instance) {
+			dlog.AgentPrintfN(r.Id, "Ignoring accept reply as instance %d already closed", areply.Instance)
+			return
+		}
 		r.LearnOfBallot(&r.instanceSpace, areply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: areply.Cur}, stdpaxosproto.ACCEPTANCE)
 		if areply.Req.Equal(areply.Cur) {
 			r.bcastAcceptCheckIfChosenValue(areply, pbk)
@@ -1685,6 +1695,9 @@ func (r *Replica) bcastAcceptCheckIfChosenValue(areply *stdpaxosproto.AcceptRepl
 }
 
 func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
+	if r.bcastAcceptance && !r.bcastAcceptLearning.IsAlreadyClosed(inst) {
+		panic("should be closed by now")
+	}
 	r.GlobalInstanceManager.LearnBallotChosen(&r.instanceSpace, inst, lwcproto.ConfigBal{Config: -1, Ballot: chosenAt}) // todo add client value chosen log
 	pbk := r.instanceSpace[inst]
 
@@ -1738,7 +1751,7 @@ func (r *Replica) executeCmds() {
 	oldExecutedUpTo := r.executedUpTo
 	for i := r.executedUpTo + 1; i <= r.CrtInstanceOracle.GetCrtInstance(); i++ {
 		returnInst := r.instanceSpace[i]
-		if returnInst != nil && returnInst.Status == proposalmanager.CLOSED { //&& returnInst.abk.Cmds != nil {
+		if returnInst != nil && (returnInst.Status == proposalmanager.CLOSED && !r.bcastAcceptance) || (r.bcastAcceptance && r.bcastAcceptLearning.IsAlreadyClosed(i)) { //&& returnInst.abk.Cmds != nil {
 			if returnInst.ClientProposals == nil {
 				dlog.AgentPrintfN(r.Id, "Executing instance %d with whose commands %d", i, returnInst.WhoseCmds)
 			} else {
@@ -1772,7 +1785,10 @@ func (r *Replica) executeCmds() {
 
 func (r *Replica) handleCommit(commit *stdpaxosproto.Commit) {
 	r.checkAndHandleNewlyReceivedInstance(commit.Instance)
-
+	if r.bcastAcceptance {
+		r.bcastAcceptLearning.GotValue(commit.Instance, lwcproto.ConfigBal{-1, commit.Ballot}, commit.Command)
+		r.bcastAcceptLearning.InstanceClosed(commit.Instance)
+	}
 	r.Acceptor.RecvCommitRemote(commit)
 	r.proposerCloseCommit(commit.Instance, commit.Ballot, commit.Command, commit.WhoseCmd)
 }
@@ -1783,6 +1799,10 @@ func (r *Replica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 	dlog.AgentPrintfN(r.Id, "Replica received Commit Short from Replica %d in instance %d at ballot %d.%d with whose commands %d", commit.PropID, commit.Instance, commit.Ballot.Number, commit.Ballot.PropID, commit.WhoseCmd)
 	pbk := r.instanceSpace[commit.Instance]
 	if r.bcastAcceptance {
+		if r.bcastAcceptLearning.IsAlreadyClosed(commit.Instance) {
+			dlog.AgentPrintfN(r.Id, "Ignoring commit short for instance %d as it is already learnt", commit.Instance)
+			return
+		}
 		chosenValGot := r.bcastAcceptLearning.GotChosenBallot(commit.Instance, lwcproto.ConfigBal{Config: -1, Ballot: commit.Ballot})
 		if !chosenValGot {
 			dlog.AgentPrintfN(r.Id, "Cannot learn instance %d at ballot %d.%d with whose commands %d as we do not have a value", commit.Instance, commit.Ballot.Number, commit.Ballot.PropID, commit.WhoseCmd)
@@ -1793,11 +1813,9 @@ func (r *Replica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 			r.ProposedClientValuesManager.valueChosen(pbk, commit.Instance, commit.WhoseCmd, nil)
 			return
 		}
-		if r.bcastAcceptLearning.IsAlreadyClosed(commit.Instance) {
-			return
-		}
 		dlog.AgentPrintfN(r.Id, "Can learn instance %d at ballot %d.%d with whose commands %d as we have a value", commit.Instance, commit.Ballot.Number, commit.Ballot.PropID, commit.WhoseCmd)
 		val := r.bcastAcceptLearning.GetChosenValue(commit.Instance)
+		r.bcastAcceptLearning.InstanceClosed(commit.Instance)
 		msg := &stdpaxosproto.Commit{
 			LeaderId:   int32(commit.Ballot.PropID),
 			Instance:   commit.Instance,
