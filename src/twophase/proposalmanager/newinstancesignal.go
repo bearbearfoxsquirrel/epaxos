@@ -74,7 +74,7 @@ func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.
 	if whosecmds == sig.id {
 		return
 	}
-	if pbk.Status == PROPOSING && pbk.WhoseCmds == sig.id { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
+	if pbk.Status == PROPOSING && (pbk.WhoseCmds == sig.id || pbk.WhoseCmds == -1) { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
 		return
 	}
 
