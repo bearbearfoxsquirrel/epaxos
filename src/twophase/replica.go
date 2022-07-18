@@ -709,7 +709,7 @@ func (r *Replica) sendSinglePrepare(instance int32, to int32) {
 		}
 	}()
 	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].PropCurBal.Ballot}
-	dlog.Printf("send prepare to %d\n", to)
+	//dlog.Printf("send prepare to %d\n", to)
 	r.SendMsg(to, r.prepareRPC, args)
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PREPARING, r.timeout*5, r.prepareRPC, args)
 }
@@ -793,7 +793,7 @@ func (r *Replica) bcastPrepare(instance int32) {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 1 Proposals", 1)
 	}
 	speed := r.beginTracking(instID, args.Ballot, sentTo, "Phase 1", "Phase 1")
-	dlog.AgentPrintfN(r.Id, "Broadcasted prepare for instance %d at ballot %d.%d to replicas %v (a %s quorum)", args.Instance, args.Number, args.PropID, sentTo, speed)
+	dlog.AgentPrintfN(r.Id, "Sending prepare for instance %d at ballot %d.%d to replicas %v (a %s quorum)", args.Instance, args.Number, args.PropID, sentTo, speed)
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PREPARING, r.timeout, r.prepareRPC, args)
 }
 
@@ -896,7 +896,7 @@ func (r *Replica) bcastAccept(instance int32) {
 		r.InstanceStats.RecordOccurrence(instID, "My Phase 2 Proposals", 1)
 	}
 	speed := r.beginTracking(instID, args.Ballot, sentTo, "Phase 2", "Phase 2")
-	dlog.AgentPrintfN(r.Id, "Broadcasting accept for instance %d with whose commands %d, at ballot %d.%d to Replicas %v (a %s quorum)", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo, speed)
+	dlog.AgentPrintfN(r.Id, "Sending accept for instance %d with whose commands %d, at ballot %d.%d to Replicas %v (a %s quorum)", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo, speed)
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PROPOSING, r.timeout, r.acceptRPC, args)
 }
 
@@ -922,7 +922,7 @@ func (r *Replica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, 
 	pcs.WhoseCmd = r.instanceSpace[instance].WhoseCmds
 	pcs.Count = int32(len(command))
 	argsShort := pcs
-	dlog.AgentPrintfN(r.Id, "Broadcasting commit for instance %d with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
+	dlog.AgentPrintfN(r.Id, "Sending commit for instance %d with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
 	r.CalculateAlive()
 	if r.bcastAcceptance {
 		//return

@@ -27,7 +27,7 @@ func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *generi
 			}
 			if msg.GetType() == rpc.prepareReply {
 				isPreemptStr := isPreemptOrPromise(preply)
-				dlog.AgentPrintfN(id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+				dlog.AgentPrintfN(id, "Sending Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
 					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
 			}
 			promiseChan <- preply
@@ -75,7 +75,7 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 
 			if msg.GetType() == rpc.commit {
 				cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
-				dlog.AgentPrintfN(id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+				dlog.AgentPrintfN(id, "Sending Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
 			}
 
 			if msg.GetType() == rpc.prepareReply {
@@ -84,7 +84,7 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 				if msg.IsNegative() && bcastPrepare {
 					continue
 				}
-				dlog.AgentPrintfN(id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+				dlog.AgentPrintfN(id, "Sending Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
 					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
 			}
 			if msg.ToWhom() == id {
@@ -113,7 +113,7 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 			if msg.GetType() == rpc.acceptReply {
 				areply := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 				isPreemptStr := isPreemptOrAccept(areply)
-				dlog.AgentPrintfN(id, "Returning Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+				dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
 			if msg.IsNegative() {
@@ -125,7 +125,7 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 				acceptanceChan <- acc
 				continue
 			}
-			dlog.AgentPrintfN(id, "Broadcasting Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			dlog.AgentPrintfN(id, "Sending Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue
@@ -195,7 +195,7 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 			if resp.GetType() == rpc.acceptReply {
 				areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
 				isPreemptStr := isPreemptOrAccept(areply)
-				dlog.AgentPrintfN(id, "Returning Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+				dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
 			if resp.IsNegative() {
@@ -211,7 +211,7 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 				acceptanceChan <- resp.GetSerialisable()
 				continue
 			}
-			dlog.AgentPrintfN(id, "Broadcasting Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			dlog.AgentPrintfN(id, "Sending Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue
