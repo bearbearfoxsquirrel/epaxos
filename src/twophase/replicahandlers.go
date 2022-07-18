@@ -193,15 +193,15 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 			//}
 
 			if resp.GetType() == rpc.acceptReply {
+				if resp.IsNegative() && bcastPrepare {
+					continue
+				}
 				areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
 				isPreemptStr := isPreemptOrAccept(areply)
 				dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
 			if resp.IsNegative() {
-				if resp.IsNegative() && resp.GetType() == rpc.acceptReply && bcastPrepare {
-					continue
-				}
 				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
 				continue
 			}

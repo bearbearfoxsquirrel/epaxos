@@ -935,7 +935,7 @@ func (r *Replica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, 
 	r.CalculateAlive()
 	if r.bcastAcceptance {
 		//return
-		if r.bcastCommit {
+		if !r.bcastCommit {
 			return
 		}
 		for q := int32(0); q < int32(r.N); q++ {
@@ -1595,7 +1595,9 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 			dlog.AgentPrintfN(r.Id, "Ignoring accept reply as instance %d already closed", areply.Instance)
 			return
 		}
+
 		r.LearnOfBallot(&r.instanceSpace, areply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: areply.Cur}, stdpaxosproto.ACCEPTANCE)
+
 		if areply.Req.Equal(areply.Cur) {
 			r.bcastAcceptCheckIfChosenValue(areply, pbk)
 			return
