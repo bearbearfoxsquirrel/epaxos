@@ -125,7 +125,7 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 				acceptanceChan <- acc
 				continue
 			}
-			dlog.AgentPrintfN(id, "Sending Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue
@@ -208,10 +208,11 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 
 			//go func() {}()
 			if !bcastAcceptance { // if acceptance broadcast
-				acceptanceChan <- resp.GetSerialisable()
+				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
+				//acceptanceChan <- resp.GetSerialisable()
 				continue
 			}
-			dlog.AgentPrintfN(id, "Sending Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue

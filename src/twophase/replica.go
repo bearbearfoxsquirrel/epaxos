@@ -931,7 +931,6 @@ func (r *Replica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, 
 	pcs.WhoseCmd = r.instanceSpace[instance].WhoseCmds
 	pcs.Count = int32(len(command))
 	argsShort := pcs
-	dlog.AgentPrintfN(r.Id, "Sending commit for instance %d with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
 	r.CalculateAlive()
 	if r.bcastAcceptance {
 		//return
@@ -944,6 +943,7 @@ func (r *Replica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, 
 			}
 			r.SendMsg(q, r.commitShortRPC, &argsShort)
 		}
+		dlog.AgentPrintfN(r.Id, "Sending commit for instance %d with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
 		return
 	}
 
@@ -958,6 +958,7 @@ func (r *Replica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, 
 			r.SendMsg(q, r.commitRPC, &pc)
 		}
 	}
+	dlog.AgentPrintfN(r.Id, "Sending commit for instance %d with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
 }
 
 func min(x, y int) int {
