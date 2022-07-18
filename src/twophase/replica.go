@@ -170,6 +170,7 @@ type Replica struct {
 	sendFastestQrm     bool
 	nudge              chan struct{}
 	bcastCommit        bool
+	nopreempt          bool
 }
 
 type ProposalLatencyEstimator struct {
@@ -211,9 +212,10 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	maxAccBatchWait time.Duration, sendPreparesToAllAcceptors bool, minimalProposers bool, timeBasedBallots bool,
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
-	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool, q1 bool, bcastCommit bool) *Replica {
+	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool, q1 bool, bcastCommit bool, nopreempt bool) *Replica {
 
 	r := &Replica{
+		nopreempt:                   nopreempt,
 		bcastCommit:                 bcastCommit,
 		nudge:                       make(chan struct{}, maxOpenInstances),
 		sendFastestQrm:              sendFastestAccQrm,
@@ -1060,7 +1062,7 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 
 	if r.AcceptorQrmInfo.IsInQrm(prepare.Instance, r.Id) {
 		dlog.AgentPrintfN(r.Id, "Giving Prepare from Replica %d in instance %d at ballot %d.%d to acceptor as it can form a quorum", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
-		acceptorHandlePrepare(r.Id, r.Acceptor, prepare, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.sendPreparesToAllAcceptors)
+		acceptorHandlePrepare(r.Id, r.Acceptor, prepare, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.nopreempt)
 	}
 
 	if r.doPatientProposals {
@@ -1219,7 +1221,7 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 				Instance: preply.Instance,
 				Ballot:   preply.Cur,
 			}
-			acceptorHandlePrepare(r.Id, r.Acceptor, newPrep, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.sendPreparesToAllAcceptors)
+			acceptorHandlePrepare(r.Id, r.Acceptor, newPrep, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.nopreempt)
 		}
 		return
 	}
@@ -1569,7 +1571,7 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 		acceptorHandleAcceptLocal(r.Id, r.Acceptor, accept, r.AcceptResponsesRPC, r.acceptReplyChan, r.Replica, r.bcastAcceptance)
 		return
 	}
-	acceptorHandleAccept(r.Id, r.Acceptor, accept, r.AcceptResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.bcastAcceptance, r.acceptReplyChan, r.sendPreparesToAllAcceptors)
+	acceptorHandleAccept(r.Id, r.Acceptor, accept, r.AcceptResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.bcastAcceptance, r.acceptReplyChan, r.nopreempt)
 }
 
 func (r *Replica) checkAcceptLateForBcastAcceptLearner(accept *stdpaxosproto.Accept) bool {

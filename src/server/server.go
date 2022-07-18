@@ -135,6 +135,7 @@ var prewriteAcc *bool = flag.Bool("pwa", false, "Use Prewriting acceptor to redu
 var eagerFwInduction *bool = flag.Bool("fwi", false, "Use forward induction for eager promise quorums")
 var q1 *bool = flag.Bool("q1", false, "Which queueing system to use (0 or 1)")
 var bcastCommit *bool = flag.Bool("bcastc", false, "bcast commits when using bcast accept")
+var nopreempt *bool = flag.Bool("np", false, "don't send preempt messages")
 
 func main() {
 
@@ -327,7 +328,7 @@ func main() {
 			*proactivepreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			*mappedProposersNum, int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
-			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit)
+			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt)
 		runnable = rep
 		rpc.Register(rep)
 		//}
