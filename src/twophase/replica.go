@@ -210,7 +210,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	maxAccBatchWait time.Duration, sendPreparesToAllAcceptors bool, minimalProposers bool, timeBasedBallots bool,
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
-	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool) *Replica {
+	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool, q1 bool) *Replica {
 
 	r := &Replica{
 		nudge:                       make(chan struct{}, maxOpenInstances),
@@ -437,16 +437,23 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 
 	balloter := proposalmanager.Balloter{r.Id, int32(r.N), 10000, time.Time{}, timeBasedBallots}
 
-	var q Queueing = ProposingChosenUniqueueQNew(r.Id, 200) //ChosenUniqueQNew(r.Id, 200)
-	//var q Queueing = ChosenUniqueQNew(r.Id, 200)
-	r.Queueing = q
-
-	var batchProposeOracle ProposeBatchOracle = q.(*ProposingChosenUniqueQ) //chosenQ
-	r.ProposeBatchOracle = batchProposeOracle
-	r.batchProposedObservers = make([]ProposedObserver, 0)
-	r.batchLearners = []MyBatchLearner{q.(*ProposingChosenUniqueQ)}
-
-	r.ProposedClientValuesManager = ProposedClientValuesManagerNew(r.Id, r.TimeseriesStats, r.doStats, q)
+	if !q1 {
+		var q Queueing = ProposingChosenUniqueueQNew(r.Id, 200)                 //ChosenUniqueQNew(r.Id, 200)
+		var batchProposeOracle ProposeBatchOracle = q.(*ProposingChosenUniqueQ) //chosenQ
+		r.ProposeBatchOracle = batchProposeOracle
+		r.batchProposedObservers = make([]ProposedObserver, 0)
+		r.batchLearners = []MyBatchLearner{q.(*ProposingChosenUniqueQ)}
+		r.Queueing = q
+		r.ProposedClientValuesManager = ProposedClientValuesManagerNew(r.Id, r.TimeseriesStats, r.doStats, q)
+	} else {
+		var q Queueing = ChosenUniqueQNew(r.Id, 200)
+		var batchProposeOracle ProposeBatchOracle = q.(*ChosenUniqueQ) //chosenQ
+		r.ProposeBatchOracle = batchProposeOracle
+		r.batchProposedObservers = make([]ProposedObserver, 0)
+		r.batchLearners = []MyBatchLearner{q.(*ChosenUniqueQ)}
+		r.Queueing = q
+		r.ProposedClientValuesManager = ProposedClientValuesManagerNew(r.Id, r.TimeseriesStats, r.doStats, q)
+	}
 
 	// SET UP SIGNAL
 	var openInstSig proposalmanager.OpenInstSignal = proposalmanager.SimpleSigNew(r.startInstanceSig, r.Id)
