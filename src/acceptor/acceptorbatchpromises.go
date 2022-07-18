@@ -28,8 +28,8 @@ type prewriter struct {
 func PrewriterNew(promiseLeasesRet chan PromiseLease, iWriteAhead int32, stableStore stablestore.StableStore) *prewriter {
 	bWriteAhead := int32(50000)
 
-	return &prewriter{
-		maxInst:             0,
+	pw := &prewriter{
+		maxInst:             -1,
 		iBound:              300,
 		bBound:              10000,
 		iWriteAhead:         iWriteAhead,
@@ -40,6 +40,12 @@ func PrewriterNew(promiseLeasesRet chan PromiseLease, iWriteAhead int32, stableS
 		proposerLeasing:     promiseLeasesRet,
 		StableStore:         stableStore,
 	}
+
+	pw.prewriteNextClass()
+	pw.writePrewritesToStableStorageUNSAFE()
+	pw.returnNewPromiseLeases()
+	pw.clearPendingPrewrites()
+	return pw
 }
 
 func (a *prewriter) updateMaxInstance(inst int32) {
@@ -156,11 +162,6 @@ func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emul
 		prewriter:        *PrewriterNew(promiseLeasesRet, iWriteAhead, file),
 		proactivePreempt: proactivePreemptOnNewB,
 	}
-
-	a.prewriter.updateInstancesToPrewriteBasedOnIBound(a.meID)
-	a.prewriter.writePrewritesToStableStorageUNSAFE()
-	a.prewriter.returnNewPromiseLeases()
-	a.prewriter.clearPendingPrewrites()
 
 	return a
 }

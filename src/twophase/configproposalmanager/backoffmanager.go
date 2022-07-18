@@ -33,6 +33,7 @@ type BackoffManager struct {
 	factor float64
 	//mapMutex sync.RWMutex
 	softFac bool
+	cancel  map[int32]chan struct{}
 }
 
 func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo, factor float64, softFac bool, constBackoff bool) *BackoffManager {
@@ -51,6 +52,7 @@ func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo,
 		sig:     signalChan,
 		factor:  factor,
 		softFac: softFac,
+		cancel:  make(map[int32]chan struct{}),
 	}
 }
 
@@ -114,9 +116,18 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 		TimesPreempted: preemptNum,
 	}
 	bm.currentBackoffs[inst] = info
+	bm.cancel[inst] <- struct{}{}
+	cancel := make(chan struct{})
+	bm.cancel[inst] = cancel
 	go func() {
-		time.Sleep(time.Duration(next) * time.Microsecond)
-		bm.sig <- info
+		end := time.NewTimer(time.Duration(next) * time.Microsecond)
+		select {
+		case <-cancel:
+			break
+		case <-end.C:
+			bm.sig <- info
+			break
+		}
 	}()
 
 	return true, next

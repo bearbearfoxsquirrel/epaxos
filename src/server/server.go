@@ -99,7 +99,7 @@ var constBackoff *bool = flag.Bool("cbackoff", false, "Maintain a constant backo
 var requeueOnPreempt *bool = flag.Bool("requeuepreempt", false, "Requeue a client proposal as soon as it is preempted (even if it might later be chosen in that instance)")
 var reducePropConfs *bool = flag.Bool("reducepropconfs", false, "Reduce proposer conflicts in speculative proposals")
 
-var bcastAcceptance *bool = flag.Bool("bcastacceptance", false, "In lwp broadcast acceptance")
+var bcastAcceptance *bool = flag.Bool("bcastacc", false, "In lwp broadcast acceptance")
 
 var batch *bool = flag.Bool("batch", false, "turns on if batch wait > 0 also")
 
@@ -119,12 +119,12 @@ var batchingAcceptor *bool = flag.Bool("batchingacceptor", false, "Acceptor batc
 var accMaxBatchWaitMs *int = flag.Int("accmaxbatchwaitms", 5, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
 
 var minimalAcceptorNegatives *bool = flag.Bool("minimalaccnegatives", false, "Only the minimal number (at most F+1) of acceptors will respond negatively in each quorum")
-var timeBasedBallots *bool = flag.Bool("timebasedballots", false, "The maximum ballot available to proposers is dictated by the time since they last chose a ballot")
-var sendPreparesAllAcceptors *bool = flag.Bool("sendpreparesallacceptors", false, "if using minimal quorums, send prepares to all acceptors - passive observation")
+var timeBasedBallots *bool = flag.Bool("tbal", false, "The maximum ballot available to proposers is dictated by the time since they last chose a ballot")
+var sendPreparesAllAcceptors *bool = flag.Bool("bcastprep", false, "if using minimal quorums, send prepares to all acceptors - passive observation")
 var minimalProposers *bool = flag.Bool("minimalproposers", false, "When a proposer receives F+1 proposals to greater than theirs they stop proposing to that instance")
 var mappedProposers *bool = flag.Bool("mappedproposers", false, "F+1 proposers are statically mapped to instances")
-var dynamicMappedProposers *bool = flag.Bool("dmappedproposers", false, "Dynamically map proposers to instances - bounded by n and f+1")
-var mappedProposersNum *int = flag.Int("mappedproposersnum", 1, "How many proposers are mapped statically to each instance")
+var dynamicMappedProposers *bool = flag.Bool("dmapprops", false, "Dynamically map proposers to instances - bounded by n and f+1")
+var mappedProposersNum *int = flag.Int("mappropsnum", 1, "How many proposers are mapped statically to each instance")
 var instsToOpenPerBatch *int = flag.Int("blinstsopenperbatch", 1, "How many instances to open per batch")
 var rateLimitEagerOpenInsts *bool = flag.Bool("ratelimiteager", false, "Should eager instance pipeline be rate limited to noop time?")
 var batchFlush *bool = flag.Bool("batchflush", false, "Should messages be flushed as a batch")

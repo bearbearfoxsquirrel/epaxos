@@ -519,6 +519,7 @@ func (manager *SimpleGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, ins
 	pbk := (*instanceSpace)[inst]
 	manager.OpenInstSignal.CheckChosen(pbk, inst, at)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, at)
+
 }
 
 // basically the same as simple except that we also

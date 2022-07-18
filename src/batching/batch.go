@@ -37,7 +37,7 @@ func (p *batch) GetUID() int32 {
 	return p.uid
 }
 
-type proposalBatcher struct {
+type ProposalBatcher struct {
 	curBatchCmds            []*state.Command
 	curBatchProposals       []*genericsmr.Propose
 	curBatchSize            int
@@ -51,8 +51,72 @@ type proposalBatcher struct {
 	myId                    int32
 }
 
-func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- ProposalBatch, expectedBatchedRequests int32, maxBatchSizeBytes int, maxBatchWait time.Duration, onBatch func()) {
-	batcher := proposalBatcher{
+type EagerNudgeRecv struct {
+	cancel <-chan struct{}
+	batch  chan<- ProposalBatch
+}
+
+type EagerNudgeSend struct {
+}
+
+//func StartEagerBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- ProposalBatch, expectedBatchedRequests int32, maxBatchSizeBytes int, maxBatchWait time.Duration, onBatch func(), nudge <-chan EagerNudgeRecv) {
+//	batcher := ProposalBatcher{
+//		myId:               myId,
+//		unbatchedProposals: in,
+//		batchedProposals:   out,
+//		curBatchProposals:  make([]*genericsmr.Propose, 0, expectedBatchedRequests),
+//		curBatchCmds:       make([]*state.Command, 0, expectedBatchedRequests),
+//		curBatchSize:       0,
+//		curUID:             int32(0),
+//		curTimeout:         time.NewTimer(maxBatchWait),
+//		maxBatchWait:       maxBatchWait,
+//		maxBatchBytes:      maxBatchSizeBytes,
+//	}
+//	for {
+//		select {
+//		case v := <-batcher.unbatchedProposals:
+//			batcher.addToBatch(v)
+//			if !batcher.isBatchSizeMet() {
+//				break
+//			}
+//			batchC := batcher.getBatch()
+//			batcher.batchedProposals <- batchC
+//			onBatch()
+//			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+//			batcher.startNextBatch()
+//			break
+//
+//		//case <-batcher.curTimeout.C:
+//		//	if !batcher.hasBatch() {
+//		//		batcher.resetTimeout()
+//		//		break
+//		//	}
+//		//	batchC := batcher.getBatch()
+//		//	dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+//		//	batcher.batchedProposals <- batchC
+//		//	onBatch()
+//		//	batcher.startNextBatch()
+//		//	break
+//		case n <-nudge:
+//			select {
+//
+//			}
+//			//if !batcher.hasBatch() {
+//			//	dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
+//			//	break
+//			//}
+//			//batchC := batcher.getBatch()
+//			//dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+//			//batcher.batchedProposals <- batchC
+//			//onBatch()
+//			//batcher.startNextBatch()
+//			//break
+//		}
+//	}
+//}
+
+func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- ProposalBatch, expectedBatchedRequests int32, maxBatchSizeBytes int, maxBatchWait time.Duration, onBatch func(), nudge <-chan struct{}, eager bool) {
+	batcher := ProposalBatcher{
 		myId:               myId,
 		unbatchedProposals: in,
 		batchedProposals:   out,
@@ -64,6 +128,9 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 		maxBatchWait:       maxBatchWait,
 		maxBatchBytes:      maxBatchSizeBytes,
 	}
+	if eager {
+		batcher.curTimeout.C = nil
+	}
 	for {
 		select {
 		case v := <-batcher.unbatchedProposals:
@@ -74,7 +141,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			batchC := batcher.getBatch()
 			batcher.batchedProposals <- batchC
 			onBatch()
-			dlog.AgentPrintfN(batcher.myId, "Client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.startNextBatch()
 			break
 		case <-batcher.curTimeout.C:
@@ -83,8 +150,19 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 				break
 			}
 			batchC := batcher.getBatch()
-			dlog.AgentPrintfN(batcher.myId, "Timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
-
+			dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			batcher.batchedProposals <- batchC
+			onBatch()
+			batcher.startNextBatch()
+			break
+		case <-nudge:
+			// not always gonna give batch in time but with big enough noop wait odds are high it will. Also too lazy to come up with a better low-coordination way
+			if !batcher.hasBatch() {
+				dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
+				break
+			}
+			batchC := batcher.getBatch()
+			dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
 			onBatch()
 			batcher.startNextBatch()
@@ -93,25 +171,25 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 	}
 }
 
-func (b *proposalBatcher) hasBatch() bool {
+func (b *ProposalBatcher) hasBatch() bool {
 	return b.curBatchSize > 0
 }
 
-func (b *proposalBatcher) resetTimeout() {
+func (b *ProposalBatcher) resetTimeout() {
 	b.curTimeout.Reset(b.maxBatchWait)
 }
 
-func (b *proposalBatcher) isBatchSizeMet() bool {
+func (b *ProposalBatcher) isBatchSizeMet() bool {
 	return b.curBatchSize >= b.maxBatchBytes
 }
 
-func (b *proposalBatcher) addToBatch(v *genericsmr.Propose) {
+func (b *ProposalBatcher) addToBatch(v *genericsmr.Propose) {
 	b.curBatchProposals = append(b.curBatchProposals, v)
 	b.curBatchCmds = append(b.curBatchCmds, &v.Command)
 	b.curBatchSize += len(v.Command.V) + 16 + 2
 }
 
-func (b *proposalBatcher) startNextBatch() {
+func (b *ProposalBatcher) startNextBatch() {
 	b.curBatchProposals = make([]*genericsmr.Propose, 0, b.expectedBatchedRequests)
 	b.curBatchCmds = make([]*state.Command, 0, b.expectedBatchedRequests)
 	b.curBatchSize = 0
@@ -119,7 +197,7 @@ func (b *proposalBatcher) startNextBatch() {
 	b.resetTimeout()
 }
 
-func (b *proposalBatcher) getBatch() *batch {
+func (b *ProposalBatcher) getBatch() *batch {
 	batchC := &batch{
 		proposals: b.curBatchProposals,
 		cmds:      b.curBatchCmds,

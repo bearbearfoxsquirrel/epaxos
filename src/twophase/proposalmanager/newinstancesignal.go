@@ -74,6 +74,9 @@ func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.
 	if whosecmds == sig.id {
 		return
 	}
+	if pbk.Status == PROPOSING && pbk.WhoseCmds == sig.id { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
+		return
+	}
 
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as there is an accepted ballot")
 	delete(sig.instsStarted, inst)

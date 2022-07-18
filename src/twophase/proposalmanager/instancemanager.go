@@ -142,6 +142,9 @@ func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, bal
 			man.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "I Chose", 1)
 		}
 	}
+	if ballot.PropID == int16(man.id) {
+		man.Balloter.UpdateProposalChosen()
+	}
 }
 
 type MinimalProposersInstanceManager struct {

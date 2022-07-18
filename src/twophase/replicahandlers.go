@@ -45,7 +45,7 @@ func isPreemptOrPromise(preply *stdpaxosproto.PrepareReply) string {
 	return isPreemptStr
 }
 
-func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica) {
+func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastPrepare bool) {
 	resp := acc.RecvPrepareRemote(prepare)
 	go func() {
 		for msg := range resp {
@@ -81,6 +81,9 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 			if msg.GetType() == rpc.prepareReply {
 				preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
 				isPreemptStr := isPreemptOrPromise(preply)
+				if msg.IsNegative() && bcastPrepare {
+					continue
+				}
 				dlog.AgentPrintfN(id, "Returning Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
 					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
 			}
@@ -116,10 +119,13 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 			if msg.IsNegative() {
 				continue
 			}
+			//go func() { acceptanceChan <- acc }()
+
 			if !bcastAcceptance { // send acceptances to everyone
 				acceptanceChan <- acc
 				continue
 			}
+			dlog.AgentPrintfN(id, "Broadcasting Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue
@@ -140,7 +146,7 @@ func isPreemptOrAccept(areply *stdpaxosproto.AcceptReply) string {
 	return isPreemptStr
 }
 
-func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable) {
+func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool) {
 	dlog.AgentPrintfN(id, "Acceptor handing Accept from Replica %d in instance %d at ballot %d.%d as it can form a quorum", accept.PropID, accept.Instance, accept.Number, accept.PropID)
 	responseC := acc.RecvAcceptRemote(accept)
 	go func() {
@@ -192,22 +198,25 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 				dlog.AgentPrintfN(id, "Returning Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
-
 			if resp.IsNegative() {
+				if resp.IsNegative() && resp.GetType() == rpc.acceptReply && bcastPrepare {
+					continue
+				}
 				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
 				continue
 			}
 
+			//go func() {}()
 			if !bcastAcceptance { // if acceptance broadcast
 				acceptanceChan <- resp.GetSerialisable()
 				continue
 			}
-
+			dlog.AgentPrintfN(id, "Broadcasting Acceptance of %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue
 				}
-				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
+				replica.SendMsg(int32(i), resp.GetType(), resp)
 			}
 			acceptanceChan <- resp.GetSerialisable()
 		}
