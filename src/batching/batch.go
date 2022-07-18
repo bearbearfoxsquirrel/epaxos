@@ -134,13 +134,16 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 	for {
 		select {
 		case v := <-batcher.unbatchedProposals:
+			if !batcher.hasBatch() {
+				onBatch()
+			}
 			batcher.addToBatch(v)
 			if !batcher.isBatchSizeMet() {
 				break
 			}
 			batchC := batcher.getBatch()
 			batcher.batchedProposals <- batchC
-			onBatch()
+			//onBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.startNextBatch()
 			break
@@ -152,7 +155,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			batchC := batcher.getBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
-			onBatch()
+			//onBatch()
 			batcher.startNextBatch()
 			break
 		case <-nudge:
@@ -164,7 +167,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			batchC := batcher.getBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
-			onBatch()
+			//onBatch()
 			batcher.startNextBatch()
 			break
 		}
