@@ -169,6 +169,7 @@ type Replica struct {
 	tryInitPropose     chan proposalmanager.RetryInfo
 	sendFastestQrm     bool
 	nudge              chan struct{}
+	bcastCommit        bool
 }
 
 type ProposalLatencyEstimator struct {
@@ -210,9 +211,10 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	maxAccBatchWait time.Duration, sendPreparesToAllAcceptors bool, minimalProposers bool, timeBasedBallots bool,
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
-	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool, q1 bool) *Replica {
+	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool, q1 bool, bcastCommit bool) *Replica {
 
 	r := &Replica{
+		bcastCommit:                 bcastCommit,
 		nudge:                       make(chan struct{}, maxOpenInstances),
 		sendFastestQrm:              sendFastestAccQrm,
 		Replica:                     replica,
@@ -933,6 +935,9 @@ func (r *Replica) bcastCommitToAll(instance int32, Ballot stdpaxosproto.Ballot, 
 	r.CalculateAlive()
 	if r.bcastAcceptance {
 		//return
+		if r.bcastCommit {
+			return
+		}
 		for q := int32(0); q < int32(r.N); q++ {
 			if q == r.Id {
 				continue
