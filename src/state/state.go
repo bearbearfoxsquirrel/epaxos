@@ -30,6 +30,19 @@ type Command struct {
 	V  Value
 }
 
+func CommandsEqual(a []*Command, b []*Command) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	l := len(a)
+	for i := 0; i < l; i++ {
+		if a[i].String() != b[i].String() {
+			return false
+		}
+	}
+	return true
+}
+
 func NOOP() []Command { return []Command{{NONE, 0, NIL()}} }
 
 func NOOPP() []*Command { return []*Command{{NONE, 0, NIL()}} }

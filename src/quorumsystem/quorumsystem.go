@@ -11,9 +11,13 @@ import (
 
 //todo figure out when to reset bcast attempts, new phase or never?
 
+type AcceptanceQuorumsConstructor interface {
+	ConstructAQ(acceptors []int32) quorum.QuorumTally
+}
+
 type SynodQuorumSystemConstructor interface {
-	Construct(acceptors []int) SynodQuorumSystem
-	//Accept(augment Augmentor)
+	AcceptanceQuorumsConstructor
+	Construct(acceptors []int32) SynodQuorumSystem
 }
 
 type SynodCountingQuorumSystemConstructor struct {
@@ -22,17 +26,21 @@ type SynodCountingQuorumSystemConstructor struct {
 	*genericsmr.Replica
 	BroadcastFastest bool
 	//broadcastStrat BroadcastStrat
-	AllAids          []int
+	AllAids          []int32
 	SendAllAcceptors bool
 }
 
-func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
+func (constructor *SynodCountingQuorumSystemConstructor) Construct(acceptors []int32) SynodQuorumSystem {
+	return constructor.getQrmSystem(acceptors)
+}
+
+func (constructor *SynodCountingQuorumSystemConstructor) getQrmSystem(acc []int32) SynodQuorumSystem {
 	amIInQrm := false
 	if len(acc) == constructor.N {
 		amIInQrm = true
 	} else {
 		for _, aid := range acc {
-			if aid == int(constructor.Id) {
+			if aid == constructor.Id {
 				amIInQrm = true
 				break
 			}
@@ -54,11 +62,21 @@ func (constructor *SynodCountingQuorumSystemConstructor) Construct(acc []int) Sy
 	}
 }
 
+func (constructor *SynodCountingQuorumSystemConstructor) ConstructAQ(acc []int32) quorum.QuorumTally {
+	qrmSys := constructor.getQrmSystem(acc)
+	return qrmSys.GetAcceptanceQuorum()
+}
+
 type SynodGridQuorumSystemConstructor struct {
 	F                int
 	Thrifty          bool
 	BroadcastFastest bool
 	*genericsmr.Replica
+}
+
+func (constructor *SynodGridQuorumSystemConstructor) ConstructAQ(acceptors []int32) quorum.QuorumTally {
+	qrmSys := constructor.getQrmSystem(acceptors)
+	return qrmSys.GetAcceptanceQuorum()
 }
 
 func min(a, b int) int {
@@ -68,19 +86,23 @@ func min(a, b int) int {
 		return b
 	}
 }
-func (constructor *SynodGridQuorumSystemConstructor) Construct(acc []int) SynodQuorumSystem {
+func (constructor *SynodGridQuorumSystemConstructor) Construct(acceptors []int32) SynodQuorumSystem {
+	return constructor.getQrmSystem(acceptors)
+}
+
+func (constructor *SynodGridQuorumSystemConstructor) getQrmSystem(acc []int32) SynodQuorumSystem {
 	groupN := len(acc)
 	sqrt := int(math.Ceil(math.Sqrt(float64(len(acc)))))
 	if sqrt < constructor.F+1 {
 		panic("Acceptor group is too small to tolerate this number of failures")
 	}
-	cols := make([][]int, sqrt)
-	rows := make([][]int, constructor.F+1)
+	cols := make([][]int32, sqrt)
+	rows := make([][]int32, constructor.F+1)
 
 	j := 0
 	k := 0
 
-	for i := 0; i < len(cols); i++ {
+	for i := int32(0); i < int32(len(cols)); i++ {
 		j = min(k+constructor.F+1, groupN)
 		a := acc[k:j]
 		k = j
@@ -89,9 +111,9 @@ func (constructor *SynodGridQuorumSystemConstructor) Construct(acc []int) SynodQ
 	}
 
 	rem := groupN
-	for i := 0; i < len(rows); i++ {
+	for i := int32(0); i < int32(len(rows)); i++ {
 		rowLen := min(sqrt, rem)
-		row := make([]int, rowLen)
+		row := make([]int32, rowLen)
 		for l := 0; l < rowLen; l++ {
 			row[l] = cols[l][i]
 		}
@@ -99,7 +121,7 @@ func (constructor *SynodGridQuorumSystemConstructor) Construct(acc []int) SynodQ
 		//log.Println(row)
 		rows[i] = row
 	}
-	all := make([]int, len(acc))
+	all := make([]int32, len(acc))
 	for i, aid := range acc {
 		all[i] = aid
 	}
@@ -135,35 +157,19 @@ type SynodQuorum interface {
 type SynodQuorumSystem interface {
 	StartPromiseQuorum()
 	StartAcceptanceQuorum()
+	GetAcceptanceQuorum() quorum.QuorumTally
 	QuorumReached() bool
-	//	GetPhase() Phase
-	//  GetResponders() []int
-	AddToQuorum(int)
-	HasAcknowledged(int) bool
-	Broadcast(code uint8, msg fastrpc.Serializable) []int
-	// INSTANCECHOSEN(CHOSEN MSG)
-
-	//	RetryBroadcast(code uint8, msg fastrpc.Serializable)
-	//	BeConstructed(constructor QuorumSystemConstructor)
+	AddToQuorum(int32)
+	HasAcknowledged(int32) bool
+	Broadcast(code uint8, msg fastrpc.Serializable) []int32
 }
-
-//type ToSend interface {
-//	Get() []int
-//}
-//
-//type Broadcaster interface {
-//	Broadcast(toSend ToSend, code uint8, msg fastrpc.Serializable)
-//}
-//
-
-//type
 
 type CountingQuorumSynodQuorumSystem struct {
 	p1size          int
 	p2size          int
 	crtQrm          quorum.CountingQuorumTally
 	thrifty         bool
-	possibleAids    []int
+	possibleAids    []int32
 	possibleAidsMap map[int]struct{}
 	*genericsmr.Replica
 	Phase
@@ -171,30 +177,33 @@ type CountingQuorumSynodQuorumSystem struct {
 	broadcastFastest   bool
 	amIInQrm           bool
 	sendToAllAcceptors bool
-	allAids            []int
+	allAids            []int32
+}
+
+func (qrmSys *CountingQuorumSynodQuorumSystem) GetAcceptanceQuorum() quorum.QuorumTally {
+	return &quorum.CountingQuorumTally{
+		ResponseHolder: quorum.GetResponseHolder(),
+		Threshold:      qrmSys.p2size,
+		Can:            qrmSys.allAids,
+	}
 }
 
 func (qrmSys *CountingQuorumSynodQuorumSystem) QuorumReached() bool {
 	return qrmSys.crtQrm.Reached()
 }
 
-func (qrmSys *CountingQuorumSynodQuorumSystem) AddToQuorum(i int) {
+func (qrmSys *CountingQuorumSynodQuorumSystem) AddToQuorum(i int32) {
 	qrmSys.crtQrm.Add(i)
 }
 
-func (qrmSys *CountingQuorumSynodQuorumSystem) HasAcknowledged(i int) bool {
+func (qrmSys *CountingQuorumSynodQuorumSystem) HasAcknowledged(i int32) bool {
 	return qrmSys.crtQrm.Acknowledged(i)
 }
-
-//
-//func (qrmSys *CountingQuorumSynodQuorumSystem) GetResponders() []int {
-//	return qrmSys.crtQrm.
-//}
 
 func (qrmSys *CountingQuorumSynodQuorumSystem) StartPromiseQuorum() {
 	qrmSys.crtQrm = quorum.CountingQuorumTally{
 		Threshold:      qrmSys.p1size,
-		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
+		ResponseHolder: quorum.GetResponseHolder(),
 	}
 	qrmSys.Phase = PROMISE
 }
@@ -202,12 +211,12 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) StartPromiseQuorum() {
 func (qrmSys *CountingQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
 	qrmSys.crtQrm = quorum.CountingQuorumTally{
 		Threshold:      qrmSys.p2size,
-		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
+		ResponseHolder: quorum.GetResponseHolder(),
 	}
 	qrmSys.Phase = ACCEPTANCE
 }
 
-func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int {
+func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int32 {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("Prepare bcast failed:", err)
@@ -215,7 +224,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 		qrmSys.bcastAttempts++
 	}()
 
-	sentTo := make([]int, 0, qrmSys.N)
+	sentTo := make([]int32, 0, qrmSys.N)
 	if !qrmSys.thrifty { // || bcastatmpts > 0
 		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
 	}
@@ -230,7 +239,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	//log.Println("peer list ", peerList)
 
 	qrmSys.Replica.SendMsg(qrmSys.Id, code, msg)
-	sentTo = append(sentTo, int(qrmSys.Id))
+	sentTo = append(sentTo, qrmSys.Id)
 
 	if len(peerList) < qrmSys.crtQrm.Threshold {
 		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
@@ -243,7 +252,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 					qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
 				}
 				//log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.id)
-				sentTo = append(sentTo, int(preferredAcceptor))
+				sentTo = append(sentTo, preferredAcceptor)
 				break
 			}
 		}
@@ -258,7 +267,7 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc
 	return sentTo // we managed to send to preferredAcceptor quorum so can return
 }
 
-func (qrmSys *CountingQuorumSynodQuorumSystem) bcastMsgToAllAlive(code uint8, msg fastrpc.Serializable, sentTo []int) []int {
+func (qrmSys *CountingQuorumSynodQuorumSystem) bcastMsgToAllAlive(code uint8, msg fastrpc.Serializable, sentTo []int32) []int32 {
 	log.Println("Broadcasting to all")
 	sendToAll(qrmSys.possibleAids, qrmSys.Replica, code, msg)
 	qrmSys.Replica.Mutex.Lock()
@@ -273,33 +282,41 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) bcastMsgToAllAlive(code uint8, ms
 }
 
 type GridQuorumSynodQuorumSystem struct {
-	cols    [][]int
-	rows    [][]int
-	all     []int
+	cols    [][]int32
+	rows    [][]int32
+	all     []int32
 	crtQrm  quorum.SpecificQuorumTally
 	thrifty bool
 	*genericsmr.Replica
 	Phase
-	bcastAttempts    int
+	bcastAttempts    int32
 	broadcastFastest bool
+}
+
+func (qrmSys *GridQuorumSynodQuorumSystem) GetAcceptanceQuorum() quorum.QuorumTally {
+	return &quorum.SpecificQuorumTally{
+		ResponseHolder: quorum.GetResponseHolder(),
+		Qrms:           qrmSys.cols,
+		Can:            qrmSys.all,
+	}
 }
 
 func (qrmSys *GridQuorumSynodQuorumSystem) QuorumReached() bool {
 	return qrmSys.crtQrm.Reached()
 }
 
-func (qrmSys *GridQuorumSynodQuorumSystem) AddToQuorum(i int) {
+func (qrmSys *GridQuorumSynodQuorumSystem) AddToQuorum(i int32) {
 	qrmSys.crtQrm.Add(i)
 }
 
-func (qrmSys *GridQuorumSynodQuorumSystem) HasAcknowledged(i int) bool {
+func (qrmSys *GridQuorumSynodQuorumSystem) HasAcknowledged(i int32) bool {
 	return qrmSys.crtQrm.Acknowledged(i)
 }
 
 func (qrmSys *GridQuorumSynodQuorumSystem) StartPromiseQuorum() {
 	qrmSys.crtQrm = quorum.SpecificQuorumTally{
 		Qrms:           qrmSys.rows,
-		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
+		ResponseHolder: quorum.GetResponseHolder(),
 	}
 	qrmSys.Phase = PROMISE
 }
@@ -307,12 +324,12 @@ func (qrmSys *GridQuorumSynodQuorumSystem) StartPromiseQuorum() {
 func (qrmSys *GridQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
 	qrmSys.crtQrm = quorum.SpecificQuorumTally{
 		Qrms:           qrmSys.cols,
-		ResponseHolder: quorum.ResponseHolder{make(map[int]struct{}), make(map[int]struct{})},
+		ResponseHolder: quorum.GetResponseHolder(),
 	}
 	qrmSys.Phase = ACCEPTANCE
 }
 
-func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int {
+func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int32 {
 	defer func() {
 		if err := recover(); err != nil {
 			dlog.Println("Prepare bcast failed:", err)
@@ -324,9 +341,9 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 		possibleQrms = qrmSys.cols
 	}
 
-	sentTo := make([]int, 0, qrmSys.Replica.N)
+	sentTo := make([]int32, 0, qrmSys.Replica.N)
 	if qrmSys.thrifty { //qrmSys.bcastAttempts < 2 {
-		var selectedQrm []int
+		var selectedQrm []int32
 		if qrmSys.broadcastFastest {
 			selectedQrm = qrmSys.Replica.FromCandidatesSelectBestLatency(possibleQrms)
 		} else {
@@ -335,7 +352,7 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 		if len(selectedQrm) > 0 {
 			for _, aid := range selectedQrm {
 				sentTo = append(sentTo, aid)
-				if aid == int(qrmSys.Replica.Id) {
+				if aid == qrmSys.Replica.Id {
 					continue
 				}
 				qrmSys.Replica.SendMsg(int32(aid), code, msg)
@@ -359,13 +376,13 @@ func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Ser
 	return sentTo
 }
 
-func sendToAll(all []int, replica *genericsmr.Replica, code uint8, msg fastrpc.Serializable) {
+func sendToAll(all []int32, replica *genericsmr.Replica, code uint8, msg fastrpc.Serializable) {
 	// send to possibleAids
 	replica.CalculateAlive()
 	//replica.Mutex.Lock()
 	for _, aid := range all {
-		if int32(aid) != replica.Id {
-			replica.SendMsg(int32(aid), code, msg)
+		if aid != replica.Id {
+			replica.SendMsg(aid, code, msg)
 		}
 	}
 	//replica.Mutex.Unlock()

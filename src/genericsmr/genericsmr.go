@@ -946,12 +946,12 @@ func (r *Replica) getAlivePeers() []int32 {
 	return aliveReps
 }
 
-func (r *Replica) FromCandidatesSelectBestLatency(candidates [][]int) []int {
+func (r *Replica) FromCandidatesSelectBestLatency(candidates [][]int32) []int32 {
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
 
 	livingQrmsIds := r.getLivingFromCandidates(candidates)
-	bestQrm := -1
+	bestQrm := int32(-1)
 	bestScore := int32(math.MaxInt32)
 	for _, id := range livingQrmsIds {
 		qrm := candidates[id]
@@ -965,32 +965,32 @@ func (r *Replica) FromCandidatesSelectBestLatency(candidates [][]int) []int {
 		}
 	}
 	if bestQrm == -1 {
-		return []int{}
+		return []int32{}
 	}
 	return candidates[bestQrm]
 }
 
-func (r *Replica) FromCandidatesSelectRandom(candidates [][]int) []int {
+func (r *Replica) FromCandidatesSelectRandom(candidates [][]int32) []int32 {
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
 
 	livingQrmsIds := r.getLivingFromCandidates(candidates)
 	if len(livingQrmsIds) == 0 {
-		return []int{}
+		return []int32{}
 	}
 	return candidates[livingQrmsIds[rand.Intn(len(livingQrmsIds))]]
 }
 
-func (r *Replica) getLivingFromCandidates(candidates [][]int) []int {
+func (r *Replica) getLivingFromCandidates(candidates [][]int32) []int32 {
 	r.calcAliveInternal()
-	livingQuorums := make([]int, 0, len(candidates))
+	livingQuorums := make([]int32, 0, len(candidates))
 	for i, qrm := range candidates {
 		for j := 0; j < len(qrm); j++ {
 			if !r.Alive[qrm[j]] && int32(qrm[j]) != r.Id { // we are assumed to be alive but will appear dead
 				break
 			}
 		}
-		livingQuorums = append(livingQuorums, i)
+		livingQuorums = append(livingQuorums, int32(i))
 	}
 	return livingQuorums
 }

@@ -87,8 +87,8 @@ type Eager struct {
 // todo, if got proposal for ix, and have give reservations for ix, then move to icrt + 1 for reservations
 
 func EagerForwardInductionProposalManagerNew(n int32, id int32, signal *EagerSig, iManager SingleInstanceManager, backoffManager *BackoffManager, replica *genericsmr.Replica, stateRPC uint8) *Eager {
-	ids := make([]int, n)
-	for i := 0; i < int(n); i++ {
+	ids := make([]int32, n)
+	for i := int32(0); i < n; i++ {
 		ids[i] = i
 	}
 	e := &Eager{
@@ -106,8 +106,8 @@ func EagerForwardInductionProposalManagerNew(n int32, id int32, signal *EagerSig
 		//propReservationke([][]int32, n),
 		InstanceSetMapper: instanceagentmapper.InstanceSetMapper{
 			Ids: ids,
-			G:   int(n),
-			N:   int(n),
+			G:   n,
+			N:   n,
 		},
 	}
 	//for i := 0; i < int(n); i++ {
@@ -359,24 +359,24 @@ func (manager *Eager) LearnOfBallot(iSpace *[]*PBK, inst int32, ballot lwcproto.
 	// actual proposal
 	manager.HandleNewInstance(iSpace, inst)
 	pbk := (*iSpace)[inst]
-	manager.checkIfLostReservation(ballot, inst)
+	//manager.checkIfLostReservation(ballot, inst)
 	manager.EagerSig.CheckOngoingBallot(pbk, inst, ballot, phase)
 
-	oldProp := int32(pbk.MaxKnownBal.PropID)
-	newProp := int32(ballot.PropID)
+	//oldProp := int32(pbk.MaxKnownBal.PropID)
+	//newProp := int32(ballot.PropID)
 	acked := manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 
-	if !acked {
-		// handle giving reservation/preempt
-		manager.giveReservationTo(iSpace, inst, newProp, "is preempted")
-		return acked
-	}
+	//if !acked {
+	// handle giving reservation/preempt
+	//manager.giveReservationTo(iSpace, inst, newProp, "is preempted")
+	//return acked
+	//}
 
 	// handle old proposer preempt
-	if oldProp != -1 && oldProp != manager.id && oldProp != int32(ballot.PropID) {
-		manager.giveReservationTo(iSpace, inst, newProp, "has been preempted by newely recevied proposal")
-		// give reservation to
-	}
+	//if oldProp != -1 && oldProp != manager.id && oldProp != int32(ballot.PropID) {
+	//	manager.giveReservationTo(iSpace, inst, newProp, "has been preempted by newely recevied proposal")
+	//	give reservation to
+	//}
 
 	// if inst + 1 is reserved, then don't give out
 
@@ -519,6 +519,7 @@ func (manager *SimpleGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, ins
 	pbk := (*instanceSpace)[inst]
 	manager.OpenInstSignal.CheckChosen(pbk, inst, at)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, at)
+	manager.BackoffManager.CancelBackoff(inst)
 
 }
 
@@ -561,9 +562,9 @@ func (manager *MappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK, sta
 			continue
 		}
 
-		mapped := manager.InstanceAgentMapper.GetGroup(int(manager.crtInstance))
+		mapped := manager.InstanceAgentMapper.GetGroup(manager.crtInstance)
 		dlog.AgentPrintfN(manager.id, "Proposer group for instance %d is %v", manager.crtInstance, mapped)
-		inG := inGroup(mapped, int(manager.id))
+		inG := inGroup(mapped, manager.id)
 		if !inG {
 			dlog.AgentPrintfN(manager.id, "Initially backing off instance %d as we are not mapped to it", manager.crtInstance)
 			(*instanceSpace)[manager.crtInstance].Status = BACKING_OFF
@@ -579,7 +580,7 @@ func (manager *MappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK, sta
 	return opened
 }
 
-func inGroup(mapped []int, id int) bool {
+func inGroup(mapped []int32, id int32) bool {
 	inG := false
 	for _, v := range mapped {
 		if v == id {
@@ -624,22 +625,22 @@ func (manager *MappedGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, ins
 
 type DynamicAgentMapper interface {
 	instanceagentmapper.InstanceAgentMapper
-	SetGroup(g int)
+	SetGroup(g int32)
 }
 
 type DynamicInstanceSetMapper struct {
 	instanceagentmapper.InstanceSetMapper
 }
 
-func (m *DynamicInstanceSetMapper) SetGroup(g int) {
+func (m *DynamicInstanceSetMapper) SetGroup(g int32) {
 	m.G = g
 }
 
 type DynamicMappedGlobalManager struct {
 	*MappedGlobalManager
-	n             int
-	f             int
-	curG          int
+	n             int32
+	f             int32
+	curG          int32
 	conflictEWMA  float64
 	ewmaWeight    float64
 	conflictsSeen map[int32]map[lwcproto.ConfigBal]struct{}
@@ -647,14 +648,14 @@ type DynamicMappedGlobalManager struct {
 	// want to signal that we do not want to make proposals anymore
 }
 
-func DynamicMappedProposerManagerNew(proposalManager *SimpleGlobalManager, iMan SingleInstanceManager, aMapper DynamicAgentMapper, n int32, f int) *DynamicMappedGlobalManager {
+func DynamicMappedProposerManagerNew(proposalManager *SimpleGlobalManager, iMan SingleInstanceManager, aMapper DynamicAgentMapper, n int32, f int32) *DynamicMappedGlobalManager {
 	mappedDecider := MappedProposersProposalManagerNew(proposalManager, iMan, aMapper)
 	dMappedDecicider := &DynamicMappedGlobalManager{
 		MappedGlobalManager: mappedDecider,
 		DynamicAgentMapper:  aMapper,
-		n:                   int(n),
+		n:                   n,
 		f:                   f,
-		curG:                int(n),
+		curG:                n,
 		conflictEWMA:        float64(0),
 		ewmaWeight:          0.1,
 		conflictsSeen:       make(map[int32]map[lwcproto.ConfigBal]struct{}),
@@ -708,11 +709,11 @@ func (decider *DynamicMappedGlobalManager) updateGroupSize() {
 
 	dlog.AgentPrintfN(decider.id, "Current proposer group is of size %d (EWMA is %f)", decider.curG, decider.conflictEWMA)
 	if decider.conflictEWMA > 0.2 {
-		newG = int(mapper(decider.conflictEWMA, 1, 0, int32(decider.f+1), int32(decider.curG)))
+		newG = mapper(decider.conflictEWMA, 1, 0, decider.f+1, decider.curG)
 		decider.conflictEWMA = 0
 	}
 	if decider.conflictEWMA < 0 {
-		newG = int(mapper(decider.conflictEWMA, 0, -1, int32(decider.curG), int32(decider.n)))
+		newG = mapper(decider.conflictEWMA, 0, -1, decider.curG, decider.n)
 		decider.conflictEWMA = 0
 	}
 

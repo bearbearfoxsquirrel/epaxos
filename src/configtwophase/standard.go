@@ -1088,14 +1088,14 @@ package configtwophase
 //
 //				dlog.Printf("%d client value(s) received and proposed in instance %d which was recovered \n", len(pbk.clientProposals), inst)
 //				if r.doStats {
-//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
-//					r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value ProposedBatch", 1)
+//					r.TimeseriesStats.Update("Times Client Values ProposedBatch", 1)
 //				}
 //				break
 //			default:
 //				if r.doStats {
-//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
-//					r.TimeseriesStats.Update("Times Noops Proposed", 1)
+//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop ProposedBatch", 1)
+//					r.TimeseriesStats.Update("Times Noops ProposedBatch", 1)
 //				}
 //
 //				pbk.cmds = state.NOOP()
@@ -1105,8 +1105,8 @@ package configtwophase
 //	} else {
 //		whoseCmds = pbk.whoseCmds
 //		if r.doStats {
-//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)
-//			r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
+//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value ProposedBatch", 1)
+//			r.TimeseriesStats.Update("Times Previous Value ProposedBatch", 1)
 //		}
 //	}
 //

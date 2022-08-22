@@ -14,20 +14,20 @@ import (
 //	GetAwaitingGroup(inst int32) []int32
 //}
 type ProposerGroupGetter interface {
-	GetGroup(inst int32) []int // change to map of int32[]struct?
+	GetGroup(inst int32) []int32 // change to map of int32[]struct?
 }
 
 type SimpleProposersAwaitingGroup struct {
-	aids []int
+	aids []int32
 }
 
-func SimpleProposersAwaitingGroupGetterNew(aids []int) *SimpleProposersAwaitingGroup {
+func SimpleProposersAwaitingGroupGetterNew(aids []int32) *SimpleProposersAwaitingGroup {
 	return &SimpleProposersAwaitingGroup{
 		aids: aids,
 	}
 }
 
-func (g *SimpleProposersAwaitingGroup) GetGroup(inst int32) []int {
+func (g *SimpleProposersAwaitingGroup) GetGroup(inst int32) []int32 {
 	return g.aids
 }
 
@@ -46,16 +46,16 @@ func MinimalProposersAwaitingGroupNew(simpleG *SimpleProposersAwaitingGroup, mak
 	}
 }
 
-func (g *MinimalProposersAwaitingGroup) GetGroup(inst int32) []int {
+func (g *MinimalProposersAwaitingGroup) GetGroup(inst int32) []int32 {
 	ongoingProposals := g.MinimalProposersShouldMaker.GetOngoingProposals(inst)
 	if int32(len(ongoingProposals)) < g.f+1 {
 		return g.SimpleProposersAwaitingGroup.GetGroup(inst)
 	}
 	topProps := make([]lwcproto.ConfigBal, 0, len(ongoingProposals))
-	topProposers := make([]int, 0, len(ongoingProposals))
+	topProposers := make([]int32, 0, len(ongoingProposals))
 	for proposer, bal := range g.GetOngoingProposals(inst) {
 		topProps = append(topProps, bal)
-		topProposers = append(topProposers, int(proposer))
+		topProposers = append(topProposers, int32(proposer))
 	}
 	sort.Slice(topProposers, func(i, j int) bool {
 		return topProps[j].GreaterThan(topProps[i]) || topProps[j].Equal(topProps[i])
@@ -74,8 +74,8 @@ func MappedProposersAwaitingGroupNew(mapper instanceagentmapper.InstanceAgentMap
 	}
 }
 
-func (decider *MappedProposersAwaitingGroup) GetGroup(inst int32) []int {
-	return decider.InstanceAgentMapper.GetGroup(int(inst))
+func (decider *MappedProposersAwaitingGroup) GetGroup(inst int32) []int32 {
+	return decider.InstanceAgentMapper.GetGroup(inst)
 }
 
 type MinimalMappedProposersAwaitingGroup struct {
@@ -90,9 +90,9 @@ func MinimalMappedProposersAwaitingGroupNew(minimalGroup MinimalProposersAwaitin
 	}
 }
 
-func (decider *MinimalMappedProposersAwaitingGroup) GetGroup(inst int32) []int {
+func (decider *MinimalMappedProposersAwaitingGroup) GetGroup(inst int32) []int32 {
 	minimalG := decider.MinimalProposersAwaitingGroup.GetGroup(inst)
-	if len(minimalG) == int(decider.f+1) {
+	if int32(len(minimalG)) == decider.f+1 {
 		return minimalG
 	}
 	return decider.MappedProposersAwaitingGroup.GetGroup(inst)
@@ -167,7 +167,7 @@ func (patient *patientProposals) getMaxExpectedLatency(inst int32) time.Duration
 		lat := time.Duration(ewma)
 		inG := false
 		for _, gMem := range g {
-			if gMem == i {
+			if gMem == int32(i) {
 				inG = true
 				break
 			}

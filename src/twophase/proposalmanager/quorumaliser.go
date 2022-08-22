@@ -27,7 +27,7 @@ type LearnerQuorumaliser interface {
 
 type AcceptorQrmInfo interface {
 	IsInQrm(inst int32, aid int32) bool
-	GetQrm(inst int32) []int
+	GetQrm(inst int32) []int32
 }
 
 ////////////////////////////////
@@ -35,7 +35,7 @@ type AcceptorQrmInfo interface {
 ///////////////////////////////
 type Standard struct {
 	quorumsystem.SynodQuorumSystemConstructor
-	Aids []int
+	Aids []int32
 	MyID int32
 }
 
@@ -55,16 +55,59 @@ func (qrmliser *Standard) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcp
 	quorumaliser.StartAcceptanceQuorum()
 }
 
-func (qrmliser *Standard) GetQrm(inst int32) []int {
+func (qrmliser *Standard) GetQrm(inst int32) []int32 {
 	return qrmliser.Aids
 }
 
 //////////////////////////////////
 // MINIMAL
 /////////////////////////////////
+
+//type MinimalSpecific struct {
+//	acceptorGroups [][]int32
+//	quorumsystem.SynodQuorumSystemConstructor
+//	GroupGetter
+//}
+//
+//func (q *MinimalSpecific) Add(id int32) {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (q *MinimalSpecific) Reached() bool {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (q *MinimalSpecific) Acknowledged(i int32) bool {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (q *MinimalSpecific) IsInQrm(inst int32, aid int32) bool {
+//	gi := q.gForInst(inst)
+//	g := q.acceptorGroups[gi]
+//	for i := 0; i < len(g); i++ {
+//		if g[i] == aid {
+//			return true
+//		}
+//	}
+//	return false
+//}
+//
+//func (q *MinimalSpecific) gForInst(inst int32) int32 {
+//	return inst % int32(len(q.acceptorGroups))
+//}
+//
+//func (q *MinimalSpecific) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
+//	quorumaliser := q.SynodQuorumSystemConstructor.Construct(q.acceptorGroups[q.gForInst(inst)])
+//	pbk.Qrms[pbk.PropCurBal] = quorumaliser
+//	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
+//}
+
 type Minimal struct {
 	AcceptorMapper instanceagentmapper.InstanceAgentMapper
-	MapperCache    map[int32][]int
+	MapperCache    map[int32][]int32
 	quorumsystem.SynodQuorumSystemConstructor
 	MyID int32
 }
@@ -72,7 +115,7 @@ type Minimal struct {
 func (qrmliser *Minimal) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
 	//make quorum
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
-		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
+		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(inst)
 	}
 	group := qrmliser.MapperCache[inst]
 	dlog.AgentPrintfN(qrmliser.MyID, "Minimal acceptor group for instance %d is %v", inst, group)
@@ -85,7 +128,7 @@ func (qrmliser *Minimal) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
 func (qrmliser *Minimal) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcproto.ConfigBal) {
 	//make quorum
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
-		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
+		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(inst)
 	}
 	group := qrmliser.MapperCache[inst]
 	dlog.AgentPrintfN(qrmliser.MyID, "Minimal acceptor group for instance %d is %v", inst, group)
@@ -97,11 +140,11 @@ func (qrmliser *Minimal) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcpr
 
 func (qrmliser *Minimal) IsInQrm(inst int32, aid int32) bool {
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
-		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
+		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(inst)
 	}
 
 	for _, aidInQrm := range qrmliser.MapperCache[inst] {
-		if int(aid) == aidInQrm {
+		if aid == aidInQrm {
 			return true
 		}
 	}
@@ -109,9 +152,9 @@ func (qrmliser *Minimal) IsInQrm(inst int32, aid int32) bool {
 	return false
 }
 
-func (qrmliser *Minimal) GetQrm(inst int32) []int {
+func (qrmliser *Minimal) GetQrm(inst int32) []int32 {
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
-		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(int(inst))
+		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(inst)
 	}
 	return qrmliser.MapperCache[inst]
 }

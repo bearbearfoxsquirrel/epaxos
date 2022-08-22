@@ -327,7 +327,7 @@ func main() {
 			*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
 			*proactivepreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
-			*mappedProposersNum, int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
+			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt)
 		runnable = rep
 		rpc.Register(rep)

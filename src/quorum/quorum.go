@@ -1,29 +1,44 @@
 package quorum
 
 type QuorumTally interface {
-	Add(id int)
-	Remove()
-	Clear()
+	Add(id int32)
 	Reached() bool
-	//	GetAcknowlegers() []int
-	Acknowledged(int) bool
-	//getWhoCanFormQuorums() [][]int
+	Acknowledged(int32) bool
+	CanFormQuorum(int32) bool
+	//GetQrm() []int32
+}
+
+func (qrm *SpecificQuorumTally) CanFormQuorum(aid int32) bool {
+	l32 := int32(len(qrm.Can))
+	for i := int32(0); i < l32; i++ {
+		if aid == i {
+			return true
+		}
+	}
+	return false
+}
+
+//func (qrm *SpecificQuorumTally) Get() {
+//	qr
+//}
+
+func (qrm *CountingQuorumTally) CanFormQuorum(aid int32) bool {
+	l32 := int32(len(qrm.Can))
+	for i := int32(0); i < l32; i++ {
+		if aid == i {
+			return true
+		}
+	}
+	return false
 }
 
 type CountingQuorumTally struct {
 	ResponseHolder
 	Threshold int
+	Can       []int32
 }
 
-func (qrm *CountingQuorumTally) Remove() {
-	panic("implement me")
-}
-
-func (qrm *CountingQuorumTally) Clear() {
-	qrm.ResponseHolder.clear()
-}
-
-func (qrm *CountingQuorumTally) Add(aid int) {
+func (qrm *CountingQuorumTally) Add(aid int32) {
 	qrm.ResponseHolder.addAck(aid)
 }
 
@@ -31,12 +46,7 @@ func (qrm *CountingQuorumTally) Reached() bool {
 	return len(qrm.getAcks()) >= qrm.Threshold
 }
 
-//
-//func (qrm *CountingQuorumTally) GetAcknowledgers() []int {
-//	return
-//}
-
-func (qrm *CountingQuorumTally) Acknowledged(aid int) bool {
+func (qrm *CountingQuorumTally) Acknowledged(aid int32) bool {
 	if _, exists := qrm.getAcks()[aid]; exists {
 		return true
 	} else {
@@ -46,24 +56,16 @@ func (qrm *CountingQuorumTally) Acknowledged(aid int) bool {
 
 type SpecificQuorumTally struct {
 	ResponseHolder
-	Qrms [][]int
+	Qrms [][]int32
+	Can  []int32
 }
 
-func (qrm *SpecificQuorumTally) Remove() {
-	panic("implement me")
-}
-
-func (qrm *SpecificQuorumTally) Add(id int) {
+func (qrm *SpecificQuorumTally) Add(id int32) {
 	qrm.ResponseHolder.addAck(id)
-}
-
-func (qrm *SpecificQuorumTally) Clear() {
-	qrm.ResponseHolder.clear()
 }
 
 func (qrm *SpecificQuorumTally) Reached() bool {
 	acks := qrm.getAcks()
-
 	if len(acks) < len(qrm.Qrms) {
 		return false
 	}
@@ -80,62 +82,10 @@ func (qrm *SpecificQuorumTally) Reached() bool {
 	return false
 }
 
-func (qrm *SpecificQuorumTally) Acknowledged(aid int) bool {
+func (qrm *SpecificQuorumTally) Acknowledged(aid int32) bool {
 	if _, exists := qrm.getAcks()[aid]; exists {
 		return true
 	} else {
 		return false
 	}
 }
-
-//
-//type GridQuorum struct {
-//	ResponseHolder
-//	rows []int
-//	columns []int
-//}
-//
-//func (qrm *GridQuorum) Add(id int) {
-//	qrm.ResponseHolder.addAck(id)
-//}
-//
-//func (qrm *GridQuorum) Clear() {
-//	qrm.ResponseHolder.Clear()
-//}
-//
-//func (qrm *GridQuorum) Reached() bool {
-//	Acks := qrm.getAcks()
-//
-//	//	if len(Acks) < qrm.rowLen() && len(Acks) < qrm.colLen() {
-//	//		return false
-//	//	}
-//
-//	for _, thres := range qrm.rows {
-//		if reflect.DeepEqual(Acks, thres) {return true}
-//	}
-//
-//	for _, thres := range qrm.columns {
-//		if reflect.DeepEqual(Acks, thres) {return true}
-//	}
-//	return false
-//}
-//
-//func (qrm *GridQuorum) rowLen() int {
-//	return len(qrm.columns)
-//}
-//
-//func (qrm *GridQuorum) colLen() int {
-//	return len(qrm.rows)
-//}
-
-// get quorum
-
-// quorum Reached
-
-// quorum Clear
-
-// quorum Add
-
-// promise quorum
-
-// acceptance quorum

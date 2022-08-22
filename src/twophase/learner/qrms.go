@@ -1,0 +1,54 @@
+package learner
+
+import (
+	"dlog"
+	"instanceagentmapper"
+	"quorum"
+	"quorumsystem"
+)
+
+type AQConstructor interface {
+	CreateTally(inst int32) quorum.QuorumTally
+}
+
+type Minimal struct {
+	AcceptorMapper instanceagentmapper.InstanceAgentMapper
+	quorumsystem.AcceptanceQuorumsConstructor
+	MyID int32
+}
+
+func GetMinimalGroupAQConstructorr(n, f int32, ids []int32, constructor quorumsystem.AcceptanceQuorumsConstructor, me int32) Minimal {
+	return Minimal{
+		AcceptorMapper: &instanceagentmapper.InstanceSetMapper{
+			Ids: ids,
+			G:   f + 1,
+			N:   n,
+		},
+		AcceptanceQuorumsConstructor: constructor,
+		MyID:                         me,
+	}
+}
+
+func (q *Minimal) CreateTally(inst int32) quorum.QuorumTally {
+	group := q.AcceptorMapper.GetGroup(inst)
+	dlog.AgentPrintfN(q.MyID, "Minimal acceptor group for instance %d is %v", inst, group)
+	return q.AcceptanceQuorumsConstructor.ConstructAQ(group)
+}
+
+type Standard struct {
+	quorumsystem.AcceptanceQuorumsConstructor
+	Aids []int32
+	MyID int32
+}
+
+func GetStandardGroupAQConstructorr(ids []int32, constructor quorumsystem.AcceptanceQuorumsConstructor, me int32) Standard {
+	return Standard{
+		AcceptanceQuorumsConstructor: constructor,
+		Aids:                         ids,
+		MyID:                         me,
+	}
+}
+
+func (q *Standard) CreateTally(inst int32) quorum.QuorumTally {
+	return q.AcceptanceQuorumsConstructor.ConstructAQ(q.Aids)
+}

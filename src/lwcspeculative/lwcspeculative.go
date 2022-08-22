@@ -461,7 +461,7 @@ package lwcspeculative
 //		commitCatchUp:          commitCatchUp,
 //		cmpCommitExec:          cmpCmtExec,
 //		maxBatchedProposalVals: maxProposalVals,
-//		stats:                  ServerStatsNew([]string{"Proposed Noops", "Proposed Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
+//		stats:                  ServerStatsNew([]string{"ProposedBatch Noops", "ProposedBatch Instances with Values", "Preemptions", "Requeued Proposals"}, fmt.Sprintf("./server-%d-stats.txt", id)),
 //		requeueOnPreempt:       requeueOnPreempt,
 //		reducePropConfs:        reducePropConfs,
 //		bcastAcceptance:        bcastAcceptance,
@@ -861,13 +861,13 @@ package lwcspeculative
 //					pbk.cmds[i] = cliProp.Command
 //				}
 //				log.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
-//				r.stats.Update("Proposed Instances with Values", 1)
+//				r.stats.Update("ProposedBatch Instances with Values", 1)
 //				break
 //			default:
 //				if r.shouldNoop(proposalInfo.inst) {
 //					pbk.cmds = state.NOOP()
 //					log.Println("Proposing noop")
-//					r.stats.Update("Proposed Noops", 1)
+//					r.stats.Update("ProposedBatch Noops", 1)
 //					break
 //				} else {
 //					go func() {
@@ -1657,7 +1657,7 @@ package lwcspeculative
 //					batched++
 //				}
 //				log.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
-//				r.stats.Update("Proposed Instances with Values", 1)
+//				r.stats.Update("ProposedBatch Instances with Values", 1)
 //				break
 //
 //			//switch cliProp := r.clientValueQueue.TryDequeue(); {
@@ -1680,7 +1680,7 @@ package lwcspeculative
 //			//		pbk.cmds[i] = cliProp.Command
 //			//	}
 //			//	dlog.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
-//			//	r.stats.Update("Proposed Instances with Values", 1)
+//			//	r.stats.Update("ProposedBatch Instances with Values", 1)
 //			//
 //			//	break
 //			default:
@@ -1699,7 +1699,7 @@ package lwcspeculative
 //					if r.shouldNoop(inst) {
 //						pbk.cmds = state.NOOP()
 //						dlog.Println("Proposing noop")
-//						r.stats.Update("Proposed Noops", 1)
+//						r.stats.Update("ProposedBatch Noops", 1)
 //					} else {
 //						return
 //					}

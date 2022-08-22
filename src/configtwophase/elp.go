@@ -777,8 +777,8 @@ package configtwophase
 //				}
 //				log.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
 //				if r.doStats {
-//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Client Value Proposed", 1)
-//					r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Client Value ProposedBatch", 1)
+//					r.TimeseriesStats.Update("Times Client Values ProposedBatch", 1)
 //				}
 //				break
 //			default:
@@ -786,7 +786,7 @@ package configtwophase
 //					pbk.cmds = state.NOOP()
 //					log.Println("Proposing noop")
 //					if r.doStats {
-//						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Noop Proposed", 1)
+//						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, proposalInfo.inst}, "Noop ProposedBatch", 1)
 //						r.TimeseriesStats.Update("Times Noops Propose", 1)
 //					}
 //					break
@@ -1484,8 +1484,8 @@ package configtwophase
 //				log.Printf("%d client value(s) proposed in instance %d \n", len(pbk.clientProposals), inst)
 //
 //				if r.doStats {
-//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
-//					r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+//					r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value ProposedBatch", 1)
+//					r.TimeseriesStats.Update("Times Client Values ProposedBatch", 1)
 //				}
 //				break
 //
@@ -1506,8 +1506,8 @@ package configtwophase
 //						pbk.cmds = state.NOOP()
 //						dlog.Println("Proposing noop")
 //						if r.doStats {
-//							r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
-//							r.TimeseriesStats.Update("Times Noops Proposed", 1)
+//							r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop ProposedBatch", 1)
+//							r.TimeseriesStats.Update("Times Noops ProposedBatch", 1)
 //						}
 //					} else {
 //						return
@@ -1517,8 +1517,8 @@ package configtwophase
 //		}
 //	} else {
 //		if r.doStats {
-//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)
-//			r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
+//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value ProposedBatch", 1)
+//			r.TimeseriesStats.Update("Times Previous Value ProposedBatch", 1)
 //		}
 //		whoseCmds = pbk.whoseCmds
 //	}

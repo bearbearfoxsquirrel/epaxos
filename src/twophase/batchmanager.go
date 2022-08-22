@@ -6,6 +6,7 @@ import (
 	"lwcproto"
 	"state"
 	"stats"
+	"stdpaxosproto"
 	"twophase/proposalmanager"
 )
 
@@ -14,7 +15,7 @@ type ValuePreemptedHandler interface {
 }
 
 type AcceptedValueHandler interface {
-	learnOfAcceptedBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32)
+	learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32)
 }
 
 type ValueChosenHandler interface {
@@ -22,8 +23,13 @@ type ValueChosenHandler interface {
 }
 
 type ClientBatchProposedHandler interface {
-	intendingToProposeBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch)
+	proposingBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch)
 }
+
+//
+//type Executor interface {
+//	Learnt(inst int32, cmds []*state.Command, whosecmds int32)
+//}
 
 // ProposedClientValuesManager handles information that could affect proposed values and uses it to inform future values to be
 // proposed
@@ -52,7 +58,7 @@ func ProposedClientValuesManagerNew(id int32, tsStats *stats.TimeseriesStats, do
 	}
 }
 
-func (manager *SimpleBatchManager) intendingToProposeBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
+func (manager *SimpleBatchManager) proposingBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
 	pbk.PutBatch(batch)
 }
 
@@ -65,9 +71,9 @@ func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst 
 	if pbk.Status == proposalmanager.NOT_BEGUN || pbk.Status == proposalmanager.CLOSED {
 		return
 	}
-	//if pbk.Status == proposalmanager.PROPOSING {
-	//	return
-	//}
+	if pbk.Status == proposalmanager.PROPOSING {
+		return
+	}
 	if pbk.PropCurBal.GreaterThan(ballot) || pbk.PropCurBal.Equal(ballot) {
 		return
 	}
@@ -83,7 +89,7 @@ func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst 
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32) {
 	if pbk.ClientProposals == nil {
 		return
 	}
@@ -104,7 +110,13 @@ func (manager *SimpleBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.PB
 	//todo log
 	manager.Requeue(pbk.ClientProposals)
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
+	//pbk.Cmds = cmd
+	//pbk.WhoseCmds = whoseCmds
 }
+
+//func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+//
+//}
 
 func (manager *SimpleBatchManager) setRequeuedAt(inst int32, bal lwcproto.ConfigBal) {
 	if _, e := manager.requeuedAt[inst]; !e {
@@ -122,16 +134,22 @@ const (
 )
 
 func whatHappenedToClientProposals(pbk *proposalmanager.PBK, whoseCmds int32, myId int32) ClientProposalStory {
-	if whoseCmds != myId && pbk.ClientProposals != nil {
-		return ProposedButNotChosen
-	} else if pbk.ClientProposals != nil && whoseCmds == myId {
-		return ProposedAndChosen
-	} else {
+	if pbk.ClientProposals == nil {
 		return NotProposed
 	}
+	if whoseCmds != myId {
+		return ProposedButNotChosen
+	}
+	return ProposedAndChosen
 }
 
 func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command) {
+	//if pbk.Status == proposalmanager.CLOSED {
+	//	return
+	//}
+	//if pbk.ClientProposals == nil {
+	//	return
+	//}
 	if pbk.WhoseCmds == manager.id && pbk.ClientProposals == nil {
 		panic("client values chosen but we won't recognise that")
 	}
@@ -145,14 +163,46 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 		if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; !e {
 			manager.Requeue(pbk.ClientProposals)
 		}
-		pbk.ClientProposals = nil
 		break
 	case ProposedAndChosen:
 		dlog.AgentPrintfN(manager.id, "%d client value(s) chosen in instance %d", len(pbk.ClientProposals.GetCmds()), inst)
 		break
 	}
+	pbk.ClientProposals = nil
+	//pbk.Cmds = nil
 	delete(manager.requeuedAt, inst)
 }
+
+type ValueSelector interface {
+	LearnOfBallotValue(inst int32, ballot stdpaxosproto.Ballot, cmd []*state.Command, whose int32, from int32)
+	LearnOfBallotAccepted(inst int32, ballot stdpaxosproto.Ballot, cmd []*state.Command, whose int32, from int32)
+	ProposingClientValue(inst int32, batch batching.ProposalBatch)
+}
+
+//type ballotValue struct {
+//	stdpaxosproto.Ballot
+//	cmd []*state.Command
+//}
+//
+//type StandardValueSelector struct {
+//	Value []map[int32]ballotValue
+//
+//}
+//
+//func (s *StandardValueSelector) LearnOfBallotValue(inst int32, ballot stdpaxosproto.Ballot, cmd []*state.Command, whose int32, from int32) {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (s *StandardValueSelector) LearnOfBallotAccepted(inst int32, ballot stdpaxosproto.Ballot, cmd []*state.Command, whose int32, from int32) {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (s *StandardValueSelector) ProposingClientValue(inst int32, batch batching.ProposalBatch) {
+//	//TODO implement me
+//	panic("implement me")
+//}
 
 // MyBatchLearner Wants to answer whether a batch has been chosen or not
 //
@@ -182,7 +232,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 //	}
 //}
 //
-//func (manager *HedgedBetsBatchManager) intendingToProposeBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
+//func (manager *HedgedBetsBatchManager) proposingBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
 //	// this counts up how many times we are attempting to tryPropose a batch at the same time
 //	if pbk.Status == proposalmanager.CLOSED {
 //		panic("Should not be attempting instance that is chosen")
@@ -254,7 +304,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 //}
 //
 //// is this after or before
-//func (manager *HedgedBetsBatchManager) learnOfAcceptedBallot(pbk *proposalmanager.PBK, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
+//func (manager *HedgedBetsBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
 //	// consider the instance preempted?
 //	if pbk.ClientProposals == nil {
 //		return
@@ -344,8 +394,8 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 //func (manager *HedgedBetsBatchManager) tryPropose(pbk *PBK, inst int32) bool {
 //	if !pbk.ProposeValueBal.IsZero() {
 //		//if r.doStats {
-//		//	r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value Proposed", 1)
-//		//	r.TimeseriesStats.Update("Times Previous Value Proposed", 1)
+//		//	r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Previous Value ProposedBatch", 1)
+//		//	r.TimeseriesStats.Update("Times Previous Value ProposedBatch", 1)
 //		//	r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, inst}, pbk.PropCurBal, len(pbk.Cmds))
 //		//}
 //		dlog.AgentPrintfN(manager.id, "Proposing previous value from ballot %d.%d with whose command %d in instance %d at ballot %d.%d",
@@ -361,7 +411,7 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 //					if !manager.shouldPropose(pbk, inst, b) {
 //						return
 //					}
-//					manager.intendingToProposeBatch(pbk, inst, b)
+//					manager.proposingBatch(pbk, inst, b)
 //					foundVal = true
 //				}
 //				manager.Queueing.Dequeued(b, proposeF)
@@ -380,9 +430,9 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 //		}
 //		setProposingValue(pbk, r.Id, pbk.PropCurBal, pbk.ClientProposals.GetCmds())
 //		if r.doStats {
-//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value Proposed", 1)
+//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value ProposedBatch", 1)
 //			r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.PropCurBal, len(pbk.Cmds))
-//			r.TimeseriesStats.Update("Times Client Values Proposed", 1)
+//			r.TimeseriesStats.Update("Times Client Values ProposedBatch", 1)
 //		}
 //		dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d received and proposed in instance %d at ballot %d.%d \n", len(pbk.ClientProposals.GetCmds()), pbk.ClientProposals.GetUID(), inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 //	}

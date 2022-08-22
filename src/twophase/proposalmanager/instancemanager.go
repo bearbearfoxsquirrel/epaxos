@@ -90,9 +90,6 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, bal
 	// NOTE: HERE WE WANT TO INCREASE BACKOFF EACH TIME THERE IS A NEW PROPOSAL SEEN
 	backedOff, botime := man.BackoffManager.CheckAndHandleBackoff(inst, pbk.PropCurBal, ballot, phase)
 
-	//if ballot.IsZero() {
-	//	panic("askldjfalskdjf")
-	//}
 	if backedOff {
 		dlog.AgentPrintfN(man.id, "Backing off instance %d for %d microseconds because our current ballot %d.%d is preempted by ballot %d.%d",
 			inst, botime, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, ballot.Number, ballot.PropID)

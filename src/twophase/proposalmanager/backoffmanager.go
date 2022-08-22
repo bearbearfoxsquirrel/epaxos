@@ -29,10 +29,10 @@ type BackoffInfo struct {
 type BackoffManager struct {
 	currentBackoffs map[int32]RetryInfo
 	BackoffInfo
-	sig    chan RetryInfo
-	factor float64
-	//mapMutex sync.RWMutex
+	sig     chan RetryInfo
+	factor  float64
 	softFac bool
+	cancel  map[int32]chan struct{}
 }
 
 func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo, factor float64, softFac bool, constBackoff bool) *BackoffManager {
@@ -49,6 +49,7 @@ func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo,
 			constBackoff:   constBackoff,
 		},
 		sig:     signalChan,
+		cancel:  make(map[int32]chan struct{}),
 		factor:  factor,
 		softFac: softFac,
 	}
@@ -90,11 +91,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 
 	var next int32
 	if !bm.constBackoff {
-		upTo := bm.minBackoff * int32(math.Pow(2, float64(preemptNum)))
-		if upTo < 0 {
-			upTo = bm.maxInitBackoff
-		}
-		next = bm.minBackoff + rand.Int31n(upTo)
+		next = bm.minBackoff + rand.Int31n(bm.minBackoff*int32(math.Pow(2, float64(preemptNum))))
 	}
 
 	if bm.constBackoff {
@@ -105,9 +102,6 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 		next = bm.maxBackoff
 	}
 
-	if next < bm.minBackoff {
-		next = bm.minBackoff
-	}
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
@@ -121,9 +115,22 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 		TimesPreempted: preemptNum,
 	}
 	bm.currentBackoffs[inst] = info
+	if _, e := bm.cancel[inst]; e {
+		bm.cancel[inst] <- struct{}{}
+	}
+	cancel := make(chan struct{})
+	bm.cancel[inst] = cancel
 	go func() {
-		time.Sleep(time.Duration(next) * time.Microsecond)
-		bm.sig <- info
+		end := time.NewTimer(time.Duration(next) * time.Microsecond)
+		select {
+		case <-cancel:
+			break
+		case <-end.C:
+			bm.sig <- info
+			<-cancel
+			break
+
+		}
 	}()
 
 	return true, next
@@ -144,6 +151,15 @@ func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
 
 func (bm *BackoffManager) ClearBackoff(inst int32) {
 	delete(bm.currentBackoffs, inst)
+}
+
+func (bm *BackoffManager) CancelBackoff(inst int32) {
+	if _, e := bm.currentBackoffs[inst]; !e {
+		return
+	}
+	bm.cancel[inst] <- struct{}{}
+	delete(bm.currentBackoffs, inst)
+	delete(bm.cancel, inst)
 }
 
 // estimate time for a proposer to receive promise from you and all other acceptors in group (depends on thrifty,
