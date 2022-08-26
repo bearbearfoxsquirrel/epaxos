@@ -171,7 +171,7 @@ type Replica struct {
 	writeAheadAcceptor bool
 	tryInitPropose     chan proposalmanager.RetryInfo
 	sendFastestQrm     bool
-	nudge              chan struct{}
+	nudge              chan chan batching.ProposalBatch
 	bcastCommit        bool
 	nopreempt          bool
 	bcastAcceptance    bool
@@ -221,7 +221,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	r := &Replica{
 		nopreempt:            nopreempt,
 		bcastCommit:          bcastCommit,
-		nudge:                make(chan struct{}, maxOpenInstances),
+		nudge:                make(chan chan batching.ProposalBatch, maxOpenInstances),
 		sendFastestQrm:       sendFastestAccQrm,
 		Replica:              replica,
 		proposedBatcheNumber: make(map[int32]int32),
@@ -330,7 +330,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	}
 
 	if prewriteAcceptor {
-		r.iWriteAhead = 1000000
+		r.iWriteAhead = 10000000
 		r.promiseLeases = make(chan acceptor.PromiseLease, r.iWriteAhead)
 		r.classesLeased = make(map[int32]stdpaxosproto.Ballot)
 		r.writeAheadAcceptor = true
@@ -701,56 +701,6 @@ func (r *Replica) run() {
 	}
 }
 
-//func (r *Replica) retryBallot(maybeTimedout TimeoutInfo) {
-//	pbk := r.instanceSpace[maybeTimedout.inst]
-//	if pbk.PropCurBal.Equal(lwcproto.ConfigBal{Config: -1, Ballot: maybeTimedout.ballot}) && pbk.Status == maybeTimedout.phase {
-//		if r.doStats {
-//			r.TimeseriesStats.Update("Message Timeouts", 1)
-//			id := stats.InstanceID{
-//				Log: 0,
-//				Seq: maybeTimedout.inst,
-//			}
-//			if maybeTimedout.phase == proposalmanager.PREPARING {
-//				r.InstanceStats.RecordOccurrence(id, "Phase 1 Timeout", 1)
-//			} else if maybeTimedout.phase == proposalmanager.PROPOSING {
-//				r.InstanceStats.RecordOccurrence(id, "Phase 2 Timeout", 1)
-//			}
-//		}
-//		group := pbk.Qrms[pbk.PropCurBal].Broadcast(maybeTimedout.msgCode, maybeTimedout.msg)
-//		phase := "prepare"
-//		if maybeTimedout.phase == proposalmanager.PROPOSING {
-//			phase = "accept request"
-//		}
-//		dlog.AgentPrintfN(r.Id, "Phase %s message in instance %d at ballot %d.%d timedout. Broadcasting to %v", phase, maybeTimedout.inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, group)
-//		//r.beginTimeout(maybeTimedout.inst, maybeTimedout.ballot, maybeTimedout.phase, r.timeout, maybeTimedout.msgCode, maybeTimedout.msg)
-//	}
-//}
-
-//func (r *Replica) sendSinglePrepare(instance int32, to int32) {
-//	// cheats - DecideRetry really be a special recovery message but lazzzzzyyyy
-//	defer func() {
-//		if err := recover(); err != nil {
-//			dlog.Println("Prepare bcast preempted:", err)
-//		}
-//	}()
-//	args := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].PropCurBal.Ballot}
-//	//dlog.Printf("send prepare to %d\n", to)
-//	r.SendMsg(to, r.prepareRPC, args)
-//	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PREPARING, r.timeout*5, r.prepareRPC, args)
-//}
-
-////func (r *Replica) beginTimeout(inst int32, attempted stdpaxosproto.Ballot, onWhatPhase proposalmanager.ProposerStatus, timeout time.Duration, msgcode uint8, msg fastrpc.Serializable) {
-////	time.AfterFunc(timeout, func() {
-////		r.timeoutMsgs <- TimeoutInfo{
-////			inst:    inst,
-////			ballot:  attempted,
-////			phase:   onWhatPhase,
-////			msgCode: msgcode,
-////			msg:     msg,
-////		}
-////	})
-//}
-
 func (r *Replica) isSlowestSlowerThanMedian(sent []int32) bool {
 	slowestLat := float64(-1)
 	ewma := r.CopyEWMA()
@@ -1065,13 +1015,13 @@ func (r *Replica) recordStatsPreempted(inst int32, pbk *proposalmanager.PBK) {
 func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	dlog.AgentPrintfN(r.Id, "Replica received a Prepare from Replica %d in instance %d at ballot %d.%d", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
 	if int32(prepare.PropID) == r.Id {
-		dlog.AgentPrintfN(r.Id, "Giving Prepare from Replica %d in instance %d at ballot %d.%d to acceptor as it is needed for safety or can form a quorum", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
+		dlog.AgentPrintfN(r.Id, "Giving Prepare in instance %d at ballot %d.%d to acceptor as it is needed for safety", prepare.Instance, prepare.Number, prepare.PropID)
 		acceptorHandlePrepareLocal(r.Id, r.Acceptor, r.Replica, prepare, r.PrepareResponsesRPC, r.prepareReplyChan)
 		return
 	}
 
 	if r.AcceptorQrmInfo.IsInQrm(prepare.Instance, r.Id) {
-		dlog.AgentPrintfN(r.Id, "Giving Prepare from Replica %d in instance %d at ballot %d.%d to acceptor as it can form a quorum", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
+		dlog.AgentPrintfN(r.Id, "Giving Prepare for instance %d at ballot %d.%d to acceptor as it can form a quorum", prepare.Instance, prepare.Number, prepare.PropID)
 		acceptorHandlePrepare(r.Id, r.Acceptor, prepare, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.nopreempt)
 	}
 
@@ -1132,6 +1082,7 @@ func (r *Replica) handlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 			Command:    cV,
 		})
 		r.proposerCloseCommit(preply.Instance, cB, cV, cWC)
+		return
 	}
 
 	if preply.VBal.GreaterThan(pbk.ProposeValueBal.Ballot) {
@@ -1215,7 +1166,7 @@ func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot
 	if (!qrm.HasAcknowledged(r.Id) && !r.writeAheadAcceptor) || (r.writeAheadAcceptor && !r.isLeased(inst, pbk.PropCurBal.Ballot)) {
 		dlog.AgentPrintfN(r.Id, "Not safe to send accept requests for instance %d, need to wait until a lease or promise from our acceptor is received", inst)
 		go func() {
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond) // todo replace with check upon next message to see if try propose again or clean up this info
 			r.tryInitPropose <- proposalmanager.RetryInfo{
 				Inst:           inst,
 				AttemptedBal:   lwcproto.ConfigBal{Config: -1, Ballot: ballot},
@@ -1252,24 +1203,19 @@ func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot
 	}
 	dlog.AgentPrintfN(r.Id, "Sleeping instance %d at ballot %d.%d for %d microseconds before trying to propose value", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, timeDelay.Microseconds())
 	go func(bal stdpaxosproto.Ballot) {
-		//r.nudge <- struct{}{}
 		timer := time.NewTimer(timeDelay)
 		timesUp := false
 		var bat batching.ProposalBatch = nil
-		for stopSelect := false; !stopSelect; {
-			select {
-			case b := <-r.Queueing.GetHead():
-				r.Queueing.Dequeued(b, func() {
-					bat = b
-					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d which is currently sleeping", b.GetUID(), inst)
-					stopSelect = true
-				})
-				break
-			case <-timer.C:
-				timesUp = true
-				stopSelect = true
-				break
-			}
+		select {
+		case b := <-r.Queueing.GetHead():
+			r.Queueing.Dequeued(b, func() {
+				bat = b
+				dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d which is currently sleeping", b.GetUID(), inst)
+			})
+			break
+		case <-timer.C:
+			timesUp = true
+			break
 		}
 
 		if !timesUp {
@@ -1316,6 +1262,7 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 						}
 						foundValue = true
 						pbk.ClientProposals = b
+
 					})
 					//r.ProposedClientValuesManager.proposingBatch(pbk, inst, pbk.ClientProposals)
 					break
@@ -1324,13 +1271,24 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 						r.BeginWaitingForClientProposals(inst, pbk)
 						return
 					}
+					b := make(chan batching.ProposalBatch, 1)
+					r.nudge <- b
+					recv := <-b
+					if recv != nil {
+						pbk.ClientProposals = recv
+						//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", recv.GetUID(), inst)
+						foundValue = true
+						break
+					}
+					// NOOP
+					dlog.AgentPrintfN(r.Id, "Proposing noop in instance %d at ballot %d.%d", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
+					setProposingValue(pbk, -1, pbk.PropCurBal.Ballot, state.NOOPP())
 					if r.doStats {
 						r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Noop Proposed", 1)
 						r.TimeseriesStats.Update("Times Noops Proposed", 1)
 						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.PropCurBal)
 					}
-					setProposingValue(pbk, -1, pbk.PropCurBal.Ballot, state.NOOPP())
-					dlog.AgentPrintfN(r.Id, "Proposing noop in instance %d at ballot %d.%d", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
+
 					foundValue = true
 					break
 				}
@@ -1373,28 +1331,16 @@ func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanage
 	t := time.NewTimer(r.noopWait)
 	go func(curBal stdpaxosproto.Ballot) {
 		var bat batching.ProposalBatch = nil
-		stopWaiting := false
-		nudged := false
-		for !stopWaiting {
-			select {
-			case b := <-r.Queueing.GetHead():
-				r.Queueing.Dequeued(b, func() {
-					bat = b
-					dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
-					stopWaiting = true
-				})
-				break
-			case <-t.C:
-				dlog.AgentPrintfN(r.Id, "Noop wait expired for instance %d", inst)
-				stopWaiting = true
-				break
-			default:
-				if !nudged {
-					r.nudge <- struct{}{}
-					nudged = true
-				}
-				break
-			}
+		select {
+		case b := <-r.Queueing.GetHead():
+			r.Queueing.Dequeued(b, func() {
+				bat = b
+				dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
+			})
+			break
+		case <-t.C:
+			dlog.AgentPrintfN(r.Id, "Noop wait expired for instance %d", inst)
+			break
 		}
 		r.proposableInstances <- ProposalInfo{
 			inst:          inst,
@@ -1405,25 +1351,6 @@ func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanage
 	}(pbk.PropCurBal.Ballot)
 	dlog.AgentPrintfN(r.Id, "Decided there no need to propose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, r.noopWait.Milliseconds())
 }
-
-//func (r *Replica) setProposal(inst int32, priorAttempts int, b batching.ProposalBatch, pbk *proposalmanager.PBK) bool {
-//	proposeF := func() {
-//		r.ProposedClientValuesManager.proposingBatch(pbk, inst, b)
-//		setProposingValue(pbk, r.Id, pbk.PropCurBal.Ballot, pbk.ClientProposals.GetCmds())
-//
-//		if r.doStats {
-//			r.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "Client Value ProposedBatch", 1)
-//			r.ProposalStats.RecordClientValuesProposed(stats.InstanceID{0, inst}, pbk.PropCurBal, len(pbk.Cmds))
-//			r.TimeseriesStats.Update("Times Client Values ProposedBatch", 1)
-//		}
-//		dlog.AgentPrintfN(r.Id, "%d client value(s) from batch with UID %d received and proposed in recovered instance %d at ballot %d.%d \n", len(pbk.ClientProposals.GetCmds()), pbk.ClientProposals.GetUID(), inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
-//	}
-//	if err := r.Queueing.Dequeued(b, proposeF); err != nil {
-//		r.tryPropose(inst, priorAttempts)
-//		return false
-//	}
-//	return true
-//}
 
 func (r *Replica) recheckInstanceToPropose(retry ProposalInfo) {
 	pbk := r.instanceSpace[retry.inst]
@@ -1478,6 +1405,7 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 			Command:    accept.Command,
 		})
 		r.proposerCloseCommit(accept.Instance, cB, accept.Command, accept.WhoseCmd)
+		return
 	}
 
 	pbk := r.instanceSpace[accept.Instance]
@@ -1494,9 +1422,11 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	}
 
 	if accept.LeaderId == -2 {
+		dlog.AgentPrintfN(r.Id, "Not passing Accept for instance %d at ballot %d.%d to acceptor as we are passive observers", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID)
 		return
 	}
 	if !r.AcceptorQrmInfo.IsInQrm(accept.Instance, r.Id) {
+		dlog.AgentPrintfN(r.Id, "Not passing Accept for instance %d at ballot %d.%d to acceptor as we cannot form an acceptance quorum", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID)
 		return
 	}
 
@@ -1511,11 +1441,6 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	r.checkAndHandleNewlyReceivedInstance(areply.Instance)
 	dlog.AgentPrintfN(r.Id, "Replica received Accept Reply from Replica %d in instance %d at requested ballot %d.%d and current ballot %d.%d", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID, areply.Cur.Number, areply.Cur.PropID)
 	pbk := r.instanceSpace[areply.Instance]
-	//if pbk.PropCurBal.Ballot.GreaterThan(areply.Req) {
-	//	dlog.AgentPrintfN(r.Id, "Accept Reply for instance %d with current ballot %d.%d and requested ballot %d.%d in late, because we are now at ballot %d.%d",
-	//		areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.Req.Number, areply.Req.PropID, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
-	//	return
-	//}
 
 	// PREEMPTED
 	if areply.Cur.GreaterThan(areply.Req) {
@@ -1563,7 +1488,7 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 	r.ProposedClientValuesManager.valueChosen(pbk, inst, whoseCmd, chosenVal)
 	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
 	r.Executor.Learnt(inst, chosenVal, whoseCmd)
-	//r.bcastCommitToAll(inst, chosenAt, chosenVal)
+	r.bcastCommitToAll(inst, chosenAt, chosenVal)
 }
 
 // todo make it so proposer acceptor and learner all guard on chosen
@@ -1572,7 +1497,6 @@ func (r *Replica) handleCommit(commit *stdpaxosproto.Commit) {
 	dlog.AgentPrintfN(r.Id, "Replica received Commit from Replica %d in instance %d at ballot %d.%d with whose commands %d", commit.PropID, commit.Instance, commit.Ballot.Number, commit.Ballot.PropID, commit.WhoseCmd)
 
 	if r.Learner.IsChosen(commit.Instance) && r.Learner.HasLearntValue(commit.Instance) {
-
 		dlog.AgentPrintfN(r.Id, "Ignoring commit for instance %d as it is already learnt", commit.Instance)
 		return
 	}
@@ -1592,6 +1516,15 @@ func (r *Replica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 		dlog.AgentPrintfN(r.Id, "Cannot learn instance %d at ballot %d.%d as we do not have a value for it", commit.Instance, commit.Ballot.Number, commit.Ballot.PropID)
 		return
 	}
+	_, v, _ := r.Learner.GetChosen(commit.Instance)
+	r.Acceptor.RecvCommitRemote(&stdpaxosproto.Commit{
+		LeaderId:   commit.LeaderId,
+		Instance:   commit.Instance,
+		Ballot:     commit.Ballot,
+		WhoseCmd:   commit.WhoseCmd,
+		MoreToCome: 0,
+		Command:    v,
+	})
 	r.Acceptor.RecvCommitShortRemote(commit)
 	if pbk.Cmds == nil {
 		panic("We don't have any record of the value to be committed")

@@ -18,7 +18,6 @@ type Requeueing interface {
 
 type Queueing interface {
 	Requeueing
-	//Enqueue(bat ProposalBatch)
 	GetHead() <-chan batching.ProposalBatch
 	GetTail() chan<- batching.ProposalBatch
 	Dequeued(bat batching.ProposalBatch, onSuccess func()) error // func that should be called once a value is pulled from the queue in a select statement. func is what happens afterwards

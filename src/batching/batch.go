@@ -115,7 +115,7 @@ type EagerNudgeSend struct {
 //	}
 //}
 
-func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- ProposalBatch, expectedBatchedRequests int32, maxBatchSizeBytes int, maxBatchWait time.Duration, onBatch func(), nudge <-chan struct{}, eager bool) {
+func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- ProposalBatch, expectedBatchedRequests int32, maxBatchSizeBytes int, maxBatchWait time.Duration, onBatch func(), nudge <-chan chan ProposalBatch, eager bool) {
 	batcher := ProposalBatcher{
 		myId:               myId,
 		unbatchedProposals: in,
@@ -158,15 +158,18 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			//onBatch()
 			batcher.startNextBatch()
 			break
-		case <-nudge:
+		case ret := <-nudge:
 			// not always gonna give batch in time but with big enough noop wait odds are high it will. Also too lazy to come up with a better low-coordination way
 			if !batcher.hasBatch() {
 				dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
+				ret <- nil
 				break
 			}
 			batchC := batcher.getBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
-			batcher.batchedProposals <- batchC
+			//batcher.batchedProposals
+			ret <- batchC
+			//batcher.batchedProposals <- batchC
 			//onBatch()
 			batcher.startNextBatch()
 			break
