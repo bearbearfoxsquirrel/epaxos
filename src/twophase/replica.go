@@ -582,13 +582,13 @@ func (r *Replica) run() {
 	r.RandomisePeerOrder()
 
 	fastClockChan = make(chan bool, 1)
-	if r.BatchingEnabled() {
-		onBatch := func() { go func() { r.startInstanceSig <- struct{}{} }() }
-		if r.doEager {
-			onBatch = func() {}
-		}
-		go batching.StartBatching(r.Id, r.ProposeChan, r.Queueing.GetTail(), r.expectedBatchedRequests, r.maxBatchSize, time.Duration(r.maxBatchWait)*time.Millisecond, onBatch, r.nudge, r.doEager)
+	//if r.BatchingEnabled() {
+	onBatch := func() { go func() { r.startInstanceSig <- struct{}{} }() }
+	if r.doEager {
+		onBatch = func() {}
 	}
+	go batching.StartBatching(r.Id, r.ProposeChan, r.Queueing.GetTail(), r.expectedBatchedRequests, r.maxBatchSize, time.Duration(r.maxBatchWait)*time.Millisecond, onBatch, r.nudge, r.doEager)
+	//}
 
 	go r.WaitForClientConnections()
 

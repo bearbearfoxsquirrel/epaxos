@@ -116,6 +116,7 @@ func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, bal
 			man.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.PropCurBal, stats.ITWASCHOSEN)
 		}
 	}
+	man.BackoffManager.CancelBackoff(inst)
 	man.BackoffManager.ClearBackoff(inst)
 
 	if ballot.Equal(pbk.PropCurBal) && man.doStats {
@@ -174,6 +175,7 @@ func (man *MinimalProposersInstanceManager) ShouldRetryInstance(pbk *PBK, retry 
 		dlog.AgentPrintfN(man.id, "Skipping retry of instance %d as minimal proposer threshold (f+1) met", retry.Inst)
 		pbk.Status = BACKING_OFF
 		man.BackoffManager.ClearBackoff(retry.Inst)
+		man.CancelBackoff(retry.Inst)
 		return false
 	}
 	return man.SimpleInstanceManager.ShouldRetryInstance(pbk, retry)

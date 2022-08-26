@@ -128,6 +128,11 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 		maxBatchWait:       maxBatchWait,
 		maxBatchBytes:      maxBatchSizeBytes,
 	}
+	if maxBatchWait <= 0 {
+		batcher.curTimeout.C = nil
+		//batcher.maxBatchBytes = 1
+	}
+
 	if eager {
 		batcher.curTimeout.C = nil
 	}
@@ -143,7 +148,6 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			}
 			batchC := batcher.getBatch()
 			batcher.batchedProposals <- batchC
-			//onBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.startNextBatch()
 			break
@@ -155,11 +159,9 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			batchC := batcher.getBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
-			//onBatch()
 			batcher.startNextBatch()
 			break
 		case ret := <-nudge:
-			// not always gonna give batch in time but with big enough noop wait odds are high it will. Also too lazy to come up with a better low-coordination way
 			if !batcher.hasBatch() {
 				dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
 				ret <- nil
@@ -167,10 +169,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			}
 			batchC := batcher.getBatch()
 			dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
-			//batcher.batchedProposals
 			ret <- batchC
-			//batcher.batchedProposals <- batchC
-			//onBatch()
 			batcher.startNextBatch()
 			break
 		}
