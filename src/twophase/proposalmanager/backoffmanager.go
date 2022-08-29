@@ -118,7 +118,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	if _, e := bm.cancel[inst]; e {
 		bm.cancel[inst] <- struct{}{}
 	}
-	cancel := make(chan struct{})
+	cancel := make(chan struct{}, 1)
 	bm.cancel[inst] = cancel
 	go func() {
 		end := time.NewTimer(time.Duration(next) * time.Microsecond)
@@ -129,7 +129,6 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 			bm.sig <- info
 			<-cancel
 			break
-
 		}
 	}()
 
@@ -149,11 +148,11 @@ func (bm *BackoffManager) StillRelevant(backoff RetryInfo) bool {
 	}
 }
 
-func (bm *BackoffManager) ClearBackoff(inst int32) {
-	delete(bm.currentBackoffs, inst)
-}
+//func (bm *BackoffManager) ClearBackoff(inst int32) {
+//	delete(bm.currentBackoffs, inst)
+//}
 
-func (bm *BackoffManager) CancelBackoff(inst int32) {
+func (bm *BackoffManager) StopBackoffs(inst int32) {
 	if _, e := bm.currentBackoffs[inst]; !e {
 		return
 	}

@@ -136,6 +136,7 @@ var eagerFwInduction *bool = flag.Bool("fwi", false, "Use forward induction for 
 var q1 *bool = flag.Bool("q1", false, "Which queueing system to use (0 or 1)")
 var bcastCommit *bool = flag.Bool("bcastc", false, "bcast commits when using bcast accept")
 var nopreempt *bool = flag.Bool("np", false, "don't send preempt messages")
+var id *int = flag.Int("id", -1, "id of the replica")
 
 func main() {
 
@@ -170,8 +171,10 @@ func main() {
 	}
 
 	log.Printf("Server starting on port %d\n", *portnum)
-
-	replicaId, nodeList, isLeader := registerWithMaster(fmt.Sprintf("%s:%d", *masterAddr, *masterPort))
+	if *id == -1 {
+		panic("invalid peer id")
+	}
+	replicaId, nodeList, isLeader := registerWithMaster(fmt.Sprintf("%s:%d", *masterAddr, *masterPort), int32(*id))
 
 	if *doEpaxos || *doMencius || *doGpaxos || *maxfailures == -1 {
 		*maxfailures = (len(nodeList) - 1) / 2
@@ -352,8 +355,8 @@ func main() {
 	http.Serve(l, nil)
 }
 
-func registerWithMaster(masterAddr string) (int, []string, bool) {
-	args := &masterproto.RegisterArgs{*myAddr, *portnum}
+func registerWithMaster(masterAddr string, id int32) (int, []string, bool) {
+	args := &masterproto.RegisterArgs{*myAddr, *portnum, id}
 	var reply masterproto.RegisterReply
 
 	for done := false; !done; {

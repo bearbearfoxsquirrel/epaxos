@@ -20,14 +20,15 @@ var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
 var addr *string = flag.String("addr", "", "Master address")
 
 type Master struct {
-	N        int
-	nodeList []string
-	addrList []string
-	portList []int
-	lock     *sync.Mutex
-	nodes    []*rpc.Client
-	leader   []bool
-	alive    []bool
+	N         int
+	connected map[int32]struct{}
+	nodeList  []string
+	addrList  []string
+	portList  []int
+	lock      *sync.Mutex
+	nodes     []*rpc.Client
+	leader    []bool
+	alive     []bool
 }
 
 func main() {
@@ -41,9 +42,10 @@ func main() {
 	log.Printf("...waiting for %d replicas\n", *numNodes)
 
 	master := &Master{*numNodes,
-		make([]string, 0, *numNodes),
-		make([]string, 0, *numNodes),
-		make([]int, 0, *numNodes),
+		make(map[int32]struct{}),
+		make([]string, *numNodes),
+		make([]string, *numNodes),
+		make([]int, *numNodes),
 		new(sync.Mutex),
 		make([]*rpc.Client, *numNodes),
 		make([]bool, *numNodes),
@@ -64,9 +66,10 @@ func main() {
 }
 
 func (master *Master) run() {
+	// wait until N nodes are connected through register rpc
 	for true {
 		master.lock.Lock()
-		if len(master.nodeList) == master.N {
+		if len(master.connected) == master.N {
 			master.lock.Unlock()
 			break
 		}
@@ -131,49 +134,51 @@ func (master *Master) Register(args *masterproto.RegisterArgs, reply *masterprot
 	master.lock.Lock()
 	defer master.lock.Unlock()
 
-	nlen := len(master.nodeList)
-	index := nlen
+	//	nlen := len(master.nodeList)
+	//index := nlen
+	index := args.Id
 
 	addrPort := fmt.Sprintf("%s:%d", args.Addr, args.Port)
 
-	for i, ap := range master.nodeList {
-		if addrPort == ap {
-			index = i
-			break
-		}
-	}
+	//for i, ap := range master.nodeList {
+	//	if addrPort == ap {
+	//		index = i
+	//		break
+	//	}
+	//}
 
-	if index == nlen {
-		master.nodeList = master.nodeList[0 : nlen+1]
-		master.nodeList[nlen] = addrPort
-		master.addrList = master.addrList[0 : nlen+1]
-		master.addrList[nlen] = args.Addr
-		master.portList = master.portList[0 : nlen+1]
-		master.portList[nlen] = args.Port
-		master.leader[index] = false
-		nlen++
+	//if index == nlen {
+	//	master.nodeList = master.nodeList[0 : nlen+1]
+	master.nodeList[index] = addrPort
+	//	master.addrList = master.addrList[0 : nlen+1]
+	master.addrList[index] = args.Addr
+	//	master.portList = master.portList[0 : nlen+1]
+	master.portList[index] = args.Port
+	master.leader[index] = false
+	master.connected[index] = struct{}{}
+	//nlen++
 
-		//addr := args.Addr
-		//if addr == "" {
-		//	addr = "127.0.0.1"
-		//}
-		//	out, err := exec.Command("ping", addr, "-c 2", "-q").output()
-		//if err == nil {
-		//	master.latencies[index], _ = strconv.ParseFloat(strings.Split(string(out), "/")[4], 64)
-		//		log.Printf(" node %v [%v] -> %v", index, master.nodeList[index],master.latencies[index])
-		//	}else{
-		//		log.Fatal("cannot connect to "+addr)
-		//	}
-	}
+	//addr := args.Addr
+	//if addr == "" {
+	//	addr = "127.0.0.1"
+	//}
+	//	out, err := exec.Command("ping", addr, "-c 2", "-q").output()
+	//if err == nil {
+	//	master.latencies[index], _ = strconv.ParseFloat(strings.Split(string(out), "/")[4], 64)
+	//		log.Printf(" node %v [%v] -> %v", index, master.nodeList[index],master.latencies[index])
+	//	}else{
+	//		log.Fatal("cannot connect to "+addr)
+	//	}
+	//}
 
-	if nlen == master.N {
+	if len(master.connected) == master.N {
 		reply.Ready = true
-		reply.ReplicaId = index
+		reply.ReplicaId = int(index)
 		reply.NodeList = master.nodeList
 		reply.IsLeader = false
 
 		//	minLatency := math.MaxFloat64
-		leader := 0
+		leader := int32(0)
 		//	for i := 0; i < len(master.leader); i++ {
 		//	if master.latencies[i] < minLatency {
 		//	minLatency = master.latencies[i]

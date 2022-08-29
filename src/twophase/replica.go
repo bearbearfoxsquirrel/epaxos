@@ -274,15 +274,6 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		doEager:                     doEager,
 	}
 
-	//if r.bcastAcceptance {
-	//r.bcastAcceptLearning = bcastAcceptLearning{
-	//	vals:           make(map[int32]map[lwcproto.ConfigBal][]*state.Command),
-	//	chosen:         make(map[int32]map[lwcproto.ConfigBal]struct{}),
-	//	chosenVal:      make(map[int32][]*state.Command),
-	//	instanceClosed: make(map[int32]struct{}),
-	//}
-	//}
-
 	pids := make([]int32, r.N)
 	ids := make([]int, r.N)
 	for i := range pids {
@@ -587,6 +578,7 @@ func (r *Replica) run() {
 	if r.doEager {
 		onBatch = func() {}
 	}
+
 	go batching.StartBatching(r.Id, r.ProposeChan, r.Queueing.GetTail(), r.expectedBatchedRequests, r.maxBatchSize, time.Duration(r.maxBatchWait)*time.Millisecond, onBatch, r.nudge, r.doEager)
 	//}
 

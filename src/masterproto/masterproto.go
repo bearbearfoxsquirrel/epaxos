@@ -3,6 +3,7 @@ package masterproto
 type RegisterArgs struct {
 	Addr string
 	Port int
+	Id   int32
 }
 
 type RegisterReply struct {

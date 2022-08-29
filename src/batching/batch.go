@@ -49,6 +49,7 @@ type ProposalBatcher struct {
 	unbatchedProposals      <-chan *genericsmr.Propose
 	batchedProposals        chan<- ProposalBatch
 	myId                    int32
+	doEager                 bool
 }
 
 type EagerNudgeRecv struct {
@@ -127,13 +128,9 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 		curTimeout:         time.NewTimer(maxBatchWait),
 		maxBatchWait:       maxBatchWait,
 		maxBatchBytes:      maxBatchSizeBytes,
+		doEager:            eager,
 	}
-	if maxBatchWait <= 0 {
-		batcher.curTimeout.C = nil
-		//batcher.maxBatchBytes = 1
-	}
-
-	if eager {
+	if batcher.doEager {
 		batcher.curTimeout.C = nil
 	}
 	for {
@@ -199,6 +196,9 @@ func (b *ProposalBatcher) startNextBatch() {
 	b.curBatchCmds = make([]*state.Command, 0, b.expectedBatchedRequests)
 	b.curBatchSize = 0
 	b.curUID += 1
+	if b.doEager {
+		return
+	}
 	b.resetTimeout()
 }
 
