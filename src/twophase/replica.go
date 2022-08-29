@@ -1263,7 +1263,7 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 						r.BeginWaitingForClientProposals(inst, pbk)
 						return
 					}
-					b := make(chan batching.ProposalBatch, 1)
+					b := make(chan batching.ProposalBatch)
 					r.nudge <- b
 					recv := <-b
 					if recv != nil {

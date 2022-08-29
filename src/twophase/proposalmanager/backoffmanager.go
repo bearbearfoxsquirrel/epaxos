@@ -118,7 +118,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	if _, e := bm.cancel[inst]; e {
 		bm.cancel[inst] <- struct{}{}
 	}
-	cancel := make(chan struct{}, 1)
+	cancel := make(chan struct{})
 	bm.cancel[inst] = cancel
 	go func() {
 		end := time.NewTimer(time.Duration(next) * time.Microsecond)
