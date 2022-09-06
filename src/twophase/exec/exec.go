@@ -41,7 +41,9 @@ func GetExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore,
 
 func (ex *Executor) ProposedBatch(inst int32, b batching.ProposalBatch) {
 	if ex.clientBatches[inst] != nil {
-		panic("Should not propose multiple batches to a single instance")
+		if b.GetUID() != ex.clientBatches[inst].GetUID() {
+			panic("Should not propose multiple batches to a single instance")
+		}
 	}
 
 	ex.clientBatches[inst] = b

@@ -91,7 +91,11 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 
 	var next int32
 	if !bm.constBackoff {
-		next = bm.minBackoff + rand.Int31n(bm.minBackoff*int32(math.Pow(2, float64(preemptNum))))
+		t := bm.minBackoff * int32(math.Pow(2, float64(preemptNum)))
+		if t < 0 {
+			t = math.MaxInt32
+		}
+		next = bm.minBackoff + rand.Int31n(t)
 	}
 
 	if bm.constBackoff {

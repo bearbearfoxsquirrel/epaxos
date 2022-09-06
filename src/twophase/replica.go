@@ -744,12 +744,16 @@ func (r *Replica) isSlowestSlowerThanMedian(sent []int32) bool {
 
 func (r *Replica) beginTracking(instID stats.InstanceID, ballot stdpaxosproto.Ballot, sentTo []int32, trackingName string, proposalTrackingName string) string {
 	if len(sentTo) == r.N || r.isSlowestSlowerThanMedian(sentTo) {
-		r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Slow Quorum")
-		r.ProposalStats.RecordOccurence(instID, lwcproto.ConfigBal{Config: -1, Ballot: ballot}, proposalTrackingName+" Slow Quorum", 1)
+		if r.doStats {
+			r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Slow Quorum")
+			r.ProposalStats.RecordOccurence(instID, lwcproto.ConfigBal{Config: -1, Ballot: ballot}, proposalTrackingName+" Slow Quorum", 1)
+		}
 		return "slow"
 	} else {
-		r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Fast Quorum")
-		r.ProposalStats.RecordOccurence(instID, lwcproto.ConfigBal{Config: -1, Ballot: ballot}, proposalTrackingName+" Fast Quorum", 1)
+		if r.doStats {
+			r.InstanceStats.RecordComplexStatStart(instID, trackingName, "Fast Quorum")
+			r.ProposalStats.RecordOccurence(instID, lwcproto.ConfigBal{Config: -1, Ballot: ballot}, proposalTrackingName+" Fast Quorum", 1)
+		}
 		return "fast"
 	}
 }
@@ -817,26 +821,30 @@ func (r *Replica) bcastAccept(instance int32) {
 			peerList = r.Replica.GetPeerOrderLatency()
 		}
 
+		if r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
+			acc := &stdpaxosproto.Accept{
+				LeaderId: pa.LeaderId,
+				Instance: pa.Instance,
+				Ballot:   pa.Ballot,
+				WhoseCmd: pa.WhoseCmd,
+				Command:  pa.Command,
+			}
+			go func() {
+				r.acceptChan <- acc
+			}()
+			sentTo = append(sentTo, r.Id)
+		}
 		for _, peer := range peerList {
 			if len(sentTo) >= sendC {
 				pa.LeaderId = -2
 				//dlog.AgentPrintfN(r.Id, "instance %d acpt passive r is %d", instance, peer)
 			}
 			if peer == r.Id {
-				if !r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
-					continue
-				}
-				//acc := &stdpaxosproto.Accept{
-				//	LeaderId: pa.LeaderId,
-				//	Instance: pa.Instance,
-				//	Ballot:   pa.Ballot,
-				//	WhoseCmd: pa.WhoseCmd,
-				//	Command:  pa.Command,
+				//if !r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
+				//	continue
 				//}
-				go func(acc *stdpaxosproto.Accept) {
-					r.acceptChan <- acc
-				}(args)
-				sentTo = append(sentTo, peer)
+
+				//sentTo = append(sentTo, peer)
 				continue
 			}
 			r.Replica.SendMsg(peer, r.acceptRPC, args)
@@ -864,9 +872,16 @@ func (r *Replica) bcastAccept(instance int32) {
 				if !r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
 					continue
 				}
-				go func(acc *stdpaxosproto.Accept) {
+				acc := &stdpaxosproto.Accept{
+					LeaderId: pa.LeaderId,
+					Instance: pa.Instance,
+					Ballot:   pa.Ballot,
+					WhoseCmd: pa.WhoseCmd,
+					Command:  pa.Command,
+				}
+				go func() {
 					r.acceptChan <- acc
-				}(args)
+				}()
 				sentTo = append(sentTo, peer)
 				continue
 			}
