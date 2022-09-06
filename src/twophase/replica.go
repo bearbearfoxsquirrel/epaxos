@@ -88,7 +88,7 @@ type Replica struct {
 	proposalmanager.GlobalInstanceManager
 	ProposedClientValuesManager
 
-	proposalmanager.ProposerQuorumaliser
+	proposalmanager.ProposerInstanceQuorumaliser
 	proposalmanager.LearnerQuorumaliser
 	proposalmanager.AcceptorQrmInfo
 
@@ -216,12 +216,13 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	maxAccBatchWait time.Duration, sendPreparesToAllAcceptors bool, minimalProposers bool, timeBasedBallots bool,
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int32,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
-	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool, q1 bool, bcastCommit bool, nopreempt bool) *Replica {
+	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool,
+	q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string) *Replica {
 
 	r := &Replica{
 		nopreempt:            nopreempt,
 		bcastCommit:          bcastCommit,
-		nudge:                make(chan chan batching.ProposalBatch, maxOpenInstances),
+		nudge:                make(chan chan batching.ProposalBatch, maxOpenInstances*int32(replica.N)),
 		sendFastestQrm:       sendFastestAccQrm,
 		Replica:              replica,
 		proposedBatcheNumber: make(map[int32]int32),
@@ -376,6 +377,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
 	}
 
+	// Quorum system
 	var qrm quorumsystem.SynodQuorumSystemConstructor
 	qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
 		F:                r.F,
@@ -394,17 +396,20 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		}
 	}
 
-	var proposerQrms proposalmanager.Quormaliser
-	proposerQrms = &proposalmanager.Standard{
+	var instancequormaliser proposalmanager.InstanceQuormaliser
+	instancequormaliser = &proposalmanager.Standard{
 		SynodQuorumSystemConstructor: qrm,
 		Aids:                         pids,
 		MyID:                         r.Id,
 	}
 
+	// LEARNER GROUPS SET UP
 	var aqc learner.AQConstructor
 	stdaqc := learner.GetStandardGroupAQConstructorr(pids, qrm.(quorumsystem.SynodQuorumSystemConstructor), r.Id)
+
 	aqc = &stdaqc
 
+	// ACCEPTOR GROUPS SET UP
 	if minimalAcceptors {
 		laqc := learner.GetMinimalGroupAQConstructorr(int32(r.N), int32(r.F), pids, qrm.(quorumsystem.AcceptanceQuorumsConstructor), r.Id)
 		aqc = &laqc
@@ -423,7 +428,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 			}
 		}
 
-		proposerQrms = &proposalmanager.Minimal{
+		instancequormaliser = &proposalmanager.Minimal{
 			AcceptorMapper:               mapper,
 			SynodQuorumSystemConstructor: qrm,
 			MapperCache:                  make(map[int32][]int32),
@@ -431,17 +436,39 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		}
 	}
 
-	r.ProposerQuorumaliser = proposerQrms
-	r.AcceptorQrmInfo = proposerQrms
-	r.LearnerQuorumaliser = proposerQrms
+	if pam {
+		pamapping := instanceagentmapper.ReadFromFile(pamloc)
+		amapping := instanceagentmapper.GetAMap(pamapping)
+		//pmapping := instanceagentmapper.GetPMap(pamapping)
+		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
+		instancequormaliser = &proposalmanager.StaticMapped{
+			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
+			SynodQuorumSystemConstructor: qrm,
+			MyID:                         r.Id,
+		}
+
+		if doPatientProposals {
+			panic("option not implemented")
+		}
+	}
+
+	if r.bcastAcceptance {
+		l := learner.GetBcastAcceptLearner(aqc)
+		r.Learner = &l
+	} else {
+		l := learner.GetDesignedLearner(aqc)
+		r.Learner = &l
+	}
+
+	r.ProposerInstanceQuorumaliser = instancequormaliser
+	r.AcceptorQrmInfo = instancequormaliser
+	r.LearnerQuorumaliser = instancequormaliser
 
 	if group1Size <= r.N-r.F {
 		r.group1Size = r.N - r.F
 	} else {
 		r.group1Size = group1Size
 	}
-
-	balloter := proposalmanager.Balloter{r.Id, int32(r.N), 10000, time.Time{}, timeBasedBallots}
 
 	if !q1 {
 		var q Queueing = ProposingChosenUniqueueQNew(r.Id, 200)                 //ChosenUniqueQNew(r.Id, 200)
@@ -461,13 +488,11 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		r.ProposedClientValuesManager = ProposedClientValuesManagerNew(r.Id, r.TimeseriesStats, r.doStats, q)
 	}
 
-	// SET UP SIGNAL
-	var openInstSig proposalmanager.OpenInstSignal = proposalmanager.SimpleSigNew(r.startInstanceSig, r.Id)
-	if doEager {
-		openInstSig = proposalmanager.EagerSigNew(openInstSig.(*proposalmanager.SimpleSig), maxOpenInstances)
-	}
+	balloter := proposalmanager.Balloter{r.Id, int32(r.N), 10000, time.Time{}, timeBasedBallots}
+
 	backoffManager := proposalmanager.BackoffManagerNew(minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff)
-	var instanceManager proposalmanager.SingleInstanceManager = proposalmanager.SimpleInstanceManagerNew(r.Id, backoffManager, balloter, doStats, r.ProposerQuorumaliser, r.TimeseriesStats, r.ProposalStats, r.InstanceStats)
+	var instanceManager proposalmanager.SingleInstanceManager = proposalmanager.SimpleInstanceManagerNew(r.Id, backoffManager, balloter, doStats,
+		r.ProposerInstanceQuorumaliser, r.TimeseriesStats, r.ProposalStats, r.InstanceStats)
 
 	var awaitingGroup ProposerGroupGetter = SimpleProposersAwaitingGroupGetterNew(pids)
 	var minimalGroupGetter *MinimalProposersAwaitingGroup
@@ -476,6 +501,12 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		instanceManager = proposalmanager.MinimalProposersInstanceManagerNew(instanceManager.(*proposalmanager.SimpleInstanceManager), minimalShouldMaker)
 		minimalGroupGetter = MinimalProposersAwaitingGroupNew(awaitingGroup.(*SimpleProposersAwaitingGroup), minimalShouldMaker, int32(r.F))
 		awaitingGroup = minimalGroupGetter
+	}
+
+	// SET UP SIGNAL
+	var openInstSig proposalmanager.OpenInstSignal = proposalmanager.SimpleSigNew(r.startInstanceSig, r.Id)
+	if doEager {
+		openInstSig = proposalmanager.EagerSigNew(openInstSig.(*proposalmanager.SimpleSig), maxOpenInstances)
 	}
 
 	simpleGlobalManager := proposalmanager.SimpleProposalManagerNew(r.Id, openInstSig, instanceManager, backoffManager)
@@ -489,17 +520,25 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	}
 
 	r.noopLearners = []proposalmanager.NoopLearner{}
-	if mappedProposers || dynamicMappedProposers {
-		agentMapper := &instanceagentmapper.InstanceSetMapper{
+	// PROPOSER QUORUMS
+	if mappedProposers || dynamicMappedProposers || pam {
+		var agentMapper instanceagentmapper.InstanceAgentMapper
+		agentMapper = &instanceagentmapper.DetRandInstanceSetMapper{
 			Ids: pids,
 			G:   mappedProposersNum,
 			N:   int32(r.N),
 		}
+		if pam { // PAM get from file the proposer mappings
+			pamap := instanceagentmapper.ReadFromFile(pamloc)
+			pmap := instanceagentmapper.GetPMap(pamap)
+			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: pmap}
+		}
+
 		globalManager = proposalmanager.MappedProposersProposalManagerNew(simpleGlobalManager, instanceManager, agentMapper)
 		mappedGroupGetter := MappedProposersAwaitingGroupNew(agentMapper)
 		if dynamicMappedProposers {
 			dAgentMapper := &proposalmanager.DynamicInstanceSetMapper{
-				InstanceSetMapper: *agentMapper,
+				DetRandInstanceSetMapper: *agentMapper.(*instanceagentmapper.DetRandInstanceSetMapper),
 			}
 			globalManager = proposalmanager.DynamicMappedProposerManagerNew(simpleGlobalManager, instanceManager, dAgentMapper, int32(r.N), int32(r.F))
 			mappedGroupGetter = MappedProposersAwaitingGroupNew(dAgentMapper)
@@ -532,13 +571,6 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		}
 	}
 
-	if r.bcastAcceptance {
-		l := learner.GetBcastAcceptLearner(aqc)
-		r.Learner = &l
-	} else {
-		l := learner.GetBcastAcceptLearner(aqc)
-		r.Learner = &l
-	}
 	r.Executor = exec.GetExecutor(int32(id), replica, r.StableStore, r.Dreply)
 
 	go r.run()
@@ -734,10 +766,9 @@ func (r *Replica) bcastPrepare(instance int32) {
 				if r.writeAheadAcceptor && !r.IsInQrm(instance, r.Id) {
 					continue
 				}
-				prep := &stdpaxosproto.Prepare{r.Id, instance, r.instanceSpace[instance].PropCurBal.Ballot}
-				go func() {
+				go func(prep *stdpaxosproto.Prepare) {
 					r.prepareChan <- prep
-				}()
+				}(args)
 				sentTo = append(sentTo, i)
 				continue
 			}
@@ -760,16 +791,16 @@ func (r *Replica) bcastPrepare(instance int32) {
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PREPARING, r.timeout, r.prepareRPC, args)
 }
 
-var pa stdpaxosproto.Accept
+//var pa stdpaxosproto.Accept
 
 func (r *Replica) bcastAccept(instance int32) {
+	var pa stdpaxosproto.Accept
 	pa.LeaderId = r.Id
 	pa.Instance = instance
 	pa.Ballot = r.instanceSpace[instance].PropCurBal.Ballot
 	pa.Command = r.instanceSpace[instance].Cmds
 	pa.WhoseCmd = r.instanceSpace[instance].WhoseCmds
 	args := &pa
-	//pbk := r.instanceSpace[instance]
 	var sentTo []int32
 
 	// fixme lazy way
@@ -795,16 +826,16 @@ func (r *Replica) bcastAccept(instance int32) {
 				if !r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
 					continue
 				}
-				acc := &stdpaxosproto.Accept{
-					LeaderId: pa.LeaderId,
-					Instance: pa.Instance,
-					Ballot:   pa.Ballot,
-					WhoseCmd: pa.WhoseCmd,
-					Command:  pa.Command,
-				}
-				go func() {
+				//acc := &stdpaxosproto.Accept{
+				//	LeaderId: pa.LeaderId,
+				//	Instance: pa.Instance,
+				//	Ballot:   pa.Ballot,
+				//	WhoseCmd: pa.WhoseCmd,
+				//	Command:  pa.Command,
+				//}
+				go func(acc *stdpaxosproto.Accept) {
 					r.acceptChan <- acc
-				}()
+				}(args)
 				sentTo = append(sentTo, peer)
 				continue
 			}
@@ -833,16 +864,9 @@ func (r *Replica) bcastAccept(instance int32) {
 				if !r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
 					continue
 				}
-				acc := &stdpaxosproto.Accept{
-					LeaderId: pa.LeaderId,
-					Instance: pa.Instance,
-					Ballot:   pa.Ballot,
-					WhoseCmd: pa.WhoseCmd,
-					Command:  pa.Command,
-				}
-				go func() {
+				go func(acc *stdpaxosproto.Accept) {
 					r.acceptChan <- acc
-				}()
+				}(args)
 				sentTo = append(sentTo, peer)
 				continue
 			}
@@ -934,9 +958,6 @@ const (
 
 func (r *Replica) beginNextInstance() {
 	do := func(inst int32) {
-		//if inst <= r.executedUpTo {
-		//	panic("alsdkfjal;kdfjal;skdfj")
-		//}
 		curInst := r.instanceSpace[inst]
 		r.GlobalInstanceManager.StartNextProposal(curInst, inst)
 
@@ -948,7 +969,6 @@ func (r *Replica) beginNextInstance() {
 
 		prepMsg := getPrepareMessage(r.Id, inst, curInst)
 		dlog.AgentPrintfN(r.Id, "Opened new instance %d, with ballot %d.%d \n", inst, prepMsg.Number, prepMsg.PropID)
-		//acceptorHandlePrepareLocal(r.Id, r.Acceptor, prepMsg, r.PrepareResponsesRPC, r.prepareReplyChan)
 		r.bcastPrepare(inst)
 		if r.doPatientProposals {
 			r.patientProposals.startedProposal(inst, curInst.PropCurBal.Ballot)
@@ -1007,7 +1027,11 @@ func (r *Replica) recordStatsPreempted(inst int32, pbk *proposalmanager.PBK) {
 func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	dlog.AgentPrintfN(r.Id, "Replica received a Prepare from Replica %d in instance %d at ballot %d.%d", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
 	if int32(prepare.PropID) == r.Id {
-		dlog.AgentPrintfN(r.Id, "Giving Prepare in instance %d at ballot %d.%d to acceptor as it is needed for safety", prepare.Instance, prepare.Number, prepare.PropID)
+		if r.writeAheadAcceptor {
+			dlog.AgentPrintfN(r.Id, "Giving Prepare in instance %d at ballot %d.%d to acceptor as it is needed for safety", prepare.Instance, prepare.Number, prepare.PropID)
+		} else {
+			dlog.AgentPrintfN(r.Id, "Giving Prepare in instance %d at ballot %d.%d to acceptor as it can form a quorum", prepare.Instance, prepare.Number, prepare.PropID)
+		}
 		acceptorHandlePrepareLocal(r.Id, r.Acceptor, r.Replica, prepare, r.PrepareResponsesRPC, r.prepareReplyChan)
 		return
 	}
@@ -1202,7 +1226,7 @@ func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot
 		case b := <-r.Queueing.GetHead():
 			r.Queueing.Dequeued(b, func() {
 				bat = b
-				dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d which is currently sleeping", b.GetUID(), inst)
+				//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d which is currently sleeping", b.GetUID(), inst)
 			})
 			break
 		case <-timer.C:
@@ -1263,7 +1287,7 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 						r.BeginWaitingForClientProposals(inst, pbk)
 						return
 					}
-					b := make(chan batching.ProposalBatch)
+					b := make(chan batching.ProposalBatch, 1)
 					r.nudge <- b
 					recv := <-b
 					if recv != nil {
@@ -1280,7 +1304,6 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 						r.TimeseriesStats.Update("Times Noops Proposed", 1)
 						r.ProposalStats.RecordNoopProposed(stats.InstanceID{0, inst}, pbk.PropCurBal)
 					}
-
 					foundValue = true
 					break
 				}
@@ -1327,11 +1350,11 @@ func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanage
 		case b := <-r.Queueing.GetHead():
 			r.Queueing.Dequeued(b, func() {
 				bat = b
-				dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
+				//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
 			})
 			break
 		case <-t.C:
-			dlog.AgentPrintfN(r.Id, "Noop wait expired for instance %d", inst)
+			//dlog.AgentPrintfN(r.Id, "Noop wait expired for instance %d", inst)
 			break
 		}
 		r.proposableInstances <- ProposalInfo{
@@ -1341,7 +1364,7 @@ func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanage
 			PrevSleeps:    1,
 		}
 	}(pbk.PropCurBal.Ballot)
-	dlog.AgentPrintfN(r.Id, "Decided there no need to propose a value in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, r.noopWait.Milliseconds())
+	dlog.AgentPrintfN(r.Id, "No client values to propose in instance %d at ballot %d.%d, waiting %d ms before checking again", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, r.noopWait.Milliseconds())
 }
 
 func (r *Replica) recheckInstanceToPropose(retry ProposalInfo) {

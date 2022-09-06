@@ -1,7 +1,6 @@
 package batching
 
 import (
-	"dlog"
 	"genericsmr"
 	"state"
 	"time"
@@ -145,7 +144,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			}
 			batchC := batcher.getBatch()
 			batcher.batchedProposals <- batchC
-			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			//dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.startNextBatch()
 			break
 		case <-batcher.curTimeout.C:
@@ -154,21 +153,27 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 				break
 			}
 			batchC := batcher.getBatch()
-			dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			//dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
 			batcher.startNextBatch()
 			break
 		case ret := <-nudge:
 			if !batcher.hasBatch() {
-				dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
-				ret <- nil
+				//dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
+				go func() { ret <- nil }()
 				break
 			}
 			batchC := batcher.getBatch()
-			dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
-			ret <- batchC
+			//dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			go func(b *batch) { ret <- b }(batchC)
 			batcher.startNextBatch()
 			break
+			//case requeue := <-batcher.requeue:
+			//	if batcher.requeued[requeue.UID()] =
+			//	break
+			//case chosen := <-batcher.chosen:
+			//	batcher.chosenI[chosen] = struct{}{}
+			//	break
 		}
 	}
 }
@@ -213,3 +218,5 @@ func (b *ProposalBatcher) getBatch() *batch {
 
 // todo
 //func whatisbatchload?
+
+//type

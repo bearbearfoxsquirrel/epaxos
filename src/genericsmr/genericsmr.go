@@ -494,6 +494,7 @@ func (r *Replica) checkAndHandleBatchMessaging(peerId int32) bool {
 		return true
 	}
 	return false
+	//todo give timer too
 }
 
 func (r *Replica) SendMsgUNSAFE(peerId int32, code uint8, msg fastrpc.Serializable) {

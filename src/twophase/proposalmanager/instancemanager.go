@@ -22,22 +22,22 @@ type SimpleInstanceManager struct {
 	id      int32
 	*BackoffManager
 	Balloter
-	ProposerQuorumaliser
+	ProposerInstanceQuorumaliser
 	*stats.TimeseriesStats
 	*stats.ProposalStats
 	*stats.InstanceStats
 }
 
-func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter Balloter, doStats bool, qrm ProposerQuorumaliser, tsStats *stats.TimeseriesStats, proposalStats *stats.ProposalStats, instanceStats *stats.InstanceStats) *SimpleInstanceManager {
+func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter Balloter, doStats bool, qrm ProposerInstanceQuorumaliser, tsStats *stats.TimeseriesStats, proposalStats *stats.ProposalStats, instanceStats *stats.InstanceStats) *SimpleInstanceManager {
 	return &SimpleInstanceManager{
-		doStats:              doStats,
-		id:                   id,
-		BackoffManager:       manager,
-		Balloter:             balloter,
-		ProposerQuorumaliser: qrm,
-		TimeseriesStats:      tsStats,
-		ProposalStats:        proposalStats,
-		InstanceStats:        instanceStats,
+		doStats:                      doStats,
+		id:                           id,
+		BackoffManager:               manager,
+		Balloter:                     balloter,
+		ProposerInstanceQuorumaliser: qrm,
+		TimeseriesStats:              tsStats,
+		ProposalStats:                proposalStats,
+		InstanceStats:                instanceStats,
 	}
 }
 
@@ -50,7 +50,7 @@ func (man *SimpleInstanceManager) StartProposal(pbk *PBK, inst int32) {
 	nextBal := man.Balloter.GetNextProposingBal(pbk.MaxKnownBal.Config, pbk.MaxKnownBal.Number)
 	pbk.PropCurBal = nextBal
 	pbk.MaxKnownBal = nextBal
-	man.ProposerQuorumaliser.StartPromiseQuorumOnCurBal(pbk, inst)
+	man.ProposerInstanceQuorumaliser.StartPromiseQuorumOnCurBal(pbk, inst)
 	dlog.AgentPrintfN(man.id, "Starting new proposal for instance %d with ballot %d.%d", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 }
 

@@ -138,6 +138,9 @@ var bcastCommit *bool = flag.Bool("bcastc", false, "bcast commits when using bca
 var nopreempt *bool = flag.Bool("np", false, "don't send preempt messages")
 var id *int = flag.Int("id", -1, "id of the replica")
 
+var pam *bool = flag.Bool("pam", false, "Do proposer acceptor mapping from file")
+var pamloc *string = flag.String("pamloc", "./pam.json", "Location of the pam file")
+
 func main() {
 
 	flag.Parse()
@@ -331,7 +334,8 @@ func main() {
 			*proactivepreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
-			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt)
+			*minimalAcceptorNegatives, *prewriteAcc, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt,
+			*pam, *pamloc)
 		runnable = rep
 		rpc.Register(rep)
 		//}

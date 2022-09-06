@@ -8,6 +8,14 @@ type InstanceAgentMapper interface {
 	GetGroup(inst int32) []int32
 }
 
+type FixedInstanceAgentMapping struct {
+	Groups [][]int32
+}
+
+func (mapper *FixedInstanceAgentMapping) GetGroup(inst int32) []int32 {
+	return mapper.Groups[int(inst)%len(mapper.Groups)]
+}
+
 type InstanceAcceptorSetMapper struct {
 	Acceptors []int32
 	F         int32
@@ -20,13 +28,13 @@ type InstanceNegativeAcceptorSetMapper struct {
 	N         int32
 }
 
-type InstanceSetMapper struct {
+type DetRandInstanceSetMapper struct {
 	Ids []int32
 	G   int32
 	N   int32
 }
 
-func (mapper *InstanceSetMapper) GetGroup(inst int32) []int32 {
+func (mapper *DetRandInstanceSetMapper) GetGroup(inst int32) []int32 {
 	group := make([]int32, mapper.G)
 	rem := make([]int32, len(mapper.Ids))
 	copy(rem, mapper.Ids)

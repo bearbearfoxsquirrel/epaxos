@@ -7,8 +7,8 @@ import (
 	"quorumsystem"
 )
 
-type Quormaliser interface {
-	ProposerQuorumaliser
+type InstanceQuormaliser interface {
+	ProposerInstanceQuorumaliser
 	LearnerQuorumaliser
 	AcceptorQrmInfo
 }
@@ -17,7 +17,7 @@ type Quormaliser interface {
 //	BeginQrm(map[int32]map[stdpaxosproto.Ballot]A)
 //}
 
-type ProposerQuorumaliser interface {
+type ProposerInstanceQuorumaliser interface {
 	StartPromiseQuorumOnCurBal(pbk *PBK, inst int32)
 }
 
@@ -27,7 +27,7 @@ type LearnerQuorumaliser interface {
 
 type AcceptorQrmInfo interface {
 	IsInQrm(inst int32, aid int32) bool
-	GetQrm(inst int32) []int32
+	GetGroup(inst int32) []int32
 }
 
 ////////////////////////////////
@@ -55,7 +55,7 @@ func (qrmliser *Standard) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcp
 	quorumaliser.StartAcceptanceQuorum()
 }
 
-func (qrmliser *Standard) GetQrm(inst int32) []int32 {
+func (qrmliser *Standard) GetGroup(inst int32) []int32 {
 	return qrmliser.Aids
 }
 
@@ -152,9 +152,46 @@ func (qrmliser *Minimal) IsInQrm(inst int32, aid int32) bool {
 	return false
 }
 
-func (qrmliser *Minimal) GetQrm(inst int32) []int32 {
+func (qrmliser *Minimal) GetGroup(inst int32) []int32 {
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
 		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(inst)
 	}
 	return qrmliser.MapperCache[inst]
+}
+
+type StaticMapped struct {
+	AcceptorMapper instanceagentmapper.FixedInstanceAgentMapping
+	//MapperCache    map[int32][]int32
+	quorumsystem.SynodQuorumSystemConstructor
+	MyID int32
+}
+
+func (qrl StaticMapped) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
+	group := qrl.GetGroup(inst)
+	dlog.AgentPrintfN(qrl.MyID, "Acceptor group for instance %d is %v", inst, group)
+	quorumaliser := qrl.SynodQuorumSystemConstructor.Construct(group)
+	pbk.Qrms[pbk.PropCurBal] = quorumaliser
+	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
+}
+
+func (qrl StaticMapped) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcproto.ConfigBal) {
+	group := qrl.GetGroup(inst)
+	dlog.AgentPrintfN(qrl.MyID, "Acceptor group for instance %d is %v", inst, group)
+	quorumaliser := qrl.SynodQuorumSystemConstructor.Construct(group)
+	pbk.Qrms[pbk.PropCurBal] = quorumaliser
+	pbk.Qrms[pbk.PropCurBal].StartAcceptanceQuorum()
+}
+
+func (qrl StaticMapped) IsInQrm(inst int32, aid int32) bool {
+	for _, aidInQrm := range qrl.GetGroup(inst) {
+		if aid == aidInQrm {
+			return true
+		}
+	}
+	return false
+}
+
+func (qrl StaticMapped) GetGroup(inst int32) []int32 {
+	return qrl.AcceptorMapper.GetGroup(inst)
+
 }

@@ -11,6 +11,19 @@ type AQConstructor interface {
 	CreateTally(inst int32) quorum.QuorumTally
 }
 
+type StaticDefined struct {
+	instanceagentmapper.FixedInstanceAgentMapping
+	quorumsystem.AcceptanceQuorumsConstructor
+}
+
+func GetStaticDefinedAQConstructor(instags [][]int32, constructor quorumsystem.AcceptanceQuorumsConstructor) StaticDefined {
+	return StaticDefined{
+		FixedInstanceAgentMapping:    instanceagentmapper.FixedInstanceAgentMapping{instags},
+		AcceptanceQuorumsConstructor: constructor,
+	}
+
+}
+
 type Minimal struct {
 	AcceptorMapper instanceagentmapper.InstanceAgentMapper
 	quorumsystem.AcceptanceQuorumsConstructor
@@ -19,7 +32,7 @@ type Minimal struct {
 
 func GetMinimalGroupAQConstructorr(n, f int32, ids []int32, constructor quorumsystem.AcceptanceQuorumsConstructor, me int32) Minimal {
 	return Minimal{
-		AcceptorMapper: &instanceagentmapper.InstanceSetMapper{
+		AcceptorMapper: &instanceagentmapper.DetRandInstanceSetMapper{
 			Ids: ids,
 			G:   f + 1,
 			N:   n,
