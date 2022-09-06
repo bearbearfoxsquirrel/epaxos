@@ -864,25 +864,23 @@ func (r *Replica) bcastAccept(instance int32) {
 			peerList = r.Replica.GetPeerOrderLatency()
 		}
 
+		if r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
+			acc := &stdpaxosproto.Accept{
+				LeaderId: pa.LeaderId,
+				Instance: pa.Instance,
+				Ballot:   pa.Ballot,
+				WhoseCmd: pa.WhoseCmd,
+				Command:  pa.Command,
+			}
+			go func() { r.acceptChan <- acc }()
+			sentTo = append(sentTo, r.Id)
+		}
+
 		for _, peer := range peerList {
 			if len(sentTo) >= sendC {
 				break
 			}
 			if peer == r.Id {
-				if !r.AcceptorQrmInfo.IsInQrm(instance, r.Id) {
-					continue
-				}
-				acc := &stdpaxosproto.Accept{
-					LeaderId: pa.LeaderId,
-					Instance: pa.Instance,
-					Ballot:   pa.Ballot,
-					WhoseCmd: pa.WhoseCmd,
-					Command:  pa.Command,
-				}
-				go func() {
-					r.acceptChan <- acc
-				}()
-				sentTo = append(sentTo, peer)
 				continue
 			}
 			r.Replica.SendMsg(peer, r.acceptRPC, args)
@@ -1518,6 +1516,9 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 	r.ProposedClientValuesManager.valueChosen(pbk, inst, whoseCmd, chosenVal)
 	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
 	r.Executor.Learnt(inst, chosenVal, whoseCmd)
+	if r.Id != int32(chosenAt.PropID) && !r.bcastAcceptance {
+		return
+	}
 	r.bcastCommitToAll(inst, chosenAt, chosenVal)
 }
 

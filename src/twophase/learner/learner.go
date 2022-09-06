@@ -46,6 +46,7 @@ func (l *DesignatedLearner) proposalChosen(inst int32, bal stdpaxosproto.Ballot)
 	if bal.IsZero() {
 		return
 	}
+
 	if _, e := l.learnt[inst]; e {
 		return
 	}
@@ -56,6 +57,7 @@ func (l *DesignatedLearner) ProposalAccepted(inst int32, ballot stdpaxosproto.Ba
 	if ballot.IsZero() {
 		return
 	}
+
 	if _, e := l.learnt[inst]; e {
 		return
 	}
@@ -81,7 +83,7 @@ func (l *DesignatedLearner) ProposalValue(inst int32, ballot stdpaxosproto.Ballo
 	}
 	if _, e := l.learnt[inst]; e {
 		v := l.val[inst][l.learnt[inst]].cmds
-		if ballot.GreaterThan(l.learnt[inst]) && state.CommandsEqual(commands, v) {
+		if ballot.GreaterThan(l.learnt[inst]) && !state.CommandsEqual(commands, v) {
 			panic("ProposedBatch value different from chosen value in previous ballot")
 		}
 		return
