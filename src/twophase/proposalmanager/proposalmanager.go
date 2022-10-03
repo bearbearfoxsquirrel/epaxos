@@ -536,10 +536,8 @@ type StaticMappedProposalManager struct {
 }
 
 func MappedProposersProposalManagerNew(simpleProposalManager *SimpleGlobalManager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper) *StaticMappedProposalManager {
-
 	//todo add dynamic on and off - when not detecting large numbers of proposals turn off F+1 or increase g+1
 	//simps := SimpleProposalManagerNew(id, n, quoralP, minBackoff, maxInitBackoff, maxBackoff, retries, factor, softFac, constBackoff, timeBasedBallots, doStats, tsStats, pStats, iStats, sigNewInst)
-
 	return &StaticMappedProposalManager{
 		SimpleGlobalManager:   simpleProposalManager,
 		SingleInstanceManager: iMan,
@@ -602,21 +600,12 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 		return
 	}
 
-	foundNewCrt := false
 	for i := manager.crtInstance + 1; i <= inst; i++ {
 		if (*instanceSpace)[i] != nil {
 			continue
 		}
 		weIn, themIn := manager.whoMapped(i, int32(ballot.PropID))
 		(*instanceSpace)[i] = GetEmptyInstance()
-		// we must try instances where we are in and they are not
-		if weIn && !themIn {
-			dlog.AgentPrintfN(manager.id, "Setting instance %d as current instance", i-1)
-			if !foundNewCrt {
-				manager.crtInstance = i - 1
-			}
-			foundNewCrt = true
-		}
 		if weIn && themIn {
 			if i == inst {
 				continue // we are going to back off anyway
@@ -629,7 +618,7 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 		if !weIn {
 			//don't need to consider instance as we aren't in it
 			(*instanceSpace)[i].Status = BACKING_OFF
-			dlog.AgentPrintfN(manager.id, "Skipping instance %d as we are not mapped to it", manager.crtInstance)
+			dlog.AgentPrintfN(manager.id, "Skipping instance %d as we are not mapped to it", i)
 		}
 	}
 }

@@ -780,7 +780,7 @@ func (r *Replica) bcastPrepare(instance int32) {
 				sentTo = append(sentTo, i)
 				continue
 			}
-			if !r.AcceptorQrmInfo.IsInGroup(instance, r.Id) {
+			if !r.AcceptorQrmInfo.IsInGroup(instance, i) {
 				continue
 			}
 			sentTo = append(sentTo, i)
@@ -823,68 +823,61 @@ func (r *Replica) bcastAccept(instance int32) {
 	pa.Command = r.instanceSpace[instance].Cmds
 	pa.WhoseCmd = r.instanceSpace[instance].WhoseCmds
 	args := &pa
-	var sentTo []int32
 
 	// fixme lazy way
+
+	sendC := r.F + 1
+	if !r.Thrifty {
+		sendC = r.F*2 + 1
+	}
+
+	pa.LeaderId = -1
 	disklessNOOP := r.disklessNOOP && pa.WhoseCmd == -1 && r.GotPromisesFromAllInGroup(instance, pa.Ballot)
-	if r.bcastAcceptance || disklessNOOP { // no diskless noop should be always bcastaccept as we will have always verified there is no conflict (at least with synchronous acceptor)
-		sentTo = make([]int32, 0, r.N)
-		pa.LeaderId = -1
-		if disklessNOOP {
-			dlog.AgentPrintfN(r.Id, "Broadcasting diskless noop to quorum in instance %d ballot %d.%d", instance, pa.Ballot.Number, pa.Ballot.PropID)
-			pa.LeaderId = -3 // ack but don't store
-		} else if !disklessNOOP && pa.WhoseCmd == -1 {
-			dlog.AgentPrintfN(r.Id, "Broadcasting persistent noop to quorum in instance %d ballot %d.%d", instance, pa.Ballot.Number, pa.Ballot.PropID)
-		}
-		sendC := r.F + 1
-		if !r.Thrifty {
-			sendC = r.F*2 + 1
-		}
+	if disklessNOOP { // no diskless noop should be always bcastaccept as we will have always verified there is no conflict (at least with synchronous acceptor)
+		dlog.AgentPrintfN(r.Id, "Broadcasting diskless noop to quorum in instance %d ballot %d.%d", instance, pa.Ballot.Number, pa.Ballot.PropID)
+		pa.LeaderId = -3 // ack but don't store
+	}
 
-		peerList := r.Replica.GetAliveRandomPeerOrder()
-		if r.sendFastestQrm {
-			peerList = r.Replica.GetPeerOrderLatency()
-		}
+	if !disklessNOOP && pa.WhoseCmd == -1 {
+		dlog.AgentPrintfN(r.Id, "Broadcasting persistent noop to quorum in instance %d ballot %d.%d", instance, pa.Ballot.Number, pa.Ballot.PropID)
+	}
 
-		r.sendAcceptToSelf(instance, args, pa)
-		sentTo = append(sentTo, r.Id)
+	//todo update to get round
+	// then find who is alive
+	// then randomise them
+	// hide figuring out whether we are part of group and how we should send to self
+	//peerList := r.Replica.GetAliveRandomPeerOrder()
+	//if r.sendFastestQrm {
+	//	peerList = r.Replica.GetPeerOrderLatency()
+	//}
 
-		for _, peer := range peerList {
-			if len(sentTo) >= sendC {
-				pa.LeaderId = -2
-			}
-			if peer == r.Id {
-				continue
-			}
-			r.Replica.SendMsg(peer, r.acceptRPC, args)
-			sentTo = append(sentTo, peer)
-		}
-	} else {
-		sentTo = make([]int32, 0, r.N)
-		pa.LeaderId = -1
-		sendC := r.F + 1
-		if !r.Thrifty {
-			sendC = r.F*2 + 1
-		}
-
-		peerList := r.Replica.GetAliveRandomPeerOrder()
-		if r.sendFastestQrm {
-			peerList = r.Replica.GetPeerOrderLatency()
-		}
-
-		if r.AcceptorQrmInfo.IsInGroup(instance, r.Id) {
-			r.sendAcceptToSelf(instance, args, pa)
-			sentTo = append(sentTo, r.Id)
-		}
-
-		for _, peer := range peerList {
-			if len(sentTo) >= sendC {
+	// todo order peerlist by latency or random
+	// send to those in group
+	// -1 = ack, -2 = passive observe, -3 = diskless accept
+	peerList := r.AcceptorQrmInfo.GetGroup(instance)
+	sentTo := make([]int32, 0, r.N)
+	for _, peer := range peerList {
+		if len(sentTo) >= sendC {
+			pa.LeaderId = -2
+			if !r.bcastAcceptance && !disklessNOOP {
 				break
 			}
-			if peer == r.Id {
+		}
+		if peer == r.Id {
+			sentTo = r.sendAcceptToSelf(instance, args, pa, sentTo)
+			continue
+		}
+		r.Replica.SendMsg(peer, r.acceptRPC, args)
+		sentTo = append(sentTo, peer)
+	}
+	if r.bcastAcceptance || r.disklessNOOP {
+		pa.LeaderId = -2
+		// send to those not in group
+		for peer := int32(0); peer < int32(r.N); peer++ {
+			if r.AcceptorQrmInfo.IsInGroup(instance, peer) {
 				continue
 			}
-			if !r.AcceptorQrmInfo.IsInGroup(instance, r.Id) {
+			if peer == r.Id {
 				continue
 			}
 			r.Replica.SendMsg(peer, r.acceptRPC, args)
@@ -904,22 +897,25 @@ func (r *Replica) bcastAccept(instance int32) {
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PROPOSING, r.timeout, r.acceptRPC, args)
 }
 
-func (r *Replica) sendAcceptToSelf(instance int32, args *stdpaxosproto.Accept, pa stdpaxosproto.Accept) {
-	if r.AcceptorQrmInfo.IsInGroup(instance, r.Id) {
-		if r.syncAcceptor {
-			accepance := acceptorSyncHandleAcceptLocal(r.Id, r.Acceptor, args, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance)
-			r.handleAcceptReply(accepance)
-		} else {
-			acc := &stdpaxosproto.Accept{
-				LeaderId: pa.LeaderId,
-				Instance: pa.Instance,
-				Ballot:   pa.Ballot,
-				WhoseCmd: pa.WhoseCmd,
-				Command:  pa.Command,
-			}
-			go func() { r.acceptChan <- acc }()
-		}
+func (r *Replica) sendAcceptToSelf(instance int32, args *stdpaxosproto.Accept, pa stdpaxosproto.Accept, sentTo []int32) []int32 {
+	if !r.AcceptorQrmInfo.IsInGroup(instance, r.Id) {
+		return sentTo
 	}
+	sentTo = append(sentTo, r.Id)
+	if r.syncAcceptor {
+		accepance := acceptorSyncHandleAcceptLocal(r.Id, r.Acceptor, args, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance)
+		r.handleAcceptReply(accepance)
+		return sentTo
+	}
+	acc := &stdpaxosproto.Accept{
+		LeaderId: pa.LeaderId,
+		Instance: pa.Instance,
+		Ballot:   pa.Ballot,
+		WhoseCmd: pa.WhoseCmd,
+		Command:  pa.Command,
+	}
+	go func() { r.acceptChan <- acc }()
+	return sentTo
 }
 
 var pc stdpaxosproto.Commit
@@ -946,7 +942,6 @@ func (r *Replica) bcastCommitToAll(instance int32, ballot stdpaxosproto.Ballot, 
 	argsShort := pcs
 	r.CalculateAlive()
 	if r.bcastAcceptance || (r.disklessNOOP && r.GotPromisesFromAllInGroup(instance, ballot) && pc.WhoseCmd == -1) {
-		//return
 		if !r.bcastCommit {
 			return
 		}
