@@ -2,9 +2,9 @@ package acceptor
 
 import (
 	"bufio"
-	"fastrpc"
+	"epaxos/fastrpc"
+	"epaxos/stdpaxosproto"
 	"io"
-	"stdpaxosproto"
 )
 
 type PromiseLease struct {

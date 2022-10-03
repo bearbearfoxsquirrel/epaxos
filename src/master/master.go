@@ -1,12 +1,12 @@
 package main
 
 import (
+	"epaxos/genericsmrproto"
+	"epaxos/masterproto"
 	"flag"
 	"fmt"
-	"genericsmrproto"
 	"io/ioutil"
 	"log"
-	"masterproto"
 	"net"
 	"net/http"
 	"net/rpc"

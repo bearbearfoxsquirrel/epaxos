@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bindings"
-	"dlog"
+	"epaxos/bindings"
+	"epaxos/dlog"
+	"epaxos/genericsmrproto"
 	"errors"
 	"flag"
 	"fmt"
-	"genericsmrproto"
 	"github.com/google/uuid"
 	"log"
 	"math"

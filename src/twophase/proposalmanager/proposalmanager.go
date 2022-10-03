@@ -1,14 +1,14 @@
 package proposalmanager
 
 import (
-	"dlog"
-	"genericsmr"
-	"instanceagentmapper"
-	"lwcproto"
+	"epaxos/dlog"
+	"epaxos/genericsmr"
+	"epaxos/instanceagentmapper"
+	"epaxos/lwcproto"
+	"epaxos/mathextra"
+	"epaxos/proposerstate"
+	"epaxos/stdpaxosproto"
 	"math"
-	"mathextra"
-	"proposerstate"
-	"stdpaxosproto"
 )
 
 type ProposalManager interface {

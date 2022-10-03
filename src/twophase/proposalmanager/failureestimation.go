@@ -1,8 +1,8 @@
 package proposalmanager
 
 import (
-	"fastrpc"
-	"genericsmr"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
 	"io"
 	"time"
 )

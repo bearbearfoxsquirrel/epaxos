@@ -1,7 +1,7 @@
 package stdpaxosproto
 
 import (
-	"state"
+	"epaxos/state"
 )
 
 func (bal Ballot) GreaterThan(cmp Ballot) bool {

@@ -1,9 +1,9 @@
 package stats
 
 import (
+	"epaxos/lwcproto"
 	"fmt"
 	"log"
-	"lwcproto"
 	"os"
 	"strings"
 	"time"

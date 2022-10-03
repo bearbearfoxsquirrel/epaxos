@@ -1,9 +1,9 @@
 package proposerstate
 
 import (
-	"fastrpc"
-	"genericsmr"
-	"proposer"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
+	"epaxos/proposer"
 	"time"
 )
 

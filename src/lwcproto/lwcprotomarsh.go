@@ -3,10 +3,10 @@ package lwcproto
 import (
 	"bufio"
 	"encoding/binary"
-	"fastrpc"
+	"epaxos/fastrpc"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
 	"io"
-	"state"
-	"stdpaxosproto"
 	"sync"
 )
 

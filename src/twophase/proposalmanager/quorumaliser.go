@@ -1,10 +1,10 @@
 package proposalmanager
 
 import (
-	"dlog"
-	"instanceagentmapper"
-	"lwcproto"
-	"quorumsystem"
+	"epaxos/dlog"
+	"epaxos/instanceagentmapper"
+	"epaxos/lwcproto"
+	"epaxos/quorumsystem"
 )
 
 type InstanceQuormaliser interface {
@@ -26,20 +26,20 @@ type LearnerQuorumaliser interface {
 }
 
 type AcceptorQrmInfo interface {
-	IsInQrm(inst int32, aid int32) bool
+	IsInGroup(inst int32, aid int32) bool
 	GetGroup(inst int32) []int32
 }
 
-////////////////////////////////
+// //////////////////////////////
 // STANDARD
-///////////////////////////////
+// /////////////////////////////
 type Standard struct {
 	quorumsystem.SynodQuorumSystemConstructor
 	Aids []int32
 	MyID int32
 }
 
-func (qrmliser *Standard) IsInQrm(inst int32, aid int32) bool {
+func (qrmliser *Standard) IsInGroup(inst int32, aid int32) bool {
 	return true
 }
 
@@ -84,7 +84,7 @@ func (qrmliser *Standard) GetGroup(inst int32) []int32 {
 //	panic("implement me")
 //}
 //
-//func (q *MinimalSpecific) IsInQrm(inst int32, aid int32) bool {
+//func (q *MinimalSpecific) IsInGroup(inst int32, aid int32) bool {
 //	gi := q.gForInst(inst)
 //	g := q.acceptorGroups[gi]
 //	for i := 0; i < len(g); i++ {
@@ -138,7 +138,7 @@ func (qrmliser *Minimal) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcpr
 	quorumaliser.StartAcceptanceQuorum()
 }
 
-func (qrmliser *Minimal) IsInQrm(inst int32, aid int32) bool {
+func (qrmliser *Minimal) IsInGroup(inst int32, aid int32) bool {
 	if _, exists := qrmliser.MapperCache[inst]; !exists {
 		qrmliser.MapperCache[inst] = qrmliser.AcceptorMapper.GetGroup(inst)
 	}
@@ -182,7 +182,7 @@ func (qrl StaticMapped) TrackProposalAcceptance(pbk *PBK, inst int32, bal lwcpro
 	pbk.Qrms[pbk.PropCurBal].StartAcceptanceQuorum()
 }
 
-func (qrl StaticMapped) IsInQrm(inst int32, aid int32) bool {
+func (qrl StaticMapped) IsInGroup(inst int32, aid int32) bool {
 	for _, aidInQrm := range qrl.GetGroup(inst) {
 		if aid == aidInQrm {
 			return true

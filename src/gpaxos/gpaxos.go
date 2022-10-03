@@ -2,12 +2,12 @@ package gpaxos
 
 import (
 	"bufio"
-	"dlog"
-	"genericsmr"
-	"genericsmrproto"
-	"gpaxosproto"
+	"epaxos/dlog"
+	"epaxos/genericsmr"
+	"epaxos/genericsmrproto"
+	"epaxos/gpaxosproto"
+	"epaxos/state"
 	"log"
-	"state"
 	"sync"
 	"time"
 )

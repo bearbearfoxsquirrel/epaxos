@@ -1,10 +1,10 @@
 package learner
 
 import (
-	"dlog"
-	"instanceagentmapper"
-	"quorum"
-	"quorumsystem"
+	"epaxos/dlog"
+	"epaxos/instanceagentmapper"
+	"epaxos/quorum"
+	"epaxos/quorumsystem"
 )
 
 type AQConstructor interface {
@@ -34,7 +34,7 @@ func GetMinimalGroupAQConstructorr(n, f int32, ids []int32, constructor quorumsy
 	return Minimal{
 		AcceptorMapper: &instanceagentmapper.DetRandInstanceSetMapper{
 			Ids: ids,
-			G:   f + 1,
+			G:   2*f + 1,
 			N:   n,
 		},
 		AcceptanceQuorumsConstructor: constructor,

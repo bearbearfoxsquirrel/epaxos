@@ -1,8 +1,8 @@
 package twophase
 
 import (
-	"batching"
-	"dlog"
+	"epaxos/batching"
+	"epaxos/dlog"
 	"errors"
 	"fmt"
 )

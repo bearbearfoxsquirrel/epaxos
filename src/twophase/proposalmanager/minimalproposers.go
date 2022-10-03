@@ -1,7 +1,7 @@
 package proposalmanager
 
 import (
-	"lwcproto"
+	"epaxos/lwcproto"
 )
 
 // does not protect against own ballots - user must make sure ballot is not own

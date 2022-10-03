@@ -1,12 +1,12 @@
 package proposalmanager
 
 import (
-	"dlog"
+	"epaxos/dlog"
+	"epaxos/lwcproto"
+	"epaxos/stdpaxosproto"
 	"fmt"
-	"lwcproto"
 	"math"
 	"math/rand"
-	"stdpaxosproto"
 	"time"
 )
 

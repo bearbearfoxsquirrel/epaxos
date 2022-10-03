@@ -1,16 +1,51 @@
 package twophase
 
 import (
-	"acceptor"
-	"dlog"
-	"fastrpc"
-	"genericsmr"
-	"stdpaxosproto"
+	"epaxos/acceptor"
+	"epaxos/dlog"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
+	"epaxos/stdpaxosproto"
 )
 
 type PrepareResponsesRPC struct {
 	prepareReply uint8
 	commit       uint8
+}
+
+func acceptorSyncHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC) *stdpaxosproto.PrepareReply {
+	c := acc.RecvPrepareRemote(prepare)
+	msg := <-c
+	if msg.GetType() != rpc.prepareReply {
+		panic("Not got a prepare reply back")
+	}
+	if msg.IsNegative() {
+		panic("Not got a promise back")
+	}
+	return msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
+}
+
+func acceptorSyncHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool) *stdpaxosproto.AcceptReply {
+	c := accptr.RecvAcceptRemote(accept)
+
+	msg := <-c
+	if msg.GetType() != rpc.acceptReply {
+		panic("Not got an accept reply back")
+	}
+	if msg.IsNegative() {
+		panic("Not got an acceptance back")
+	}
+
+	if bcastAcceptance || accept.LeaderId == -3 {
+		dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+		for i := 0; i < replica.N; i++ {
+			if i == int(id) {
+				continue
+			}
+			replica.SendMsg(int32(i), msg.GetType(), msg)
+		}
+	}
+	return msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 }
 
 func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *genericsmr.Replica, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, promiseChan chan<- fastrpc.Serializable) {
@@ -119,12 +154,11 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 			if msg.IsNegative() {
 				continue
 			}
-			//go func() { acceptanceChan <- acc }()
-
-			if !bcastAcceptance { // send acceptances to everyone
+			if !bcastAcceptance && accept.LeaderId != -3 {
 				acceptanceChan <- acc
 				continue
 			}
+			// send acceptances to everyone
 			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
@@ -208,7 +242,7 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 			}
 
 			//go func() {}()
-			if !bcastAcceptance { // if acceptance broadcast
+			if !bcastAcceptance && accept.LeaderId != -3 { // if acceptance broadcast
 				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
 				//acceptanceChan <- resp.GetSerialisable()
 				continue

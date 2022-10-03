@@ -3,9 +3,9 @@ package paxosproto
 import (
 	"bufio"
 	"encoding/binary"
-	"fastrpc"
+	"epaxos/fastrpc"
+	"epaxos/state"
 	"io"
-	"state"
 	"sync"
 )
 
@@ -184,8 +184,9 @@ func (t *PrepareReply) Unmarshal(rr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	t.Command = make([]state.Command, alen1)
+	t.Command = make([]*state.Command, alen1)
 	for i := int64(0); i < alen1; i++ {
+		t.Command[i] = &state.Command{}
 		t.Command[i].Unmarshal(wire)
 	}
 	return nil
@@ -254,6 +255,7 @@ func (t *Accept) Marshal(wire io.Writer) {
 	}
 	for i := int64(0); i < alen1; i++ {
 		t.Command[i].Marshal(wire)
+
 	}
 }
 
@@ -276,8 +278,9 @@ func (t *Accept) Unmarshal(rr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	t.Command = make([]state.Command, alen1)
+	t.Command = make([]*state.Command, alen1)
 	for i := int64(0); i < alen1; i++ {
+		t.Command[i] = &state.Command{}
 		t.Command[i].Unmarshal(wire)
 	}
 	return nil
@@ -320,9 +323,9 @@ func (p *AcceptReplyCache) Put(t *AcceptReply) {
 	p.mu.Unlock()
 }
 func (t *AcceptReply) Marshal(wire io.Writer) {
-	var b [9]byte
+	var b [13]byte
 	var bs []byte
-	bs = b[:8]
+	bs = b[:12]
 	tmp32 := t.Instance
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -333,18 +336,24 @@ func (t *AcceptReply) Marshal(wire io.Writer) {
 	bs[5] = byte(tmp32 >> 8)
 	bs[6] = byte(tmp32 >> 16)
 	bs[7] = byte(tmp32 >> 24)
+	tmp32 = t.Who
+	bs[8] = byte(tmp32)
+	bs[9] = byte(tmp32 >> 8)
+	bs[10] = byte(tmp32 >> 16)
+	bs[11] = byte(tmp32 >> 24)
 	wire.Write(bs)
 }
 
 func (t *AcceptReply) Unmarshal(wire io.Reader) error {
-	var b [8]byte
+	var b [12]byte
 	var bs []byte
-	bs = b[:8]
+	bs = b[:12]
 	if _, err := io.ReadAtLeast(wire, bs, 8); err != nil {
 		return err
 	}
 	t.Instance = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
 	t.Ballot = int32((uint32(bs[4]) | (uint32(bs[5]) << 8) | (uint32(bs[6]) << 16) | (uint32(bs[7]) << 24)))
+	t.Who = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
 	return nil
 }
 
@@ -433,8 +442,9 @@ func (t *Commit) Unmarshal(rr io.Reader) error {
 	if err != nil {
 		return err
 	}
-	t.Command = make([]state.Command, alen1)
+	t.Command = make([]*state.Command, alen1)
 	for i := int64(0); i < alen1; i++ {
+		t.Command[i] = &state.Command{}
 		t.Command[i].Unmarshal(wire)
 	}
 	return nil

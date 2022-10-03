@@ -1,11 +1,11 @@
 package acceptor
 
 import (
-	"dlog"
 	"encoding/binary"
+	"epaxos/dlog"
+	"epaxos/stablestore"
+	"epaxos/stdpaxosproto"
 	"math"
-	"stablestore"
-	"stdpaxosproto"
 	"time"
 )
 
@@ -152,15 +152,17 @@ type prewritePromiseAcceptor struct {
 	standard
 	prewriter
 	proactivePreempt bool
+	disklessNOOPS    bool
 }
 
 //todo add proactive preempt
 
-func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool, promiseLeasesRet chan PromiseLease, iWriteAhead int32, proactivePreemptOnNewB bool) *prewritePromiseAcceptor {
+func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool, promiseLeasesRet chan PromiseLease, iWriteAhead int32, proactivePreemptOnNewB bool, disklessnoops bool) *prewritePromiseAcceptor {
 	a := &prewritePromiseAcceptor{
 		standard:         *StandardAcceptorNew(file, durable, emulatedSS, emulatedWriteTime, id, prepareReplyRPC, acceptReplyRPC, commitRPC, commitShortRPC, catchupOnProceedingCommits),
 		prewriter:        *PrewriterNew(promiseLeasesRet, iWriteAhead, file),
 		proactivePreempt: proactivePreemptOnNewB,
+		disklessNOOPS:    disklessnoops,
 	}
 
 	return a
@@ -255,7 +257,15 @@ func (a *prewritePromiseAcceptor) RecvAcceptRemote(accept *stdpaxosproto.Accept)
 		a.prewriter.updateMaxInstance(a.maxInst)
 		a.writePrewritesToStableStorageUNSAFE()
 		nonDurableAccept(accept, abk, a.stableStore, a.durable)
-		fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
+		if accept.LeaderId != -3 || !a.disklessNOOPS {
+			if accept.WhoseCmd == -1 {
+				dlog.AgentPrintfN(a.meID, "Acceptor durably storing acceptance of noop in instance %d at ballot %d.%d", inst, bal.Number, bal.PropID)
+			} else {
+				fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
+			}
+		} else {
+			dlog.AgentPrintfN(a.meID, "Acceptor not storing acceptance of noop in instance %d at ballot %d.%d", inst, bal.Number, bal.PropID)
+		}
 		a.returnNewPromiseLeases()
 		a.clearPendingPrewrites()
 	}

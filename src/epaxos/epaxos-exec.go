@@ -1,15 +1,13 @@
 package epaxos
 
 import (
-	"CommitExecutionComparator"
-	"time"
-
-	//    "state"
-	"dlog"
-	"epaxosproto"
-	"genericsmrproto"
+	"epaxos/CommitExecutionComparator"
+	"epaxos/dlog"
+	"epaxos/epaxosproto"
+	"epaxos/genericsmrproto"
+	"epaxos/state"
 	"sort"
-	"state"
+	"time"
 )
 
 const (

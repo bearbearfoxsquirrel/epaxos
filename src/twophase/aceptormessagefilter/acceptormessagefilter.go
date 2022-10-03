@@ -1,7 +1,7 @@
 package aceptormessagefilter
 
 import (
-	"instanceagentmapper"
+	"epaxos/instanceagentmapper"
 )
 
 type AcceptorMessageFilter interface {

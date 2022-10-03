@@ -1,9 +1,9 @@
 package proposalmanager
 
 import (
-	"dlog"
-	"lwcproto"
-	"stdpaxosproto"
+	"epaxos/dlog"
+	"epaxos/lwcproto"
+	"epaxos/stdpaxosproto"
 )
 
 type OpenInstSignal interface {
@@ -46,12 +46,12 @@ func (sig *SimpleSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.C
 	if _, e := sig.instsStarted[inst]; !e {
 		return
 	}
-	if (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) && phase == stdpaxosproto.PROMISE {
+	if pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot) {
 		return
 	}
-	if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
-		return
-	}
+	//if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
+	//	return
+	//}
 	//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
 	//	return
 	//}
@@ -130,37 +130,37 @@ func (sig *EagerSig) Opened(o []int32) {
 	sig.SimpleSig.Opened(o)
 }
 
-//func (sig *EagerSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-//	if pbk.Status == CLOSED {
-//		return
+//	func (sig *EagerSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+//		if pbk.Status == CLOSED {
+//			return
+//		}
+//
+//		_, e := sig.instsStarted[inst]
+//		if !e {
+//			return
+//		}
+//
+//		if int32(ballot.PropID) == sig.id && pbk.Status != PROPOSING {
+//			return
+//		}
+//
+//		if (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) && phase == stdpaxosproto.PROMISE {
+//			return
+//		}
+//
+//		if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
+//			return
+//		}
+//
+//
+//		//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
+//		//	return
+//		//}
+//
+//		dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
+//		go func() { sig.sigNewInst <- struct{}{} }()
+//		delete(sig.instsStarted, inst)
 //	}
-//
-//	_, e := sig.instsStarted[inst]
-//	if !e {
-//		return
-//	}
-//
-//	if int32(ballot.PropID) == sig.id && pbk.Status != PROPOSING {
-//		return
-//	}
-//
-//	if (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) && phase == stdpaxosproto.PROMISE {
-//		return
-//	}
-//
-//	if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
-//		return
-//	}
-//
-//
-//	//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
-//	//	return
-//	//}
-//
-//	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
-//	go func() { sig.sigNewInst <- struct{}{} }()
-//	delete(sig.instsStarted, inst)
-//}
 func (manager *EagerSig) Close(inst int32) {
 	delete(manager.instsStarted, inst)
 }

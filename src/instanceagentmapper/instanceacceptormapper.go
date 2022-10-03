@@ -61,7 +61,8 @@ func getGroup(inst int32, numToGet int32, numAgents int32, rem []int32, group []
 	for i := int32(0); i < numToGet; i++ {
 		//get hashed aid from rank
 		random := rand.New(rand.NewSource(int64(inst + i)))
-		selectedRank := int32(random.Int()) % (numAgents - i)
+		r := random.Int31()
+		selectedRank := r % (numAgents - i)
 		selectedAid := rem[selectedRank]
 
 		// add to group

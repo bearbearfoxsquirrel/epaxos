@@ -1,14 +1,14 @@
 package exec
 
 import (
-	"batching"
-	"dlog"
 	"encoding/binary"
-	"genericsmr"
-	"genericsmrproto"
-	"stablestore"
-	"state"
-	_const "twophase/const"
+	"epaxos/batching"
+	"epaxos/dlog"
+	"epaxos/genericsmr"
+	"epaxos/genericsmrproto"
+	"epaxos/stablestore"
+	"epaxos/state"
+	_const "epaxos/twophase/const"
 )
 
 type Executor struct {
@@ -24,7 +24,7 @@ type Executor struct {
 	state  *state.State
 }
 
-func GetExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore, dreply bool) Executor {
+func GetNewExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore, dreply bool) Executor {
 	return Executor{
 		executedUpTo:  0,
 		clientBatches: make([]batching.ProposalBatch, _const.ISpaceLen),

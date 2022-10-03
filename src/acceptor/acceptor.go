@@ -1,11 +1,11 @@
 package acceptor
 
 import (
-	"dlog"
 	"encoding/binary"
-	"stablestore"
-	"state"
-	"stdpaxosproto"
+	"epaxos/dlog"
+	"epaxos/stablestore"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
 	"sync"
 	"time"
 )
@@ -84,7 +84,7 @@ type AcceptorBookkeeping struct {
 	//sync.Mutex
 }
 
-//append a log entry to stable storage
+// append a log entry to stable storage
 func recordInstanceMetadata(abk *AcceptorBookkeeping, stableStore stablestore.StableStore, durable bool) {
 	if !durable {
 		return
@@ -96,7 +96,7 @@ func recordInstanceMetadata(abk *AcceptorBookkeeping, stableStore stablestore.St
 	_, _ = stableStore.Write(b[:])
 }
 
-//write a sequence of commands to stable storage
+// write a sequence of commands to stable storage
 func recordCommands(cmds []*state.Command, stableStore stablestore.StableStore, durable bool) {
 	if !durable {
 		return
@@ -111,7 +111,7 @@ func recordCommands(cmds []*state.Command, stableStore stablestore.StableStore, 
 	}
 }
 
-//fsync with the stable store
+// fsync with the stable store
 func fsync(stableStore stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration) {
 	if !durable {
 		return

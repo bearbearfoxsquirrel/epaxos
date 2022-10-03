@@ -1,8 +1,8 @@
 package lwcproto
 
 import (
-	"state"
-	"stdpaxosproto"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
 )
 
 type Configuration interface {

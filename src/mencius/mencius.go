@@ -1,15 +1,15 @@
 package mencius
 
 import (
-	"dlog"
 	"encoding/binary"
-	"fastrpc"
-	"genericsmr"
-	"genericsmrproto"
+	"epaxos/dlog"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
+	"epaxos/genericsmrproto"
+	"epaxos/menciusproto"
+	"epaxos/state"
 	"io"
 	"log"
-	"menciusproto"
-	"state"
 	"time"
 )
 
@@ -136,7 +136,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thri
 	return r
 }
 
-//append a log entry to stable storage
+// append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	if !r.Durable || r.emulatedSS {
 		return
@@ -154,7 +154,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	r.StableStorage.Write(b[:])
 }
 
-//write a sequence of commands to stable storage
+// write a sequence of commands to stable storage
 func (r *Replica) recordCommand(cmd []state.Command) {
 	if !r.Durable || r.emulatedSS {
 		return
@@ -170,7 +170,7 @@ func (r *Replica) recordCommand(cmd []state.Command) {
 
 //sync with the stable store
 
-//sync with the stable store
+// sync with the stable store
 func (r *Replica) sync() {
 	if !r.Durable {
 		return

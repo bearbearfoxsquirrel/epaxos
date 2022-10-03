@@ -1,16 +1,16 @@
 package epaxos
 
 import (
-	"CommitExecutionComparator"
-	"bloomfilter"
-	"dlog"
 	"encoding/binary"
-	"epaxosproto"
-	"fastrpc"
-	"genericsmr"
-	"genericsmrproto"
+	"epaxos/CommitExecutionComparator"
+	"epaxos/bloomfilter"
+	"epaxos/dlog"
+	"epaxos/epaxosproto"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
+	"epaxos/genericsmrproto"
+	"epaxos/state"
 	"io"
-	"state"
 	"sync"
 	"time"
 )
@@ -217,7 +217,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thri
 	return r
 }
 
-//append a log entry to stable storage
+// append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	if !r.Durable || r.emulatedSS {
 		return
@@ -236,7 +236,7 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	r.StableStorage.Write(b[:])
 }
 
-//write a sequence of commands to stable storage
+// write a sequence of commands to stable storage
 func (r *Replica) recordCommands(cmds []state.Command) {
 	if !r.Durable || r.emulatedSS {
 		return
@@ -305,9 +305,13 @@ func (r *Replica) BatchingEnabled() bool {
 
 /* ============= */
 
-/***********************************
-   Main event processing loop      *
-************************************/
+/*
+**********************************
+
+	Main event processing loop      *
+
+***********************************
+*/
 func (r Replica) replicaLoop() {
 	/*	doner := make(chan struct{})
 		if r.id == 1 {

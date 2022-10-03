@@ -1,15 +1,20 @@
 package paxos
 
 import (
-	"dlog"
-	"fastrpc"
-	"genericsmr"
-	"genericsmrproto"
+	"epaxos/dlog"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
+	"epaxos/genericsmrproto"
+	"epaxos/instanceagentmapper"
+	"epaxos/paxosproto"
+	"epaxos/quorumsystem"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
+	"epaxos/twophase/learner"
+	"epaxos/twophase/proposalmanager"
 	"io"
 	"log"
 	"math"
-	"paxosproto"
-	"state"
 	"time"
 )
 
@@ -21,6 +26,10 @@ const COMMIT_GRACE_PERIOD = 10 * 1e9 // 10 second(s)
 const SLEEP_TIME_NS = 1e6
 
 type Replica struct {
+	learner.Learner
+	proposalmanager.AcceptorQrmInfo
+	proposerInstanceMapper instanceagentmapper.InstanceAgentMapper
+
 	*genericsmr.Replica   // extends a generic Paxos replica
 	prepareChan           chan fastrpc.Serializable
 	acceptChan            chan fastrpc.Serializable
@@ -49,6 +58,7 @@ type Replica struct {
 	emulatedSS            bool
 	emulatedWriteTime     time.Duration
 	sendToFastestQrm      bool
+	pam                   bool
 }
 
 func (r *Replica) CloseUp() {
@@ -58,14 +68,16 @@ func (r *Replica) CloseUp() {
 type InstanceStatus int
 
 const (
-	PREPARING InstanceStatus = iota
+	NOT_STARTED InstanceStatus = iota
+	PREPARING
 	PREPARED
 	ACCEPTED
 	COMMITTED
+	IGNORING
 )
 
 type Instance struct {
-	cmds   []state.Command
+	cmds   []*state.Command
 	bal    int32
 	vbal   int32
 	status InstanceStatus
@@ -77,35 +89,113 @@ type LeaderBookkeeping struct {
 	prepareOKs      int
 	acceptOKs       int
 	nacks           int
-	ballot          int32           // highest ballot at which a command was accepted
-	cmds            []state.Command // the accepted command
-	lastTriedBallot int32           // highest ballot tried so far
+	ballot          int32            // highest ballot at which a command was accepted
+	cmds            []*state.Command // the accepted command
+	lastTriedBallot int32            // highest ballot tried so far
 }
 
-func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, sendToFastestQrm bool) *Replica {
-	r := &Replica{replica,
-		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
-		make(chan int32, 3*genericsmr.CHAN_BUFFER_SIZE),
-		0, 0, 0, 0, 0, 0,
-		false,
-		make([]*Instance, 15*1024*1024),
-		-1,
-		-1,
-		make([]int32, len(peerAddrList)),
-		-1,
-		false,
-		0,
-		true,
-		-1,
-		batchWait,
-		emulatedSS,
-		emulatedWriteTime,
-		sendToFastestQrm}
+func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool,
+	dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration,
+	deadTime int32, sendToFastestQrm bool, minimalAcceptors bool, mappedProposers bool, mappedPropsPerInst int32, pam bool, pamloc string) *Replica {
+	r := &Replica{
+		Replica:               replica,
+		prepareChan:           make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptChan:            make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareReplyChan:      make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptReplyChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitChan:            make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitShortChan:       make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
+		instancesToRecover:    make(chan int32, 3*genericsmr.CHAN_BUFFER_SIZE),
+		prepareRPC:            0,
+		prepareReplyRPC:       0,
+		acceptRPC:             0,
+		acceptReplyRPC:        0,
+		commitRPC:             0,
+		commitShortRPC:        0,
+		IsLeader:              false,
+		instanceSpace:         make([]*Instance, 15*1024*1024),
+		crtInstance:           -1,
+		maxRecvBallot:         -1,
+		defaultBallot:         make([]int32, len(peerAddrList)),
+		smallestDefaultBallot: -1,
+		Shutdown:              false,
+		counter:               0,
+		flush:                 true,
+		executedUpTo:          -1,
+		batchWait:             batchWait,
+		emulatedSS:            emulatedSS,
+		emulatedWriteTime:     emulatedWriteTime,
+		sendToFastestQrm:      sendToFastestQrm,
+		pam:                   pam,
+	}
+
+	pids := make([]int32, r.N)
+	ids := make([]int, r.N)
+	for i := range pids {
+		pids[i] = int32(i)
+		ids[i] = i
+	}
+
+	// Quorum system
+	var qrm quorumsystem.SynodQuorumSystemConstructor
+	qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
+		F:                r.F,
+		Thrifty:          r.Thrifty,
+		Replica:          r.Replica,
+		BroadcastFastest: sendToFastestQrm,
+		AllAids:          pids,
+		SendAllAcceptors: false,
+	}
+
+	var instancequormaliser proposalmanager.InstanceQuormaliser = &proposalmanager.Standard{
+		SynodQuorumSystemConstructor: qrm,
+		Aids:                         pids,
+		MyID:                         r.Id,
+	}
+
+	// LEARNER GROUPS SET UP
+	var aqc learner.AQConstructor
+	stdaqc := learner.GetStandardGroupAQConstructorr(pids, qrm.(quorumsystem.SynodQuorumSystemConstructor), r.Id)
+	aqc = &stdaqc
+
+	// PAM Acceptors
+	if pam {
+		pamapping := instanceagentmapper.ReadFromFile(pamloc)
+		amapping := instanceagentmapper.GetAMap(pamapping)
+		//pmapping := instanceagentmapper.GetPMap(pamapping)
+		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
+		instancequormaliser = &proposalmanager.StaticMapped{
+			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
+			SynodQuorumSystemConstructor: qrm,
+			MyID:                         r.Id,
+		}
+	}
+
+	r.AcceptorQrmInfo = instancequormaliser
+
+	l := learner.GetDesignedLearner(aqc)
+	r.Learner = &l
+
+	var agentMapper instanceagentmapper.InstanceAgentMapper
+	agentMapper = &instanceagentmapper.DetRandInstanceSetMapper{
+		Ids: pids,
+		G:   int32(r.N),
+		N:   int32(r.N),
+	}
+
+	if mappedProposers || pam {
+		agentMapper = &instanceagentmapper.DetRandInstanceSetMapper{
+			Ids: pids,
+			G:   mappedPropsPerInst,
+			N:   int32(r.N),
+		}
+		if pam { // PAM get from file the proposer mappings
+			pamap := instanceagentmapper.ReadFromFile(pamloc)
+			pmap := instanceagentmapper.GetPMap(pamap)
+			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: pmap}
+		}
+	}
+	r.proposerInstanceMapper = agentMapper
 
 	r.Durable = durable
 
@@ -129,7 +219,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isle
 	return r
 }
 
-//append a log entry to stable storage
+// append a log entry to stable storage
 func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	if !r.Durable || r.emulatedSS {
 		return
@@ -140,8 +230,8 @@ func (r *Replica) recordInstanceMetadata(inst *Instance) {
 	r.StableStorage.Write(b[:])
 }
 
-//write a sequence of commands to stable storage
-func (r *Replica) recordCommands(cmds []state.Command) {
+// write a sequence of commands to stable storage
+func (r *Replica) recordCommands(cmds []*state.Command) {
 	if !r.Durable || r.emulatedSS {
 		return
 	}
@@ -154,7 +244,7 @@ func (r *Replica) recordCommands(cmds []state.Command) {
 	}
 }
 
-//sync with the stable store
+// sync with the stable store
 func (r *Replica) sync() {
 	if !r.Durable {
 		return
@@ -181,6 +271,9 @@ func (r *Replica) replyPrepare(replicaId int32, reply *paxosproto.PrepareReply) 
 }
 
 func (r *Replica) replyAccept(replicaId int32, reply *paxosproto.AcceptReply) {
+	if replicaId == r.Id {
+		go func() { r.acceptReplyChan <- reply }()
+	}
 	r.SendMsg(replicaId, r.acceptReplyRPC, reply)
 }
 
@@ -222,13 +315,52 @@ func (r *Replica) run() {
 
 	go r.WaitForClientConnections()
 
+	noopT := &time.Timer{}
+	if r.pam {
+		noopT = time.NewTimer(10 * time.Millisecond)
+	}
+
 	for !r.Shutdown {
 		select {
+		case <-noopT.C:
+			//r.startNextInstance()
+			//inst := r.instanceSpace[r.crtInstance]
+			//lb := inst.lb
+			//dlog.Printf("Pushing no-op")
+			//lb.cmds = state.NOOPP()
+			//inst.cmds = lb.cmds
+			//inst.bal = lb.lastTriedBallot
+			//inst.status = ACCEPTED
+			//
+			//m := int32(math.MaxInt32)
+			//count := 0
+			//for _, e := range r.defaultBallot {
+			//	if e != -1 {
+			//		count++
+			//		if e < m {
+			//			m = e
+			//		}
+			//	}
+			//}
+			//if count >= r.Replica.ReadQuorumSize()-1 && m > r.smallestDefaultBallot {
+			//	r.smallestDefaultBallot = m
+			//}
+			//
+			//r.Learner.ProposalValue(r.crtInstance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, lb.cmds, r.Id)
+			//
+			//r.recordInstanceMetadata(r.instanceSpace[r.crtInstance])
+			//r.sync()
+			//r.bcastAccept(r.crtInstance)
+			//noopT.Reset(10 * time.Millisecond)
+			break
 		case propose := <-onOffProposeChan:
 			//got a Propose from a client
 			r.handlePropose(propose)
 			//deactivate new proposals channel to prioritize the handling of other protocol messages,
 			//and to allow commands to accumulate for batching
+			if r.pam {
+				noopT.Reset(10 * time.Millisecond)
+			}
 			if r.BatchingEnabled() {
 				onOffProposeChan = nil
 			}
@@ -314,7 +446,6 @@ func (r *Replica) bcastPrepare(instance int32) {
 	} else {
 		r.SendToGroup(order[:n], r.prepareRPC, args)
 	}
-
 }
 
 var pa paxosproto.Accept
@@ -331,7 +462,11 @@ func (r *Replica) bcastAccept(instance int32) {
 	pa.Command = r.instanceSpace[instance].lb.cmds
 	args := &pa
 
-	n := r.WriteQuorumSize()
+	sentTo := make([]int32, 0, r.N)
+	sendC := r.F + 1
+	if !r.Thrifty {
+		sendC = r.N
+	}
 
 	var order []int32
 	if r.sendToFastestQrm {
@@ -339,18 +474,40 @@ func (r *Replica) bcastAccept(instance int32) {
 	} else {
 		order = r.GetRandomPeerOrder()
 	}
-	if len(order) < n || !r.Thrifty {
-		r.SendToGroup(order, r.acceptRPC, args)
-	} else {
-		r.SendToGroup(order[:n], r.acceptRPC, args)
+	for _, peer := range order {
+		if len(sentTo) > sendC {
+			break
+		}
+		if !r.AcceptorQrmInfo.IsInGroup(instance, peer) {
+			continue
+		}
+		if peer == r.Id {
+			acc := &paxosproto.Accept{
+				LeaderId: pa.LeaderId,
+				Instance: pa.Instance,
+				Ballot:   pa.Ballot,
+				Command:  pa.Command,
+			}
+			go func() { r.acceptChan <- acc }()
+			continue
+		}
+		r.Replica.SendMsg(peer, r.acceptRPC, args)
+		sentTo = append(sentTo, peer)
 	}
+	dlog.AgentPrintfN(r.Id, "Sending accept for instance %d at ballot %dto Replicas %v", pa.Instance, pa.Ballot, sentTo)
+
+	//	if len(order) < n || !r.Thrifty {
+	//	r.SendToGroup(order, r.acceptRPC, args)
+	//} else {
+	//	r.SendToGroup(order[:n], r.acceptRPC, args)
+	//}
 
 }
 
 var pc paxosproto.Commit
 var pcs paxosproto.CommitShort
 
-func (r *Replica) bcastCommit(instance int32, ballot int32, command []state.Command) {
+func (r *Replica) bcastCommit(instance int32, ballot int32, command []*state.Command) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println("Commit bcast failed:", err)
@@ -368,23 +525,41 @@ func (r *Replica) bcastCommit(instance int32, ballot int32, command []state.Comm
 	argsShort := &pcs
 
 	sent := 0
-	r.Mutex.Lock()
 	for q := 0; q < r.N-1; q++ {
 		if !r.Alive[r.PreferredPeerOrder[q]] {
 			continue
 		}
 		if r.Thrifty {
-			r.SendMsgUNSAFE(r.PreferredPeerOrder[q], r.commitRPC, &pc)
+			r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, &pc)
 		} else {
-			r.SendMsgUNSAFE(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
+			r.SendMsg(r.PreferredPeerOrder[q], r.commitShortRPC, argsShort)
 		}
 		sent++
 	}
-	r.Mutex.Unlock()
+}
+
+func (r *Replica) GetEmptyInstance() *Instance {
+	return &Instance{
+		nil,
+		r.defaultBallot[r.Id],
+		r.defaultBallot[r.Id],
+		NOT_STARTED,
+		&LeaderBookkeeping{nil, 0, 0, 0, r.Id, nil, -1}}
+}
+
+func inGroup(mapped []int32, id int32) bool {
+	inG := false
+	for _, v := range mapped {
+		if v == id {
+			inG = true
+			break
+		}
+	}
+	return inG
 }
 
 func (r *Replica) handlePropose(propose *genericsmr.Propose) {
-	if !r.IsLeader {
+	if !r.IsLeader && !r.pam {
 		dlog.Printf("Not the leader, cannot propose %v\n", propose.CommandId)
 		preply := &genericsmrproto.ProposeReplyTS{FALSE, -1, state.NIL(), 0}
 		r.ReplyProposeTS(preply, propose.Reply, propose.Mutex)
@@ -395,53 +570,91 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	dlog.Printf("Batched %d\n", batchSize)
 
 	proposals := make([]*genericsmr.Propose, batchSize)
-	cmds := make([]state.Command, batchSize)
+	cmds := make([]*state.Command, batchSize)
 	proposals[0] = propose
+	cmds[0] = &propose.Command
 	for i := 1; i < batchSize; i++ {
 		prop := <-r.ProposeChan
 		proposals[i] = prop
-		cmds[i] = prop.Command
+		cmds[i] = &prop.Command
 	}
 
-	r.crtInstance++
-	r.instanceSpace[r.crtInstance] = &Instance{
-		nil,
-		r.defaultBallot[r.Id],
-		r.defaultBallot[r.Id],
-		PREPARING,
-		&LeaderBookkeeping{proposals, 0, 0, 0, r.Id, nil, -1}}
-	r.makeBallot(r.crtInstance)
-
+	r.startNextInstance()
 	inst := r.instanceSpace[r.crtInstance]
+	inst.cmds = cmds
 	lb := inst.lb
+	lb.cmds = cmds
+	lb.clientProposals = proposals
 	r.defaultBallot[r.Id] = lb.lastTriedBallot
 
 	if lb.lastTriedBallot != r.smallestDefaultBallot {
 		dlog.Printf("Classic round for instance %d w. %s\n", r.crtInstance, propose.Command.String())
+		inst.status = PREPARING
 		r.bcastPrepare(r.crtInstance)
 	} else {
-		dlog.Printf("Fast round for instance %d w. %s\n", r.crtInstance, propose.Command.String())
-		inst.cmds = cmds
-		inst.lb.cmds = cmds
 		inst.bal = lb.lastTriedBallot
 		inst.vbal = lb.lastTriedBallot
 		inst.status = ACCEPTED
+		dlog.Printf("Fast round for instance %d w. %s\n", r.crtInstance, propose.Command.String())
+		r.recordInstanceMetadata(r.instanceSpace[r.crtInstance])
+		r.recordCommands(cmds)
+		r.sync()
+		r.Learner.ProposalValue(r.crtInstance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, lb.cmds, r.Id)
+		r.Learner.ProposalAccepted(r.crtInstance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, r.Id)
 		r.bcastAccept(r.crtInstance)
 	}
+}
 
+func (r *Replica) startNextInstance() {
+	for gotInstance := false; !gotInstance; {
+		r.crtInstance++
+		if r.instanceSpace[r.crtInstance] == nil {
+			r.instanceSpace[r.crtInstance] = r.GetEmptyInstance()
+		}
+
+		// todo could add logic to check though leader list (given by proposer order)
+		// if they are failed then take over instance by preparing
+		if r.instanceSpace[r.crtInstance].status != NOT_STARTED {
+			continue
+		}
+
+		l := r.isLeader(r.crtInstance)
+		//inG := inGroup(mapped, r.Id)
+		if !l {
+			dlog.AgentPrintfN(r.Id, "Skipping instance %d as we are not mapped to it", r.crtInstance)
+			r.instanceSpace[r.crtInstance].status = IGNORING
+			continue
+		}
+		gotInstance = true
+		dlog.AgentPrintfN(r.Id, "Starting instance %d as we are mapped to it", r.crtInstance)
+	}
+	r.makeBallot(r.crtInstance)
+	inst := r.instanceSpace[r.crtInstance]
+	inst.status = NOT_STARTED
+	lb := inst.lb
+	r.defaultBallot[r.Id] = lb.lastTriedBallot
+}
+
+func (r *Replica) isLeader(inst int32) bool {
+	if !r.pam && r.Id == 0 {
+		return true
+	}
+	mapped := r.proposerInstanceMapper.GetGroup(inst)
+	dlog.AgentPrintfN(r.Id, "Proposer group for instance %d is %v", inst, mapped)
+	l := mapped[0] == r.Id
+	return l
 }
 
 func (r *Replica) handlePrepare(prepare *paxosproto.Prepare) {
-
 	if prepare.Ballot > r.maxRecvBallot {
 		r.maxRecvBallot = prepare.Ballot
 	}
 
 	inst := r.instanceSpace[prepare.Instance]
 	if inst == nil {
-		if prepare.Instance > r.crtInstance {
-			r.crtInstance = prepare.Instance
-		}
+		//if prepare.Instance > r.crtInstance {
+		//	r.crtInstance = prepare.Instance
+		//}
 		r.instanceSpace[prepare.Instance] = &Instance{
 			nil,
 			r.defaultBallot[r.Id],
@@ -489,10 +702,12 @@ func (r *Replica) handleAccept(accept *paxosproto.Accept) {
 		r.maxRecvBallot = accept.Ballot
 	}
 
+	r.Learner.ProposalValue(accept.Instance, stdpaxosproto.Ballot{accept.Ballot, -1}, accept.Command, -1)
+
 	if inst == nil {
-		if accept.Instance > r.crtInstance {
-			r.crtInstance = accept.Instance
-		}
+		//if accept.Instance > r.crtInstance {
+		//	r.crtInstance = accept.Instance
+		//}
 		r.instanceSpace[accept.Instance] = &Instance{
 			accept.Command,
 			accept.Ballot,
@@ -517,17 +732,16 @@ func (r *Replica) handleAccept(accept *paxosproto.Accept) {
 		r.sync()
 	}
 
-	areply := &paxosproto.AcceptReply{accept.Instance, inst.bal}
+	areply := &paxosproto.AcceptReply{accept.Instance, inst.bal, r.Id}
 	r.replyAccept(accept.LeaderId, areply)
-
 }
 
 func (r *Replica) handleCommit(commit *paxosproto.Commit) {
 	inst := r.instanceSpace[commit.Instance]
 	if inst == nil {
-		if commit.Instance > r.crtInstance {
-			r.crtInstance = commit.Instance
-		}
+		//if commit.Instance > r.crtInstance {
+		//	r.crtInstance = commit.Instance
+		//}
 		r.instanceSpace[commit.Instance] = &Instance{
 			nil,
 			r.defaultBallot[r.Id],
@@ -546,9 +760,10 @@ func (r *Replica) handleCommit(commit *paxosproto.Commit) {
 		dlog.Printf("Smaller ballot %d < %d\n", commit.Ballot, inst.bal)
 		return
 	}
-
 	dlog.Printf("Committing (crtInstance=%d)\n", r.crtInstance)
 
+	r.Learner.ProposalChosen(commit.Instance, stdpaxosproto.Ballot{commit.Ballot, -1})
+	r.Learner.ProposalValue(commit.Instance, stdpaxosproto.Ballot{commit.Ballot, -1}, commit.Command, -1)
 	// FIXME timeout on client side?
 	if inst.lb != nil && inst.lb.clientProposals != nil {
 		for _, p := range inst.lb.clientProposals {
@@ -584,6 +799,7 @@ func (r *Replica) handleCommitShort(commit *paxosproto.CommitShort) {
 	}
 
 	dlog.Printf("Committing \n")
+	r.Learner.ProposalChosen(commit.Instance, stdpaxosproto.Ballot{commit.Ballot, -1})
 	r.instanceSpace[commit.Instance].status = COMMITTED
 	r.instanceSpace[commit.Instance].bal = commit.Ballot
 	r.recordInstanceMetadata(r.instanceSpace[commit.Instance])
@@ -630,14 +846,14 @@ func (r *Replica) handlePrepareReply(preply *paxosproto.PrepareReply) {
 	if lb.prepareOKs+1 >= r.Replica.ReadQuorumSize() {
 		if lb.clientProposals != nil {
 			dlog.Printf("Pushing client proposals")
-			cmds := make([]state.Command, len(lb.clientProposals))
+			cmds := make([]*state.Command, len(lb.clientProposals))
 			for i := 0; i < len(lb.clientProposals); i++ {
-				cmds[i] = lb.clientProposals[i].Command
+				cmds[i] = &lb.clientProposals[i].Command
 			}
 			lb.cmds = cmds
 		} else {
 			dlog.Printf("Pushing no-op")
-			lb.cmds = state.NOOP()
+			lb.cmds = state.NOOPP()
 		}
 		inst.cmds = lb.cmds
 		inst.bal = lb.lastTriedBallot
@@ -658,7 +874,12 @@ func (r *Replica) handlePrepareReply(preply *paxosproto.PrepareReply) {
 		}
 
 		r.recordInstanceMetadata(r.instanceSpace[preply.Instance])
+		r.recordCommands(r.instanceSpace[preply.Instance].cmds)
+		// todo add acceptance
 		r.sync()
+		r.Learner.ProposalValue(preply.Instance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, lb.cmds, r.Id)
+		r.Learner.ProposalAccepted(preply.Instance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, r.Id)
+
 		r.bcastAccept(preply.Instance)
 	}
 
@@ -672,7 +893,7 @@ func (r *Replica) handleAcceptReply(areply *paxosproto.AcceptReply) {
 		r.maxRecvBallot = areply.Ballot
 	}
 
-	if inst.status >= COMMITTED {
+	if inst.status == COMMITTED {
 		dlog.Printf("Already committed ")
 		return
 	}
@@ -695,8 +916,10 @@ func (r *Replica) handleAcceptReply(areply *paxosproto.AcceptReply) {
 		return
 	}
 
-	lb.acceptOKs++
-	if lb.acceptOKs+1 >= r.Replica.WriteQuorumSize() {
+	//lb.acceptOKs++
+	r.Learner.ProposalAccepted(areply.Instance, stdpaxosproto.Ballot{areply.Ballot, -1}, areply.Who)
+	if r.Learner.IsChosen(areply.Instance) && r.Learner.HasLearntValue(areply.Instance) {
+		//if lb.acceptOKs+1 >= r.Replica.WriteQuorumSize() {
 		dlog.Printf("Committing (crtInstance=%d)\n", r.crtInstance)
 		inst = r.instanceSpace[areply.Instance]
 		inst.status = COMMITTED
@@ -742,7 +965,6 @@ func (r *Replica) recover(instance int32) {
 }
 
 func (r *Replica) executeCommands() {
-
 	timeout := int64(0)
 	problemInstance := int32(0)
 

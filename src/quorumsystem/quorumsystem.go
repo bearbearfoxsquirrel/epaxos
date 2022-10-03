@@ -1,12 +1,12 @@
 package quorumsystem
 
 import (
-	"dlog"
-	"fastrpc"
-	"genericsmr"
+	"epaxos/dlog"
+	"epaxos/fastrpc"
+	"epaxos/genericsmr"
+	"epaxos/quorum"
 	"log"
 	"math"
-	"quorum"
 )
 
 //todo figure out when to reset bcast attempts, new phase or never?

@@ -1,18 +1,18 @@
 package twophase
 
 import (
-	"dlog"
-	"instanceagentmapper"
-	"lwcproto"
+	"epaxos/dlog"
+	"epaxos/instanceagentmapper"
+	"epaxos/lwcproto"
+	"epaxos/stdpaxosproto"
+	"epaxos/twophase/proposalmanager"
 	"sort"
-	"stdpaxosproto"
 	"time"
-	"twophase/proposalmanager"
 )
 
-//type AwaitingGroup interface {
-//	GetAwaitingGroup(inst int32) []int32
-//}
+//	type AwaitingGroup interface {
+//		GetAwaitingGroup(inst int32) []int32
+//	}
 type ProposerGroupGetter interface {
 	GetGroup(inst int32) []int32 // change to map of int32[]struct?
 }

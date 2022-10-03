@@ -20,7 +20,6 @@ func ReadFromFile(loc string) []PAM {
 	defer jsonFile.Close()
 	if err != nil {
 		println(err)
-
 	}
 	byteValue, _ := ioutil.ReadAll(jsonFile)
 	var pam []PAM

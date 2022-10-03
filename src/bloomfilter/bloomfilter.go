@@ -1,7 +1,7 @@
 package bloomfilter
 
 import (
-	"bitvec"
+	"epaxos/bitvec"
 	"math"
 )
 

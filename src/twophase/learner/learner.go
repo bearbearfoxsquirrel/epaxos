@@ -1,9 +1,9 @@
 package learner
 
 import (
-	"quorum"
-	"state"
-	"stdpaxosproto"
+	"epaxos/quorum"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
 )
 
 type Learner interface {
@@ -41,7 +41,7 @@ func GetDesignedLearner(qrmC AQConstructor) DesignatedLearner {
 	}
 }
 
-//proposalChosen
+// proposalChosen
 func (l *DesignatedLearner) proposalChosen(inst int32, bal stdpaxosproto.Ballot) {
 	if bal.IsZero() {
 		return
@@ -107,7 +107,7 @@ func (l *DesignatedLearner) ProposalChosen(inst int32, ballot stdpaxosproto.Ball
 	if _, e := l.learnt[inst]; e {
 		return
 	}
-	if _, e := l.val[inst][ballot]; !e {
+	if _, e := l.val[inst][ballot]; !e { // todo should be that if we have not learnt of a value greater than or equal to
 		panic("Designated learner should not learn instance with acceptances without having a value to also learn")
 	}
 	l.learnt[inst] = ballot

@@ -1,13 +1,13 @@
 package twophase
 
 import (
-	"batching"
-	"dlog"
-	"lwcproto"
-	"state"
-	"stats"
-	"stdpaxosproto"
-	"twophase/proposalmanager"
+	"epaxos/batching"
+	"epaxos/dlog"
+	"epaxos/lwcproto"
+	"epaxos/state"
+	"epaxos/stats"
+	"epaxos/stdpaxosproto"
+	"epaxos/twophase/proposalmanager"
 )
 
 type ValuePreemptedHandler interface {

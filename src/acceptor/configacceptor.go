@@ -1,12 +1,12 @@
 package acceptor
 
 import (
-	"dlog"
 	"encoding/binary"
-	"lwcproto"
-	"stablestore"
-	"state"
-	"stdpaxosproto"
+	"epaxos/dlog"
+	"epaxos/lwcproto"
+	"epaxos/stablestore"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
 	"sync"
 	"time"
 )
@@ -108,7 +108,7 @@ func recordConfig(config int32, stableStore stablestore.StableStore, durable boo
 	_, _ = stableStore.Write(b[:])
 }
 
-//append a log entry to stable storage
+// append a log entry to stable storage
 func recordConfigInstanceMetadata(abk *LWCAcceptorBookkeeping, stableStore stablestore.StableStore, durable bool) {
 	if !durable {
 		return

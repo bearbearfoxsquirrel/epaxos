@@ -1,7 +1,7 @@
 package paxosproto
 
 import (
-	"state"
+	"epaxos/state"
 )
 
 const (
@@ -26,26 +26,27 @@ type PrepareReply struct {
 	VBallot       int32
 	DefaultBallot int32
 	AcceptorId    int32
-	Command       []state.Command
+	Command       []*state.Command
 }
 
 type Accept struct {
 	LeaderId int32
 	Instance int32
 	Ballot   int32
-	Command  []state.Command
+	Command  []*state.Command
 }
 
 type AcceptReply struct {
 	Instance int32
 	Ballot   int32
+	Who      int32
 }
 
 type Commit struct {
 	LeaderId int32
 	Instance int32
 	Ballot   int32
-	Command  []state.Command
+	Command  []*state.Command
 }
 
 type CommitShort struct {

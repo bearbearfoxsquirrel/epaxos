@@ -4,18 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"epaxos/genericsmrproto"
+	"epaxos/masterproto"
+	"epaxos/state"
 	"errors"
 	"fmt"
-	"genericsmrproto"
 	"io"
 	"log"
-	"masterproto"
 	"math"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os/exec"
-	"state"
 	"strconv"
 	"strings"
 	"sync"
@@ -344,31 +344,31 @@ func (b *Parameters) Submit(args genericsmrproto.Propose) {
 }
 
 /*
-func (b *Parameters) ListenForResponses() state.Value {
-	for i := 0; i < b.n; i++ {
-		if b.servers[i] != nil {
-			value, err := b.waitReplies(i)
-			if err != nil {
+	func (b *Parameters) ListenForResponses() state.Value {
+		for i := 0; i < b.n; i++ {
+			if b.servers[i] != nil {
+				value, err := b.waitReplies(i)
+				if err != nil {
 
-				log.Println("Error: ", err)
+					log.Println("Error: ", err)
 
-				for err != nil && b.retries > 0 {
-					b.retries--
-					b.Disconnect()
-					log.Println("Reconnecting ...")
-					time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
-					err = b.Connect()
+					for err != nil && b.retries > 0 {
+						b.retries--
+						b.Disconnect()
+						log.Println("Reconnecting ...")
+						time.Sleep(TIMEOUT) // must be inline with the closest quorum re-computation
+						err = b.Connect()
+					}
+
+					if err != nil && b.retries == 0 {
+						log.Fatal("Cannot recover.")
+					}
+
 				}
-
-				if err != nil && b.retries == 0 {
-					log.Fatal("Cannot recover.")
-				}
-
+				return value
 			}
-			return value
 		}
 	}
-}
 */
 func (b *Parameters) execute(args genericsmrproto.Propose) {
 	if b.isFast {

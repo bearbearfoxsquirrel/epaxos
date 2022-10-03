@@ -1,11 +1,11 @@
 package proposalmanager
 
 import (
-	"batching"
-	"lwcproto"
-	"quorumsystem"
-	"state"
-	"stdpaxosproto"
+	"epaxos/batching"
+	"epaxos/lwcproto"
+	"epaxos/quorumsystem"
+	"epaxos/state"
+	"epaxos/stdpaxosproto"
 )
 
 type ProposerStatus int

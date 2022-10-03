@@ -1,6 +1,6 @@
 package acceptor
 
-import "fastrpc"
+import "epaxos/fastrpc"
 
 type Message interface {
 	ToWhom() int32

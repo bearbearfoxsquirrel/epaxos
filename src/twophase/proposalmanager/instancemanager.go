@@ -1,10 +1,10 @@
 package proposalmanager
 
 import (
-	"dlog"
-	"lwcproto"
-	"stats"
-	"stdpaxosproto"
+	"epaxos/dlog"
+	"epaxos/lwcproto"
+	"epaxos/stats"
+	"epaxos/stdpaxosproto"
 	"time"
 )
 

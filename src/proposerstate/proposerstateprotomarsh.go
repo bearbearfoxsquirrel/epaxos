@@ -2,7 +2,7 @@ package proposerstate
 
 import (
 	"encoding/binary"
-	"fastrpc"
+	"epaxos/fastrpc"
 	"io"
 )
 

@@ -1,8 +1,8 @@
 package batching
 
 import (
-	"genericsmr"
-	"state"
+	"epaxos/genericsmr"
+	"epaxos/state"
 	"time"
 )
 
