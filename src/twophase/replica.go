@@ -927,7 +927,7 @@ func (r *Replica) bcastCommitToAll(instance int32, ballot stdpaxosproto.Ballot, 
 			dlog.Println("commit bcast preempted:", err)
 		}
 	}()
-	pc.LeaderId = r.Id // fixme should be ballot prop id?
+	pc.LeaderId = r.Id
 	pc.Instance = instance
 	pc.Ballot = ballot
 	pc.WhoseCmd = r.instanceSpace[instance].WhoseCmds
