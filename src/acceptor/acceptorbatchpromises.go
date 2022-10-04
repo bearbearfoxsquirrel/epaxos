@@ -260,9 +260,8 @@ func (a *prewritePromiseAcceptor) RecvAcceptRemote(accept *stdpaxosproto.Accept)
 		if accept.LeaderId != -3 || !a.disklessNOOPS {
 			if accept.WhoseCmd == -1 {
 				dlog.AgentPrintfN(a.meID, "Acceptor durably storing acceptance of noop in instance %d at ballot %d.%d", inst, bal.Number, bal.PropID)
-			} else {
-				fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 			}
+			fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 		} else {
 			dlog.AgentPrintfN(a.meID, "Acceptor not storing acceptance of noop in instance %d at ballot %d.%d", inst, bal.Number, bal.PropID)
 		}
