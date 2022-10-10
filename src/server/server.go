@@ -139,6 +139,7 @@ var pam = flag.Bool("pam", false, "Do proposer acceptor mapping from file")
 var pamloc = flag.String("pamloc", "./pam.json", "Location of the pam file")
 var syncacceptor = flag.Bool("synca", false, "2 Phase acceptor synchronously prepares and accepts")
 var disklessnoops = flag.Bool("disklessnoops", false, "Use diskless noops")
+var foceDisklessnoops = flag.Bool("fdisklessnoops", false, "Force diskless noops")
 
 func main() {
 
@@ -253,7 +254,7 @@ func main() {
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt,
-			*pam, *pamloc, *syncacceptor, *disklessnoops)
+			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops)
 		runnable = rep
 		rpc.Register(rep)
 		//}

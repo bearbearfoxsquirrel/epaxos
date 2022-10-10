@@ -163,21 +163,24 @@ type Replica struct {
 	proposedBatcheNumber   map[int32]int32
 	doPatientProposals     bool
 	patientProposals
-	startInstanceSig     chan struct{}
-	doEager              bool
-	promiseLeases        chan acceptor.PromiseLease
-	classesLeased        map[int32]stdpaxosproto.Ballot
-	iWriteAhead          int32
-	writeAheadAcceptor   bool
-	tryInitPropose       chan proposalmanager.RetryInfo
-	sendFastestQrm       bool
-	nudge                chan chan batching.ProposalBatch
-	bcastCommit          bool
-	nopreempt            bool
-	bcastAcceptance      bool
-	syncAcceptor         bool
-	disklessNOOP         bool
-	disklessNOOPPromises map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}
+	startInstanceSig   chan struct{}
+	doEager            bool
+	promiseLeases      chan acceptor.PromiseLease
+	classesLeased      map[int32]stdpaxosproto.Ballot
+	iWriteAhead        int32
+	writeAheadAcceptor bool
+	tryInitPropose     chan proposalmanager.RetryInfo
+	sendFastestQrm     bool
+	nudge              chan chan batching.ProposalBatch
+	bcastCommit        bool
+	nopreempt          bool
+	bcastAcceptance    bool
+	syncAcceptor       bool
+	disklessNOOP       bool
+
+	disklessNOOPPromisesAwaiting map[int32]chan struct{}
+	disklessNOOPPromises         map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}
+	forceDisklessNOOP            bool
 }
 
 type ProposalLatencyEstimator struct {
@@ -220,38 +223,40 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int32,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
 	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool,
-	q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool) *Replica {
+	q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool, forceDisklessNOOP bool) *Replica {
 
 	r := &Replica{
-		disklessNOOPPromises: make(map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}),
-		disklessNOOP:         disklessNOOP,
-		syncAcceptor:         syncaceptor,
-		nopreempt:            nopreempt,
-		bcastCommit:          bcastCommit,
-		nudge:                make(chan chan batching.ProposalBatch, maxOpenInstances*int32(replica.N)),
-		sendFastestQrm:       sendFastestAccQrm,
-		Replica:              replica,
-		proposedBatcheNumber: make(map[int32]int32),
-		bcastAcceptance:      bcastAcceptance,
-		stateChan:            make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		configChan:           make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		prepareChan:          make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		acceptChan:           make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		commitChan:           make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		commitShortChan:      make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		prepareReplyChan:     make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		acceptReplyChan:      make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
-		tryInitPropose:       make(chan proposalmanager.RetryInfo, 100),
-		prepareRPC:           0,
-		acceptRPC:            0,
-		commitRPC:            0,
-		commitShortRPC:       0,
-		prepareReplyRPC:      0,
-		acceptReplyRPC:       0,
-		instanceSpace:        make([]*proposalmanager.PBK, _const.ISpaceLen),
-		Shutdown:             false,
-		counter:              0,
-		flush:                true,
+		disklessNOOPPromises:         make(map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}),
+		disklessNOOPPromisesAwaiting: make(map[int32]chan struct{}),
+		forceDisklessNOOP:            forceDisklessNOOP,
+		disklessNOOP:                 disklessNOOP,
+		syncAcceptor:                 syncaceptor,
+		nopreempt:                    nopreempt,
+		bcastCommit:                  bcastCommit,
+		nudge:                        make(chan chan batching.ProposalBatch, maxOpenInstances*int32(replica.N)),
+		sendFastestQrm:               sendFastestAccQrm,
+		Replica:                      replica,
+		proposedBatcheNumber:         make(map[int32]int32),
+		bcastAcceptance:              bcastAcceptance,
+		stateChan:                    make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		configChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareChan:                  make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitShortChan:              make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareReplyChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptReplyChan:              make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
+		tryInitPropose:               make(chan proposalmanager.RetryInfo, 100),
+		prepareRPC:                   0,
+		acceptRPC:                    0,
+		commitRPC:                    0,
+		commitShortRPC:               0,
+		prepareReplyRPC:              0,
+		acceptReplyRPC:               0,
+		instanceSpace:                make([]*proposalmanager.PBK, _const.ISpaceLen),
+		Shutdown:                     false,
+		counter:                      0,
+		flush:                        true,
 		//executedUpTo:                -1, //get from storage
 		maxBatchWait:                batchWait,
 		crtOpenedInstances:          make([]int32, maxOpenInstances),
@@ -813,8 +818,7 @@ func (r *Replica) sendPrepareToSelf(args *stdpaxosproto.Prepare) {
 	}
 }
 
-//var pa stdpaxosproto.Accept
-
+// var pa stdpaxosproto.Accept
 func (r *Replica) bcastAccept(instance int32) {
 	var pa stdpaxosproto.Accept
 	pa.LeaderId = r.Id
@@ -825,7 +829,6 @@ func (r *Replica) bcastAccept(instance int32) {
 	args := &pa
 
 	// fixme lazy way
-
 	sendC := r.F + 1
 	if !r.Thrifty {
 		sendC = r.F*2 + 1
@@ -842,34 +845,35 @@ func (r *Replica) bcastAccept(instance int32) {
 		dlog.AgentPrintfN(r.Id, "Broadcasting persistent noop to quorum in instance %d ballot %d.%d", instance, pa.Ballot.Number, pa.Ballot.PropID)
 	}
 
-	//todo update to get round
-	// then find who is alive
-	// then randomise them
-	// hide figuring out whether we are part of group and how we should send to self
-	//peerList := r.Replica.GetAliveRandomPeerOrder()
-	//if r.sendFastestQrm {
-	//	peerList = r.Replica.GetPeerOrderLatency()
-	//}
-
 	// todo order peerlist by latency or random
 	// send to those in group
 	// -1 = ack, -2 = passive observe, -3 = diskless accept
-	peerList := r.AcceptorQrmInfo.GetGroup(instance)
+	// first try to send to self
 	sentTo := make([]int32, 0, r.N)
+	peerList := r.AcceptorQrmInfo.GetGroup(instance)
+	for _, peer := range peerList {
+		if peer == r.Id {
+			sentTo = r.sendAcceptToSelf(args, sentTo)
+			break
+		}
+	}
+
+	// then try to send to everyone else in acceptor group
 	for _, peer := range peerList {
 		if len(sentTo) >= sendC {
 			pa.LeaderId = -2
 			if !r.bcastAcceptance && !disklessNOOP {
 				break
 			}
-		}
-		if peer == r.Id {
-			sentTo = r.sendAcceptToSelf(instance, args, pa, sentTo)
-			continue
+			if peer == r.Id {
+				continue
+			}
 		}
 		r.Replica.SendMsg(peer, r.acceptRPC, args)
 		sentTo = append(sentTo, peer)
 	}
+
+	// then if bcasting accept (happens when diskless nooping) bcast to everyone else so they know of value
 	if r.bcastAcceptance || r.disklessNOOP {
 		pa.LeaderId = -2
 		// send to those not in group
@@ -878,6 +882,7 @@ func (r *Replica) bcastAccept(instance int32) {
 				continue
 			}
 			if peer == r.Id {
+				sentTo = r.sendAcceptToSelf(args, sentTo)
 				continue
 			}
 			r.Replica.SendMsg(peer, r.acceptRPC, args)
@@ -897,22 +902,22 @@ func (r *Replica) bcastAccept(instance int32) {
 	//r.beginTimeout(args.Instance, args.Ballot, proposalmanager.PROPOSING, r.timeout, r.acceptRPC, args)
 }
 
-func (r *Replica) sendAcceptToSelf(instance int32, args *stdpaxosproto.Accept, pa stdpaxosproto.Accept, sentTo []int32) []int32 {
-	if !r.AcceptorQrmInfo.IsInGroup(instance, r.Id) {
+func (r *Replica) sendAcceptToSelf(args *stdpaxosproto.Accept, sentTo []int32) []int32 {
+	sentTo = append(sentTo, r.Id)
+	if args.LeaderId == -2 {
 		return sentTo
 	}
-	sentTo = append(sentTo, r.Id)
 	if r.syncAcceptor {
 		accepance := acceptorSyncHandleAcceptLocal(r.Id, r.Acceptor, args, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance)
 		r.handleAcceptReply(accepance)
 		return sentTo
 	}
 	acc := &stdpaxosproto.Accept{
-		LeaderId: pa.LeaderId,
-		Instance: pa.Instance,
-		Ballot:   pa.Ballot,
-		WhoseCmd: pa.WhoseCmd,
-		Command:  pa.Command,
+		LeaderId: args.LeaderId,
+		Instance: args.Instance,
+		Ballot:   args.Ballot,
+		WhoseCmd: args.WhoseCmd,
+		Command:  args.Command,
 	}
 	go func() { r.acceptChan <- acc }()
 	return sentTo
@@ -1111,6 +1116,9 @@ func (r *Replica) HandlePromise(preply *stdpaxosproto.PrepareReply) {
 			r.disklessNOOPPromises[preply.Instance][preply.Cur] = make(map[int32]struct{})
 		}
 		r.disklessNOOPPromises[preply.Instance][preply.Cur][preply.AcceptorId] = struct{}{}
+		if c, ec := r.disklessNOOPPromisesAwaiting[preply.Instance]; ec && r.GotPromisesFromAllInGroup(preply.Instance, preply.Cur) {
+			c <- struct{}{}
+		}
 	}
 	if pbk.Status != proposalmanager.PREPARING {
 		return
@@ -1375,18 +1383,25 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 }
 
 func (r *Replica) BeginWaitingForClientProposals(inst int32, pbk *proposalmanager.PBK) {
+	if c, e := r.disklessNOOPPromisesAwaiting[inst]; e {
+		close(c) // safe to close as handling promises and this method are on same thread (no read/write conflict)
+	}
+	c := make(chan struct{}, 1)
+	r.disklessNOOPPromisesAwaiting[inst] = c
 	t := time.NewTimer(r.noopWait)
+	if r.forceDisklessNOOP {
+		t.C = nil
+	}
 	go func(curBal stdpaxosproto.Ballot) {
 		var bat batching.ProposalBatch = nil
 		select {
 		case b := <-r.Queueing.GetHead():
 			r.Queueing.Dequeued(b, func() {
 				bat = b
-				//dlog.AgentPrintfN(r.Id, "Received batch with UID %d to attempt to propose in instance %d", b.GetUID(), inst)
 			})
 			break
 		case <-t.C:
-			//dlog.AgentPrintfN(r.Id, "Noop wait expired for instance %d", inst)
+		case <-c:
 			break
 		}
 		r.proposableInstances <- ProposalInfo{

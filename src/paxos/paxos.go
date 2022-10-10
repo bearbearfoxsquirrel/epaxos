@@ -59,6 +59,7 @@ type Replica struct {
 	emulatedWriteTime     time.Duration
 	sendToFastestQrm      bool
 	pam                   bool
+	proposeraccept        instanceagentmapper.PAM
 }
 
 func (r *Replica) CloseUp() {

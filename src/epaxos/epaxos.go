@@ -192,6 +192,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thri
 	}
 
 	r.exec = &Exec{r}
+	r.Exec = exec
 
 	cpMarker = make([]state.Command, 0)
 
