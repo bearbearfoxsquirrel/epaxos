@@ -18,22 +18,22 @@ type Batchable interface {
 	getBatch() ProposalBatch
 }
 
-type batch struct {
-	proposals []*genericsmr.Propose
-	cmds      []*state.Command
-	uid       int32
+type Batch struct {
+	Proposals []*genericsmr.Propose
+	Cmds      []*state.Command
+	Uid       int32
 }
 
-func (p *batch) GetProposals() []*genericsmr.Propose {
-	return p.proposals
+func (p *Batch) GetProposals() []*genericsmr.Propose {
+	return p.Proposals
 }
 
-func (p *batch) GetCmds() []*state.Command {
-	return p.cmds
+func (p *Batch) GetCmds() []*state.Command {
+	return p.Cmds
 }
 
-func (p *batch) GetUID() int32 {
-	return p.uid
+func (p *Batch) GetUID() int32 {
+	return p.Uid
 }
 
 type ProposalBatcher struct {
@@ -82,7 +82,7 @@ type EagerNudgeSend struct {
 //			batchC := batcher.getBatch()
 //			batcher.batchedProposals <- batchC
 //			onBatch()
-//			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+//			dlog.AgentPrintfN(batcher.myId, "Batcher client proposal Batch of length %d bytes satisfied, now handing over Batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 //			batcher.startNextBatch()
 //			break
 //
@@ -92,7 +92,7 @@ type EagerNudgeSend struct {
 //		//		break
 //		//	}
 //		//	batchC := batcher.getBatch()
-//		//	dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+//		//	dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal Batch of length %d bytes, now handing over partly filled Batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 //		//	batcher.batchedProposals <- batchC
 //		//	onBatch()
 //		//	batcher.startNextBatch()
@@ -102,11 +102,11 @@ type EagerNudgeSend struct {
 //
 //			}
 //			//if !batcher.hasBatch() {
-//			//	dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
+//			//	dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not Batch to pass on to replica")
 //			//	break
 //			//}
 //			//batchC := batcher.getBatch()
-//			//dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+//			//dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal Batch of length %d bytes, now handing over partly filled Batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 //			//batcher.batchedProposals <- batchC
 //			//onBatch()
 //			//batcher.startNextBatch()
@@ -144,7 +144,7 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 			}
 			batchC := batcher.getBatch()
 			batcher.batchedProposals <- batchC
-			//dlog.AgentPrintfN(batcher.myId, "Batcher client proposal batch of length %d bytes satisfied, now handing over batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			//dlog.AgentPrintfN(batcher.myId, "Batcher client proposal Batch of length %d bytes satisfied, now handing over Batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.startNextBatch()
 			break
 		case <-batcher.curTimeout.C:
@@ -153,19 +153,19 @@ func StartBatching(myId int32, in <-chan *genericsmr.Propose, out chan<- Proposa
 				break
 			}
 			batchC := batcher.getBatch()
-			//dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			//dlog.AgentPrintfN(batcher.myId, "Batcher timed out on acquiring a client proposal Batch of length %d bytes, now handing over partly filled Batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
 			batcher.batchedProposals <- batchC
 			batcher.startNextBatch()
 			break
 		case ret := <-nudge:
 			if !batcher.hasBatch() {
-				//dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not batch to pass on to replica")
+				//dlog.AgentPrintfN(batcher.myId, "Batcher ignoring nudge as there is not Batch to pass on to replica")
 				go func() { ret <- nil }()
 				break
 			}
 			batchC := batcher.getBatch()
-			//dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal batch of length %d bytes, now handing over partly filled batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
-			go func(b *batch) { ret <- b }(batchC)
+			//dlog.AgentPrintfN(batcher.myId, "Batcher nudged so giving client proposal Batch of length %d bytes, now handing over partly filled Batch with UID %d to replica", batcher.curBatchSize, batchC.GetUID())
+			go func(b *Batch) { ret <- b }(batchC)
 			batcher.startNextBatch()
 			break
 			//case requeue := <-batcher.requeue:
@@ -207,11 +207,11 @@ func (b *ProposalBatcher) startNextBatch() {
 	b.resetTimeout()
 }
 
-func (b *ProposalBatcher) getBatch() *batch {
-	batchC := &batch{
-		proposals: b.curBatchProposals,
-		cmds:      b.curBatchCmds,
-		uid:       b.curUID,
+func (b *ProposalBatcher) getBatch() *Batch {
+	batchC := &Batch{
+		Proposals: b.curBatchProposals,
+		Cmds:      b.curBatchCmds,
+		Uid:       b.curUID,
 	}
 	return batchC
 }

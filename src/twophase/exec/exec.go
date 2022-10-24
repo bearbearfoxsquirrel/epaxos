@@ -24,9 +24,17 @@ type Executor struct {
 	state  *state.State
 }
 
+type ExecInformer interface {
+	GetExecutedUpTo() int32
+}
+
+func (e *Executor) GetExecutedUpTo() int32 {
+	return e.executedUpTo
+}
+
 func GetNewExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore, dreply bool) Executor {
 	return Executor{
-		executedUpTo:  0,
+		executedUpTo:  -1,
 		clientBatches: make([]batching.ProposalBatch, _const.ISpaceLen),
 		cmds:          make([][]*state.Command, _const.ISpaceLen),
 		learnt:        make([]bool, _const.ISpaceLen),

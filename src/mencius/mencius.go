@@ -214,8 +214,6 @@ func (r *Replica) run() {
 
 	r.ConnectToPeers()
 
-	//r.RandomisePeerOrder()
-
 	if r.Exec {
 		go r.executeCommands()
 	}

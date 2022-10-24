@@ -61,7 +61,7 @@ func (a *prewriter) updateInstancesToPrewriteBasedOnIBound(meId int32) {
 		//dlog.AgentPrintfN(a.meID, "Max instance is %d. No need to write ahead new promises", a.maxInstance)
 		return
 	}
-	dlog.AgentPrintfN(meId, "Max instance %d has broken write ahead bound (written up to instance %d), writing now ahead to instance %d", a.maxInst, a.maxPrewrittenC*a.iWriteAhead, (a.maxPrewrittenC+1)*a.iWriteAhead)
+	dlog.AgentPrintfN(meId, "Max instance %d has broken write ahead bound (written up to instance %d). Writing now ahead to instance %d.", a.maxInst, a.maxPrewrittenC*a.iWriteAhead, (a.maxPrewrittenC+1)*a.iWriteAhead)
 	a.prewriteNextClass()
 }
 
@@ -421,7 +421,7 @@ func (a *prewrittenBatcher) doPrepareBatch() bool {
 		dlog.AgentPrintfN(a.meID, "Promises in batch past prewriten ballots. Must write to storage before responding.")
 		a.updateInstancesToPrewriteBasedOnIBound(a.meID)
 		a.persistAll()
-		dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning prepare and accept responses for %d instances", len(a.awaitingPrepareReplies)+len(a.awaitingAcceptReplies))
+		dlog.AgentPrintfN(a.meID, "Acceptor batch performed. Now returning prepare and accept responses for %d instances.", len(a.awaitingPrepareReplies)+len(a.awaitingAcceptReplies))
 		a.returnPrepareAndAcceptRepliesAndClear()
 		dlog.AgentPrintfN(a.meID, "Acceptor done returning responses")
 		return true
@@ -438,7 +438,7 @@ func (a *prewrittenBatcher) doAcceptBatch() {
 	a.prewriter.updateMaxInstance(a.maxInstance)
 	a.updateInstancesToPrewriteBasedOnIBound(a.meID)
 	a.persistAll()
-	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses for %d instances", len(a.awaitingAcceptReplies))
+	dlog.AgentPrintfN(a.meID, "Acceptor batch performed. now returning responses for %d instances.", len(a.awaitingAcceptReplies))
 	a.returnAcceptRepliesAndClear()
 	dlog.AgentPrintfN(a.meID, "Acceptor done returning responses")
 	return

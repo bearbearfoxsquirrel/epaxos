@@ -579,7 +579,7 @@ func (a *betterBatching) batchPersister() {
 }
 
 func (a *batchingAcceptor) doBatch() {
-	dlog.AgentPrintfN(a.meID, "Acceptor batch starting, now persisting received ballots")
+	dlog.AgentPrintfN(a.meID, "Acceptor batch starting. Now persisting received ballots.")
 	for instToResp, _ := range a.awaitingPrepareReplies {
 		abk := a.instanceState[instToResp]
 		recordInstanceMetadata(abk, a.stableStore, a.durable)
@@ -596,7 +596,7 @@ func (a *batchingAcceptor) doBatch() {
 	}
 
 	fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
-	dlog.AgentPrintfN(a.meID, "Acceptor batch performed, now returning responses for %d instances", len(a.awaitingPrepareReplies)+len(a.awaitingAcceptReplies))
+	dlog.AgentPrintfN(a.meID, "Acceptor batch performed. Now returning responses for %d instances.", len(a.awaitingPrepareReplies)+len(a.awaitingAcceptReplies))
 
 	a.returnPrepareAndAcceptRepliesAndClear()
 	dlog.AgentPrintfN(a.meID, "Acceptor done returning responses")

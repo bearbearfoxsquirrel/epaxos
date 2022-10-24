@@ -4,13 +4,21 @@ import (
 	"epaxos/dlog"
 	"epaxos/lwcproto"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/exec"
 )
 
 type OpenInstSignal interface {
 	Opened(opened []int32)
+}
+
+type BallotOpenInstanceSignal interface {
 	CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase)
 	CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
 	CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal)
+}
+
+type ExecOpenInstanceSignal interface {
+	CheckExec(oracle CrtInstanceOracle, informer exec.ExecInformer)
 }
 
 type SimpleSig struct {
@@ -37,9 +45,9 @@ func (sig *SimpleSig) Opened(opened []int32) {
 }
 
 func (sig *SimpleSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-	if pbk.Status == CLOSED {
-		return
-	}
+	//if pbk.Status == CLOSED {
+	//	return
+	//}
 	if int32(ballot.PropID) == sig.id {
 		return
 	}
@@ -52,9 +60,9 @@ func (sig *SimpleSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.C
 	//if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
 	//	return
 	//}
-	//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
-	//	return
-	//}
+	if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
+		return
+	}
 
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
 	delete(sig.instsStarted, inst)
@@ -62,9 +70,9 @@ func (sig *SimpleSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.C
 }
 
 func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-	if pbk.Status == CLOSED {
-		return
-	}
+	//if pbk.Status == CLOSED {
+	//	return
+	//}
 	if int32(ballot.PropID) == sig.id {
 		return
 	}
@@ -84,9 +92,9 @@ func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.
 }
 
 func (sig *SimpleSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
-	if pbk.Status == CLOSED {
-		return
-	}
+	//if pbk.Status == CLOSED {
+	//	return
+	//}
 	// either we choose or didn't start the instance
 	if _, e := sig.instsStarted[inst]; !e {
 		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 2", inst)
@@ -101,9 +109,45 @@ func (sig *SimpleSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBa
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
-//func (sig *SimpleSig) CheckPreempted(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, reason string) {
+// func (sig *SimpleSig) CheckPreempted(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, reason string) {
 //
-//}
+// }
+type EagerExecUpToSig struct {
+	EagerSig
+	n   float32
+	fac float32
+}
+
+func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32) *EagerExecUpToSig {
+	return &EagerExecUpToSig{
+		EagerSig: *eagerSig,
+		n:        n,
+		fac:      fac,
+	}
+}
+
+func (manager *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
+	//if pbk.Status == CLOSED {
+	//	return
+	//}
+	if _, e := manager.instsStarted[inst]; !e {
+		return
+	}
+	delete(manager.instsStarted, inst)
+}
+
+func (manager *EagerExecUpToSig) CheckExec(oracle CrtInstanceOracle, informer exec.ExecInformer) {
+	dlog.AgentPrintfN(manager.id, "Checking whether to open up new instances")
+	if oracle.GetCrtInstance() > informer.GetExecutedUpTo()+int32(float32(manager.MaxOpenInsts)*manager.n*manager.fac) {
+		dlog.AgentPrintfN(manager.id, "Not opening up new instances as executed instance %d hasn't caught up with current instance %d", informer.GetExecutedUpTo(), oracle.GetCrtInstance())
+		return
+	}
+
+	dlog.AgentPrintfN(manager.id, "Signalling to open %d new instance(s) as executed instance has caught up", manager.MaxOpenInsts-int32(len(manager.instsStarted)))
+	for i := int32(0); i < manager.MaxOpenInsts-int32(len(manager.instsStarted)); i++ {
+		go func() { manager.sigNewInst <- struct{}{} }()
+	}
+}
 
 type EagerSig struct {
 	*SimpleSig
@@ -111,6 +155,7 @@ type EagerSig struct {
 }
 
 func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
+	//exec.
 	e := &EagerSig{
 		SimpleSig:    simpleSig,
 		MaxOpenInsts: maxOI,
@@ -124,43 +169,12 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 }
 
 func (sig *EagerSig) Opened(o []int32) {
-	if int32(len(sig.instsStarted)) >= sig.MaxOpenInsts {
-		panic("saldkjfakl;jfls;kdfj")
-	}
+	//if int32(len(sig.instsStarted)) >= sig.MaxOpenInsts {
+	//	panic("saldkjfakl;jfls;kdfj")
+	//}
 	sig.SimpleSig.Opened(o)
 }
 
-//	func (sig *EagerSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-//		if pbk.Status == CLOSED {
-//			return
-//		}
-//
-//		_, e := sig.instsStarted[inst]
-//		if !e {
-//			return
-//		}
-//
-//		if int32(ballot.PropID) == sig.id && pbk.Status != PROPOSING {
-//			return
-//		}
-//
-//		if (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) && phase == stdpaxosproto.PROMISE {
-//			return
-//		}
-//
-//		if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
-//			return
-//		}
-//
-//
-//		//if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
-//		//	return
-//		//}
-//
-//		dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
-//		go func() { sig.sigNewInst <- struct{}{} }()
-//		delete(sig.instsStarted, inst)
-//	}
 func (manager *EagerSig) Close(inst int32) {
 	delete(manager.instsStarted, inst)
 }
@@ -174,6 +188,9 @@ func (manager *EagerSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.Confi
 	}
 	dlog.AgentPrintfN(manager.id, "Signalling to open new instance as this instance %d is chosen", inst)
 	delete(manager.instsStarted, inst)
+	//if pbk.WhoseCmds == -1 {
+	//	return
+	//}
 	go func() { manager.sigNewInst <- struct{}{} }()
 }
 
@@ -246,7 +263,7 @@ func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBa
 		return
 	}
 
-	dlog.AgentPrintfN(sig.id, "Noting that instance %d has succeeded, cleaning all related hedges", inst)
+	dlog.AgentPrintfN(sig.id, "Noting that instance %d has succeeded. Cleaning all related hedges", inst)
 	for _, i := range curHedge.relatedHedges {
 		delete(sig.currentHedges, i)
 	}

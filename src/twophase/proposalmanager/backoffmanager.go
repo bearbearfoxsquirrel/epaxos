@@ -131,7 +131,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 			break
 		case <-end.C:
 			bm.sig <- info
-			<-cancel
+			//<-cancel
 			break
 		}
 	}()

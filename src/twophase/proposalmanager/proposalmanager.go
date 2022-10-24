@@ -38,9 +38,10 @@ type SimpleGlobalManager struct {
 	n           int32
 	crtInstance int32
 	SingleInstanceManager
-	OpenInstSignal
+	BallotOpenInstanceSignal
 	*BackoffManager
 	id int32
+	OpenInstSignal
 }
 
 //type ProposerEager struct {
@@ -443,13 +444,14 @@ func (manager *EagerFI) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, at 
 	//manager.giveReservationTo(instanceSpace, inst, int32(at.PropID), fmt.Sprintf("learning instance %d is chosen", inst))
 }
 
-func SimpleProposalManagerNew(id int32, signal OpenInstSignal, iManager SingleInstanceManager, backoffManager *BackoffManager) *SimpleGlobalManager {
+func SimpleProposalManagerNew(id int32, sig OpenInstSignal, signal BallotOpenInstanceSignal, iManager SingleInstanceManager, backoffManager *BackoffManager) *SimpleGlobalManager {
 	return &SimpleGlobalManager{
-		crtInstance:           -1,
-		id:                    id,
-		OpenInstSignal:        signal,
-		SingleInstanceManager: iManager,
-		BackoffManager:        backoffManager,
+		crtInstance:              -1,
+		id:                       id,
+		BallotOpenInstanceSignal: signal,
+		OpenInstSignal:           sig,
+		SingleInstanceManager:    iManager,
+		BackoffManager:           backoffManager,
 	}
 }
 
@@ -498,7 +500,7 @@ func (manager *SimpleGlobalManager) UpdateCurrentInstance(instsanceSpace *[]*PBK
 func (manager *SimpleGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	manager.UpdateCurrentInstance(instanceSpace, inst)
 	pbk := (*instanceSpace)[inst]
-	manager.OpenInstSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
+	manager.BallotOpenInstanceSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
@@ -507,14 +509,14 @@ func (manager *SimpleGlobalManager) LearnOfBallotAccepted(instanceSpace *[]*PBK,
 	manager.UpdateCurrentInstance(instanceSpace, inst)
 	//}
 	pbk := (*instanceSpace)[inst]
-	manager.OpenInstSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
+	manager.BallotOpenInstanceSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
 	return //manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot)
 }
 
 func (manager *SimpleGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, at lwcproto.ConfigBal) {
 	manager.UpdateCurrentInstance(instanceSpace, inst)
 	pbk := (*instanceSpace)[inst]
-	manager.OpenInstSignal.CheckChosen(pbk, inst, at)
+	manager.BallotOpenInstanceSignal.CheckChosen(pbk, inst, at)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, at)
 	//manager.BackoffManager.StopBackoffs(inst)
 
@@ -591,7 +593,7 @@ func inGroup(mapped []int32, id int32) bool {
 func (manager *StaticMappedProposalManager) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
 	manager.checkAndSetNewInstance(instanceSpace, inst, ballot, phase)
 	pbk := (*instanceSpace)[inst]
-	manager.OpenInstSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
+	manager.BallotOpenInstanceSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
@@ -640,13 +642,13 @@ func (manager *StaticMappedProposalManager) whoMapped(i int32, them int32) (weIn
 func (manager *StaticMappedProposalManager) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	manager.checkAndSetNewInstance(instanceSpace, inst, ballot, stdpaxosproto.ACCEPTANCE)
 	pbk := (*instanceSpace)[inst]
-	manager.OpenInstSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
+	manager.BallotOpenInstanceSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
 }
 
 func (manager *StaticMappedProposalManager) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal) {
 	manager.checkAndSetNewInstance(instanceSpace, inst, ballot, stdpaxosproto.ACCEPTANCE)
 	pbk := (*instanceSpace)[inst]
-	manager.OpenInstSignal.CheckChosen(pbk, inst, ballot)
+	manager.BallotOpenInstanceSignal.CheckChosen(pbk, inst, ballot)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, ballot)
 }
 
@@ -712,7 +714,7 @@ func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, 
 		if _, e := decider.conflictsSeen[inst][ballot]; !e {
 			old := decider.conflictEWMA
 			decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, 1)
-			dlog.AgentPrintfN(decider.id, "Conflict encountered, increasing EWMA from %f to %f", old, decider.conflictEWMA)
+			dlog.AgentPrintfN(decider.id, "Conflict encountered. Increasing EWMA from %f to %f", old, decider.conflictEWMA)
 
 		}
 	}
@@ -727,7 +729,7 @@ func (decider *DynamicMappedGlobalManager) DecideRetry(pbk *PBK, retry RetryInfo
 	}
 	old := decider.conflictEWMA
 	decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight*3, -1)
-	dlog.AgentPrintfN(decider.id, "Retry needed on instance %d because failures are occurring or there is not enough system load, decreasing EWMA from %f to %f", retry.Inst, old, decider.conflictEWMA)
+	dlog.AgentPrintfN(decider.id, "Retry needed on instance %d because failures are occurring or there is not enough system load. Decreasing EWMA from %f to %f", retry.Inst, old, decider.conflictEWMA)
 	return doRetry
 }
 
@@ -771,7 +773,7 @@ func (decider *DynamicMappedGlobalManager) LearnBallotChosen(instanceSpace *[]*P
 		if _, e := decider.conflictsSeen[inst][ballot]; !e {
 			old := decider.conflictEWMA
 			decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, 1)
-			dlog.AgentPrintfN(decider.id, "Conflict encountered, increasing EWMA from %f to %f", old, decider.conflictEWMA)
+			dlog.AgentPrintfN(decider.id, "Conflict encountered. Increasing EWMA from %f to %f", old, decider.conflictEWMA)
 		}
 	}
 	delete(decider.conflictsSeen, inst)
@@ -794,7 +796,7 @@ func (decider *DynamicMappedGlobalManager) LearnNoop(inst int32, who int32) {
 	//}
 	old := decider.conflictEWMA
 	decider.conflictEWMA = mathextra.EwmaAdd(decider.conflictEWMA, decider.ewmaWeight, -1)
-	dlog.AgentPrintfN(decider.id, "Learnt NOOP, decreasing EWMA from %f to %f", old, decider.conflictEWMA)
+	dlog.AgentPrintfN(decider.id, "Learnt NOOP. Decreasing EWMA from %f to %f", old, decider.conflictEWMA)
 }
 
 type hedge struct {
@@ -844,7 +846,7 @@ func (manager *SimpleHedgedBets) LearnOfBallot(instanceSpace *[]*PBK, inst int32
 
 	pbk := (*instanceSpace)[inst]
 	manager.updateConfs(inst, ballot)
-	manager.OpenInstSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
+	manager.BallotOpenInstanceSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
@@ -854,7 +856,7 @@ func (manager *SimpleHedgedBets) LearnOfBallotAccepted(instanceSpace *[]*PBK, in
 	}
 	pbk := (*instanceSpace)[inst]
 	manager.updateConfs(inst, ballot)
-	manager.OpenInstSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
+	manager.BallotOpenInstanceSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
 	//return //manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot)
 }
 
@@ -872,7 +874,7 @@ func (manager *SimpleHedgedBets) LearnBallotChosen(instanceSpace *[]*PBK, inst i
 	}
 	pbk := (*instanceSpace)[inst]
 	manager.updateConfs(inst, ballot)
-	manager.OpenInstSignal.CheckChosen(pbk, inst, ballot)
+	manager.BallotOpenInstanceSignal.CheckChosen(pbk, inst, ballot)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, ballot)
 	manager.conflictEWMA = mathextra.EwmaAdd(manager.conflictEWMA, manager.ewmaWeight, float64(len(manager.confs[inst])))
 	delete(manager.confs, inst) // will miss some as a result but its okie to avoid too much memory growth

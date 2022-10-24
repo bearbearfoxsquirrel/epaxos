@@ -447,6 +447,10 @@ func (r *Replica) CalculateAlive() {
 	r.Mutex.Unlock()
 }
 
+func (r *Replica) CalculateAliveUNSAFE() {
+	r.calcAliveInternal()
+}
+
 func (r *Replica) calcAliveInternal() {
 	for i := 0; i < r.N; i++ {
 		if i == int(r.Id) || r.lastHeardFrom[i].Equal(time.Time{}) {

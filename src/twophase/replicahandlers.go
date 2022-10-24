@@ -27,7 +27,6 @@ func acceptorSyncHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *st
 
 func acceptorSyncHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool) *stdpaxosproto.AcceptReply {
 	c := accptr.RecvAcceptRemote(accept)
-
 	msg := <-c
 	if msg.GetType() != rpc.acceptReply {
 		panic("Not got an accept reply back")
@@ -38,12 +37,16 @@ func acceptorSyncHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *s
 
 	if bcastAcceptance || accept.LeaderId == -3 {
 		dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+		//go func() {
+		replica.Mutex.Lock()
 		for i := 0; i < replica.N; i++ {
 			if i == int(id) {
 				continue
 			}
-			replica.SendMsg(int32(i), msg.GetType(), msg)
+			replica.SendMsgUNSAFE(int32(i), msg.GetType(), msg.GetSerialisable())
 		}
+		replica.Mutex.Unlock()
+		//}()
 	}
 	return msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 }
@@ -84,30 +87,6 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 	resp := acc.RecvPrepareRemote(prepare)
 	go func() {
 		for msg := range resp {
-			//if isAccMsgFilter {
-			//	if msg.IsNegative() {
-			//		c := make(chan bool, 1)
-			//		msgFilter <- &messageFilterComm{
-			//			inst: prepare.Instance,
-			//			ret:  c,
-			//		}
-			//		if yes := <-c; yes {
-			//			if msg.GetType() == rpc.commit {
-			//				cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
-			//				dlog.AgentPrintfN(id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
-			//			}
-			//
-			//			if msg.GetType() == rpc.prepareReply {
-			//				preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
-			//				isPreemptStr := isPreemptOrPromise(preply)
-			//				dlog.AgentPrintfN(id, "Filtered Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
-			//					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, preply.Req.Number, preply.Req.PropID)
-			//			}
-			//			continue
-			//		}
-			//	}
-			//}
-
 			if msg.GetType() == rpc.commit {
 				cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
 				dlog.AgentPrintfN(id, "Sending Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
@@ -125,7 +104,7 @@ func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxospro
 			if msg.ToWhom() == id {
 				continue
 			}
-			replica.SendMsg(msg.ToWhom(), msg.GetType(), msg)
+			replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
 		}
 	}()
 }
@@ -160,12 +139,14 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 			}
 			// send acceptances to everyone
 			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			replica.Mutex.Lock()
 			for i := 0; i < replica.N; i++ {
 				if i == int(id) {
 					continue
 				}
-				replica.SendMsg(int32(i), msg.GetType(), msg)
+				replica.SendMsgUNSAFE(int32(i), msg.GetType(), msg.GetSerialisable())
 			}
+			replica.Mutex.Unlock()
 			acceptanceChan <- acc
 		}
 	}()
@@ -181,7 +162,6 @@ func isPreemptOrAccept(areply *stdpaxosproto.AcceptReply) string {
 }
 
 func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool) {
-
 	dlog.AgentPrintfN(id, "Acceptor handing Accept from Replica %d in instance %d at ballot %d.%d as it can form a quorum", accept.PropID, accept.Instance, accept.Number, accept.PropID)
 	responseC := acc.RecvAcceptRemote(accept)
 	go func() {
@@ -189,43 +169,6 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 			if resp.ToWhom() == id {
 				continue
 			}
-			//if isAccMsgFilter {
-			//	if resp.GetType() == rpc.commit {
-			//		cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
-			//		dlog.AgentPrintfN(id, "Returning Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-			//	}
-			//
-			//	if resp.GetType() == rpc.acceptReply {
-			//		areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
-			//		isPreemptStr := isPreemptOrAccept(areply)
-			//		dlog.AgentPrintfN(id, "Returning Accept Reply (%d) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
-			//			isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-			//	}
-			//
-			//	if resp.IsNegative() {
-			//		c := make(chan bool, 1)
-			//		msgFilter <- &messageFilterComm{
-			//			inst: accept.Instance,
-			//			ret:  c,
-			//		}
-			//		if yes := <-c; yes {
-			//			if resp.GetType() == rpc.commit {
-			//				cmt := resp.GetSerialisable().(*stdpaxosproto.Commit)
-			//				dlog.AgentPrintfN(id, "Filtered Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Accept in instance %d at ballot %d.%d", accept.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-			//			}
-			//
-			//			if resp.GetType() == rpc.acceptReply {
-			//				preply := resp.GetSerialisable().(*stdpaxosproto.PrepareReply)
-			//				isPreemptStr := isPreemptOrPromise(preply)
-			//				dlog.AgentPrintfN(id, "Filtered Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
-			//					isPreemptStr, accept.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-			//			}
-			//			return
-			//		}
-			//		replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
-			//		continue
-			//	}
-			//}
 
 			if resp.GetType() == rpc.acceptReply {
 				if resp.IsNegative() && bcastPrepare {
@@ -236,15 +179,19 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 				dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
 					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
 			}
+
 			if resp.IsNegative() {
-				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
+				//if bcastPrepare {
+				//continue
+				//}
+				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp.GetSerialisable())
 				continue
 			}
 
-			//go func() {}()
+			replica.Mutex.Lock()
 			if !bcastAcceptance && accept.LeaderId != -3 { // if acceptance broadcast
-				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp)
-				//acceptanceChan <- resp.GetSerialisable()
+				replica.SendMsgUNSAFE(resp.ToWhom(), resp.GetType(), resp.GetSerialisable())
+				replica.Mutex.Unlock()
 				continue
 			}
 			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
@@ -252,11 +199,10 @@ func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto
 				if i == int(id) {
 					continue
 				}
-				replica.SendMsg(int32(i), resp.GetType(), resp)
+				replica.SendMsgUNSAFE(int32(i), resp.GetType(), resp.GetSerialisable())
 			}
+			replica.Mutex.Unlock()
 			acceptanceChan <- resp.GetSerialisable()
 		}
 	}()
 }
-
-// todo replace bcasts etc. with on chosen closures? What's the performance penalty of that?

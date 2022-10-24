@@ -81,18 +81,25 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, bal
 		return false
 	} // want to backoff in face of new phase
 
+	phaseAt := 0
+	if pbk.Status == PREPARING || pbk.Status == READY_TO_PROPOSE {
+		phaseAt = 1
+	} else if pbk.Status == PROPOSING {
+		phaseAt = 2
+	}
+
 	pbk.Status = BACKING_OFF
 	if ballot.GreaterThan(pbk.MaxKnownBal) {
 		dlog.AgentPrintfN(man.id, "Witnessed new maximum ballot %d.%d for instance %d", ballot.Number, ballot.PropID, inst)
 	}
 	pbk.MaxKnownBal = ballot
 
-	// NOTE: HERE WE WANT TO INCREASE BACKOFF EACH TIME THERE IS A NEW PROPOSAL SEEN
+	//NOTE: HERE WE WANT TO INCREASE BACKOFF EACH TIME THERE IS A NEW PROPOSAL SEEN
 	backedOff, botime := man.BackoffManager.CheckAndHandleBackoff(inst, pbk.PropCurBal, ballot, phase)
 
 	if backedOff {
-		dlog.AgentPrintfN(man.id, "Backing off instance %d for %d microseconds because our current ballot %d.%d is preempted by ballot %d.%d",
-			inst, botime, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, ballot.Number, ballot.PropID)
+		dlog.AgentPrintfN(man.id, "Backing off instance %d for %d microseconds because our current ballot %d.%d in phase %d is preempted by ballot %d.%d",
+			inst, botime, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, phaseAt, ballot.Number, ballot.PropID)
 	}
 	return true
 }
