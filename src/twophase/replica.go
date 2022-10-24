@@ -237,7 +237,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int32,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
 	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool,
-	q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool, forceDisklessNOOP bool) *Replica {
+	q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool, forceDisklessNOOP bool, eagerByExec bool) *Replica {
 
 	r := &Replica{
 		disklessNOOPPromises:         make(map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}),
@@ -529,8 +529,8 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		ballotInstSig = eSig
 	}
 
-	doEagerExec := true
-	if doEagerExec {
+	//doEagerExec := true
+	if eagerByExec {
 		eESig := proposalmanager.EagerExecUpToSigNew(openInstSig.(*proposalmanager.EagerSig), float32(r.N), 1)
 		openInstSig = eESig
 		ballotInstSig = eESig

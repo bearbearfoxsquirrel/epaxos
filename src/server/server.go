@@ -141,6 +141,8 @@ var syncacceptor = flag.Bool("synca", false, "2 Phase acceptor synchronously pre
 var disklessnoops = flag.Bool("disklessnoops", false, "Use diskless noops")
 var foceDisklessnoops = flag.Bool("fdisklessnoops", false, "Force diskless noops")
 
+var eagerByExec = flag.Bool("ebe", false, "Do eager by execute and crt instance gap")
+
 func main() {
 
 	flag.Parse()
@@ -254,7 +256,7 @@ func main() {
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt,
-			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops)
+			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops, *eagerByExec)
 		runnable = rep
 		rpc.Register(rep)
 		//}
