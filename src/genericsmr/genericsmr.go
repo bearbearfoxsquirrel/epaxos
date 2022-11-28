@@ -9,6 +9,7 @@ import (
 	"epaxos/fastrpc"
 	"epaxos/genericsmrproto"
 	"github.com/portmapping/go-reuse"
+	"golang.org/x/sys/unix"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -483,7 +484,7 @@ func (r *Replica) connectUDP(opt UDPOptions, id int32) {
 		Control: func(network, address string, c syscall.RawConn) error {
 			var opErr error
 			err := c.Control(func(fd uintptr) {
-				opErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1)
+				opErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, unix.SO_REUSEPORT, 1)
 			})
 			if err != nil {
 				return err
