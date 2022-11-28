@@ -182,6 +182,10 @@ func (l *BcastAcceptLearner) ProposalAccepted(inst int32, ballot stdpaxosproto.B
 	l.updateLearntV(inst, ballot)
 }
 
+//func (l *BcastAcceptLearner) GetWhoAccepted(inst int32, ballot stdpaxosproto.Ballot) map[int32]struct{} {
+//return l.qrm[inst][ballot].Acknowledged()
+//}
+
 func (l *BcastAcceptLearner) updateLearntV(inst int32, ballot stdpaxosproto.Ballot) {
 	for b, v := range l.val[inst] {
 		if ballot.GreaterThan(b) {

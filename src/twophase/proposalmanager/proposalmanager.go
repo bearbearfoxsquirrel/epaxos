@@ -8,6 +8,7 @@ import (
 	"epaxos/mathextra"
 	"epaxos/proposerstate"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/mapper"
 	"math"
 )
 
@@ -535,12 +536,14 @@ type StaticMappedProposalManager struct {
 	SingleInstanceManager
 	*SimpleGlobalManager
 	instanceagentmapper.InstanceAgentMapper
+	newInstSig chan<- struct{}
 }
 
-func MappedProposersProposalManagerNew(simpleProposalManager *SimpleGlobalManager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper) *StaticMappedProposalManager {
+func MappedProposersProposalManagerNew(sig chan<- struct{}, simpleProposalManager *SimpleGlobalManager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper) *StaticMappedProposalManager {
 	//todo add dynamic on and off - when not detecting large numbers of proposals turn off F+1 or increase g+1
 	//simps := SimpleProposalManagerNew(id, n, quoralP, minBackoff, maxInitBackoff, maxBackoff, retries, factor, softFac, constBackoff, timeBasedBallots, doStats, tsStats, pStats, iStats, sigNewInst)
 	return &StaticMappedProposalManager{
+		newInstSig:            sig,
 		SimpleGlobalManager:   simpleProposalManager,
 		SingleInstanceManager: iMan,
 		InstanceAgentMapper:   agentMapper,
@@ -594,6 +597,9 @@ func (manager *StaticMappedProposalManager) LearnOfBallot(instanceSpace *[]*PBK,
 	manager.checkAndSetNewInstance(instanceSpace, inst, ballot, phase)
 	pbk := (*instanceSpace)[inst]
 	manager.BallotOpenInstanceSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
+	if !manager.iInGroup(inst) {
+		return false
+	}
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
@@ -608,16 +614,20 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 		}
 		weIn, themIn := manager.whoMapped(i, int32(ballot.PropID))
 		(*instanceSpace)[i] = GetEmptyInstance()
-		if weIn && themIn {
-			if i == inst {
-				continue // we are going to back off anyway
+		if weIn {
+			if themIn {
+				if i == inst {
+					continue
+				}
+				// can backoff as they will have attempted
+				(*instanceSpace)[i].Status = BACKING_OFF
+				_, bot := manager.CheckAndHandleBackoff(i, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
+				dlog.AgentPrintfN(manager.id, "Backing off instance %d for %d microseconds as we are mapped to it", i, bot)
+			} else {
+				// open new instance
+				go func() { manager.newInstSig <- struct{}{} }()
 			}
-			// can backoff as they will have attempted
-			(*instanceSpace)[i].Status = BACKING_OFF
-			_, bot := manager.CheckAndHandleBackoff(i, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
-			dlog.AgentPrintfN(manager.id, "Backing off instance %d for %d microseconds as we are mapped to it", i, bot)
-		}
-		if !weIn {
+		} else {
 			//don't need to consider instance as we aren't in it
 			(*instanceSpace)[i].Status = BACKING_OFF
 			dlog.AgentPrintfN(manager.id, "Skipping instance %d as we are not mapped to it", i)
@@ -625,6 +635,15 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 	}
 }
 
+func (manager *StaticMappedProposalManager) iInGroup(i int32) bool {
+	g := manager.GetProposerInstanceMapper().GetGroup(i)
+	for _, pid := range g {
+		if manager.id == pid {
+			return true
+		}
+	}
+	return false
+}
 func (manager *StaticMappedProposalManager) whoMapped(i int32, them int32) (weIn bool, themIn bool) {
 	g := manager.GetProposerInstanceMapper().GetGroup(i)
 	dlog.AgentPrintfN(manager.id, "Proposer group for instance %d is %v", i, g)
@@ -642,6 +661,9 @@ func (manager *StaticMappedProposalManager) whoMapped(i int32, them int32) (weIn
 func (manager *StaticMappedProposalManager) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	manager.checkAndSetNewInstance(instanceSpace, inst, ballot, stdpaxosproto.ACCEPTANCE)
 	pbk := (*instanceSpace)[inst]
+	if !manager.iInGroup(inst) {
+		return
+	}
 	manager.BallotOpenInstanceSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
 }
 
@@ -677,8 +699,8 @@ type DynamicMappedGlobalManager struct {
 	// want to signal that we do not want to make proposals anymore
 }
 
-func DynamicMappedProposerManagerNew(proposalManager *SimpleGlobalManager, iMan SingleInstanceManager, aMapper DynamicAgentMapper, n int32, f int32) *DynamicMappedGlobalManager {
-	mappedDecider := MappedProposersProposalManagerNew(proposalManager, iMan, aMapper)
+func DynamicMappedProposerManagerNew(sig chan<- struct{}, proposalManager *SimpleGlobalManager, iMan SingleInstanceManager, aMapper DynamicAgentMapper, n int32, f int32) *DynamicMappedGlobalManager {
+	mappedDecider := MappedProposersProposalManagerNew(sig, proposalManager, iMan, aMapper)
 	dMappedDecicider := &DynamicMappedGlobalManager{
 		StaticMappedProposalManager: mappedDecider,
 		DynamicAgentMapper:          aMapper,
@@ -690,12 +712,6 @@ func DynamicMappedProposerManagerNew(proposalManager *SimpleGlobalManager, iMan 
 		conflictsSeen:               make(map[int32]map[lwcproto.ConfigBal]struct{}),
 	}
 	return dMappedDecicider
-}
-
-func mapper(i, iS, iE float64, oS, oE int32) int32 {
-	slope := 1.0 * float64(oE-oS) / (iE - iS)
-	o := oS + int32((slope*(i-iS))+0.5)
-	return o
 }
 
 func (decider *DynamicMappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
@@ -738,11 +754,11 @@ func (decider *DynamicMappedGlobalManager) updateGroupSize() {
 
 	dlog.AgentPrintfN(decider.id, "Current proposer group is of size %d (EWMA is %f)", decider.curG, decider.conflictEWMA)
 	if decider.conflictEWMA > 0.2 {
-		newG = mapper(decider.conflictEWMA, 1, 0, decider.f+1, decider.curG)
+		newG = mapper.Mapper(decider.conflictEWMA, 1, 0, decider.f+1, decider.curG)
 		decider.conflictEWMA = 0
 	}
 	if decider.conflictEWMA < 0 {
-		newG = mapper(decider.conflictEWMA, 0, -1, decider.curG, decider.n)
+		newG = mapper.Mapper(decider.conflictEWMA, 0, -1, decider.curG, decider.n)
 		decider.conflictEWMA = 0
 	}
 

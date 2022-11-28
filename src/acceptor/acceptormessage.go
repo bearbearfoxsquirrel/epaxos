@@ -7,6 +7,7 @@ type Message interface {
 	GetType() uint8
 	IsNegative() bool
 	GetSerialisable() fastrpc.Serializable
+	GetUDPaxos() fastrpc.UDPaxos
 	fastrpc.Serializable
 }
 
@@ -14,11 +15,16 @@ type protoMessage struct {
 	towhom     func() int32
 	gettype    func() uint8
 	isnegative func() bool
-	fastrpc.Serializable
+	//fastrpc.Serializable
+	fastrpc.UDPaxos
 }
 
 func (p protoMessage) GetSerialisable() fastrpc.Serializable {
-	return p.Serializable
+	return p.UDPaxos
+}
+
+func (p protoMessage) GetUDPaxos() fastrpc.UDPaxos {
+	return p.UDPaxos
 }
 
 func (p protoMessage) ToWhom() int32 {

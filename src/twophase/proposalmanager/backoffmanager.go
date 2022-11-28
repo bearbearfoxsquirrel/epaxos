@@ -27,6 +27,7 @@ type BackoffInfo struct {
 }
 
 type BackoffManager struct {
+	id              int32
 	currentBackoffs map[int32]RetryInfo
 	BackoffInfo
 	sig     chan RetryInfo
@@ -35,7 +36,7 @@ type BackoffManager struct {
 	cancel  map[int32]chan struct{}
 }
 
-func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo, factor float64, softFac bool, constBackoff bool) *BackoffManager {
+func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo, factor float64, softFac bool, constBackoff bool, id int32) *BackoffManager {
 	if minBO > maxInitBO {
 		panic(fmt.Sprintf("minbackoff %d, maxinitbackoff %d, incorrectly set up", minBO, maxInitBO))
 	}
@@ -51,6 +52,7 @@ func BackoffManagerNew(minBO, maxInitBO, maxBO int32, signalChan chan RetryInfo,
 		sig:     signalChan,
 		cancel:  make(map[int32]chan struct{}),
 		factor:  factor,
+		id:      id,
 		softFac: softFac,
 	}
 }
@@ -80,7 +82,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	curBackoffInfo, exists := bm.currentBackoffs[inst]
 
 	if !bm.ShouldBackoff(inst, preempter, prempterPhase) {
-		dlog.Println("Ignoring backoff request as already backing off instance for this conf-bal or a greater one")
+		//dlog.AgentPrintfN(bm.id, "Ignoring backoff request as already backing off instance %d because of ballot %d.%d", inst, curBackoffInfo.PreempterBal.Ballot.Number, curBackoffInfo.PreempterBal.Ballot.PropID)
 		return false, -1
 	}
 
@@ -109,7 +111,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
-	dlog.Printf("Beginning backoff of %d us for instance %d on conf-bal %d.%d (attempt %d)", next, inst, attemptedBal.Number, attemptedBal.PropID, preemptNum)
+	//dlog.AgentPrintfN(bm.id, "Beginning backoff of %d us for instance %d because of ballot %d.%d", next, inst, attemptedBal.Number, attemptedBal.PropID)
 	info := RetryInfo{
 		Inst:           inst,
 		AttemptedBal:   attemptedBal,
@@ -120,7 +122,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	}
 	bm.currentBackoffs[inst] = info
 	if _, e := bm.cancel[inst]; e {
-		bm.cancel[inst] <- struct{}{}
+		go func(c chan struct{}) { c <- struct{}{} }(bm.cancel[inst])
 	}
 	cancel := make(chan struct{})
 	bm.cancel[inst] = cancel
@@ -131,7 +133,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 			break
 		case <-end.C:
 			bm.sig <- info
-			//<-cancel
+			<-cancel
 			break
 		}
 	}()
@@ -160,7 +162,8 @@ func (bm *BackoffManager) StopBackoffs(inst int32) {
 	if _, e := bm.currentBackoffs[inst]; !e {
 		return
 	}
-	bm.cancel[inst] <- struct{}{}
+	go func(c chan struct{}) { c <- struct{}{} }(bm.cancel[inst])
+	// fixme if not managed carefully could result in a deadlock
 	delete(bm.currentBackoffs, inst)
 	delete(bm.cancel, inst)
 }

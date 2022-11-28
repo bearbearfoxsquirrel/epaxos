@@ -200,17 +200,19 @@ func (a *standard) handleMsgAlreadyCommitted(requestor int32, inst int32, respHa
 
 		wg.Add(1)
 		go func(instI int32) {
+			c := &stdpaxosproto.Commit{
+				LeaderId:   int32(iState.vBal.PropID),
+				Instance:   instI,
+				Ballot:     iState.vBal,
+				WhoseCmd:   iState.whoseCmds,
+				MoreToCome: 0,
+				Command:    iState.cmds}
 			respHand <- protoMessage{
 				towhom:     func() int32 { return requestor },
 				gettype:    func() uint8 { return a.commitRPC },
 				isnegative: func() bool { return true },
-				Serializable: &stdpaxosproto.Commit{
-					LeaderId:   int32(iState.vBal.PropID),
-					Instance:   instI,
-					Ballot:     iState.vBal,
-					WhoseCmd:   iState.whoseCmds,
-					MoreToCome: 0,
-					Command:    iState.cmds},
+				UDPaxos:    c,
+				//Serializable: c,
 			}
 			wg.Done()
 		}(i)
@@ -299,7 +301,6 @@ func (a *standard) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message
 		nonDurableAccept(accept, abk, a.stableStore, a.durable)
 		fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 	}
-
 	acptReply := a.getAcceptReply(inst, accept)
 	a.returnAcceptReply(acptReply, responseC)
 	close(responseC)
@@ -319,10 +320,10 @@ func (a *standard) getAcceptReply(inst int32, accept *stdpaxosproto.Accept) *std
 
 func (a *standard) returnAcceptReply(acceptReply *stdpaxosproto.AcceptReply, responseC chan<- Message) {
 	responseC <- protoMessage{
-		towhom:       giveToWhom(int32(acceptReply.Req.PropID)),
-		isnegative:   func() bool { return !acceptReply.Cur.Equal(acceptReply.Req) },
-		gettype:      func() uint8 { return a.acceptReplyRPC },
-		Serializable: acceptReply,
+		towhom:     giveToWhom(int32(acceptReply.Req.PropID)),
+		isnegative: func() bool { return !acceptReply.Cur.Equal(acceptReply.Req) },
+		gettype:    func() uint8 { return a.acceptReplyRPC },
+		UDPaxos:    acceptReply,
 	}
 }
 
@@ -791,7 +792,7 @@ func (a *batchingAcceptor) handleMsgAlreadyCommitted(requestor int32, inst int32
 				towhom:     func() int32 { return requestor },
 				gettype:    func() uint8 { return a.commitRPC },
 				isnegative: func() bool { return true },
-				Serializable: &stdpaxosproto.Commit{
+				UDPaxos: &stdpaxosproto.Commit{
 					LeaderId:   int32(iState.vBal.PropID),
 					Instance:   instI,
 					Ballot:     iState.vBal,
@@ -929,10 +930,10 @@ func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32
 		resp, lpid := accResp, pid
 		go func() {
 			resp.retMsgChan <- protoMessage{
-				towhom:       giveToWhom(lpid),
-				gettype:      func() uint8 { return acceptReplyRPC },
-				isnegative:   func() bool { return preempt },
-				Serializable: acc,
+				towhom:     giveToWhom(lpid),
+				gettype:    func() uint8 { return acceptReplyRPC },
+				isnegative: func() bool { return preempt },
+				UDPaxos:    acc,
 			}
 			close(resp.retMsgChan)
 		}()
@@ -966,10 +967,10 @@ func returnPrepareRepliesAwaiting(inst int32, myId int32, awaitingResps map[int3
 		resp, lpid := prepResp, pid
 		go func() {
 			resp.retMsgChan <- protoMessage{
-				towhom:       giveToWhom(lpid),
-				gettype:      func() uint8 { return prepareReplyRPC },
-				isnegative:   func() bool { return preempt },
-				Serializable: prep,
+				towhom:     giveToWhom(lpid),
+				gettype:    func() uint8 { return prepareReplyRPC },
+				isnegative: func() bool { return preempt },
+				UDPaxos:    prep,
 			}
 			close(resp.retMsgChan)
 		}()

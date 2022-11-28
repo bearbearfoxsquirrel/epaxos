@@ -7,6 +7,7 @@ import (
 	"epaxos/state"
 	"epaxos/stats"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/logfmt"
 	"epaxos/twophase/proposalmanager"
 )
 
@@ -85,11 +86,9 @@ func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst 
 		return
 	}
 
-	dlog.AgentPrintfN(manager.id, "Encountered preempting ballot in instance %d. Requeuing batch with UID %d",
-		inst, pbk.ClientProposals.GetUID())
-	//bm.PutBatch(pbk.ClientProposals)
-	//manager.Requeue(pbk.ClientProposals)
-	//manager.setRequeuedAt(inst, pbk.PropCurBal)
+	dlog.AgentPrintfN(manager.id, logfmt.RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
+	bm.PutBatch(pbk.ClientProposals)
+	manager.setRequeuedAt(inst, pbk.PropCurBal)
 }
 
 // is this after or before
@@ -109,8 +108,7 @@ func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, 
 	if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; e {
 		return
 	}
-	dlog.AgentPrintfN(manager.id, "Encountered previously accepted value in instance %d whose value %d from ballot %d.%d. Requeuing batch with UID %d.",
-		inst, whoseCmds, ballot.Number, ballot.PropID, pbk.ClientProposals.GetUID())
+	dlog.AgentPrintfN(manager.id, logfmt.RequeuingBatchAcceptedValue(inst, ballot.Ballot, whoseCmds, pbk.ClientProposals))
 	//todo log
 	bm.PutBatch(pbk.ClientProposals)
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
@@ -158,18 +156,19 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 		panic("client values chosen but we won't recognise that")
 	}
 
-	dlog.AgentPrintfN(manager.id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
+	//dlog.AgentPrintfN(manager.id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
 	switch whatHappenedToClientProposals(pbk, whoseCmds, manager.id) {
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		dlog.AgentPrintfN(manager.id, "%d client value(s) proposed in instance %d not chosen", len(pbk.ClientProposals.GetCmds()), inst)
+		//dlog.AgentPrintfN(manager.id, "%d client value(s) proposed in instance %d not chosen", len(pbk.ClientProposals.GetCmds()), inst)
+		dlog.AgentPrintfN(manager.id, logfmt.RequeuingBatchDifferentValueChosen(inst, whoseCmds, pbk.ClientProposals))
 		if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; !e {
 			bm.PutBatch(pbk.ClientProposals)
 		}
 		break
 	case ProposedAndChosen:
-		dlog.AgentPrintfN(manager.id, "%d client value(s) chosen in instance %d", len(pbk.ClientProposals.GetCmds()), inst)
+		//dlog.AgentPrintfN(manager.id, "%d client value(s) chosen in instance %d", len(pbk.ClientProposals.GetCmds()), inst)
 		break
 	}
 	pbk.ClientProposals = nil

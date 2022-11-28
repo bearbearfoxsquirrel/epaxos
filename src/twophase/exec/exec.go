@@ -9,6 +9,7 @@ import (
 	"epaxos/stablestore"
 	"epaxos/state"
 	_const "epaxos/twophase/const"
+	"epaxos/twophase/logfmt"
 )
 
 type Executor struct {
@@ -62,13 +63,6 @@ func (ex *Executor) Learnt(inst int32, cmds []*state.Command, whose int32) {
 		return
 	}
 
-	if whose == ex.meId {
-		dlog.AgentPrintfN(ex.Id, "Learn instance %d with whose commands %d (UID %d)", inst, whose, ex.clientBatches[inst].GetUID())
-		//for _, l := range r.batchLearners {
-		//	l.Learn(pbk.ClientProposals)
-		//}
-	}
-
 	ex.learnt[inst] = true
 	ex.whose[inst] = whose
 	ex.cmds[inst] = cmds
@@ -97,9 +91,9 @@ func (ex *Executor) exec() {
 		crt := ex.executedUpTo + 1
 		ex.executedUpTo += 1
 		if ex.whose[crt] != ex.meId {
-			dlog.AgentPrintfN(ex.meId, "Executing instance %d with whose commands %d", crt, ex.whose[crt])
+			dlog.AgentPrintfN(ex.meId, logfmt.ExecutingFmt(crt, ex.whose[crt]))
 		} else {
-			dlog.AgentPrintfN(ex.meId, "Executing instance %d with whose commands %d (UID %d)", crt, ex.whose[crt], ex.clientBatches[crt].GetUID())
+			dlog.AgentPrintfN(ex.meId, logfmt.ExecutingBatchFmt(crt, ex.whose[crt], ex.clientBatches[crt]))
 		}
 		if ex.whose[crt] == -1 {
 			// is NOOP

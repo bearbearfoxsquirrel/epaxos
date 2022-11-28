@@ -169,7 +169,7 @@ func PrewritePromiseAcceptorNew(file stablestore.StableStore, durable bool, emul
 }
 
 func (a *prewritePromiseAcceptor) RecvPrepareRemote(prepare *stdpaxosproto.Prepare) <-chan Message {
-	dlog.AgentPrintfN(a.meID, "Acceptor received prepare request for instance %d from %d at ballot %d.%d", prepare.Instance, prepare.PropID, prepare.Ballot.Number, prepare.Ballot.PropID)
+	dlog.AgentPrintfN(a.meID, "Acceptor received prepare request for instance %d from Replica %d at ballot %d.%d", prepare.Instance, prepare.PropID, prepare.Ballot.Number, prepare.Ballot.PropID)
 	inst, bal, requestor := prepare.Instance, prepare.Ballot, int32(prepare.PropID)
 	responseC := make(chan Message, 2)
 	checkAndCreateInstanceState(&a.instanceState, inst)
@@ -237,7 +237,7 @@ func (a *prewritePromiseAcceptor) returnPreemptMsg(inst int32, newBal stdpaxospr
 }
 
 func (a *prewritePromiseAcceptor) RecvAcceptRemote(accept *stdpaxosproto.Accept) <-chan Message {
-	dlog.AgentPrintfN(a.meID, "Acceptor received accept request for instance %d from %d at ballot %d.%d", accept.Instance, accept.PropID, accept.Ballot.Number, accept.Ballot.PropID)
+	dlog.AgentPrintfN(a.meID, "Acceptor received accept request for instance %d from Replica %d at ballot %d.%d", accept.Instance, accept.PropID, accept.Ballot.Number, accept.Ballot.PropID)
 
 	inst, bal, requestor := accept.Instance, accept.Ballot, int32(accept.PropID)
 	responseC := make(chan Message, 2)

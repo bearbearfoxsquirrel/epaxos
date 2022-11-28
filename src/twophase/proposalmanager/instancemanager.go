@@ -5,6 +5,7 @@ import (
 	"epaxos/lwcproto"
 	"epaxos/stats"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/balloter"
 	"time"
 )
 
@@ -21,14 +22,14 @@ type SimpleInstanceManager struct {
 	doStats bool
 	id      int32
 	*BackoffManager
-	Balloter
+	*balloter.Balloter
 	ProposerInstanceQuorumaliser
 	*stats.TimeseriesStats
 	*stats.ProposalStats
 	*stats.InstanceStats
 }
 
-func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter Balloter, doStats bool, qrm ProposerInstanceQuorumaliser, tsStats *stats.TimeseriesStats, proposalStats *stats.ProposalStats, instanceStats *stats.InstanceStats) *SimpleInstanceManager {
+func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter *balloter.Balloter, doStats bool, qrm ProposerInstanceQuorumaliser, tsStats *stats.TimeseriesStats, proposalStats *stats.ProposalStats, instanceStats *stats.InstanceStats) *SimpleInstanceManager {
 	return &SimpleInstanceManager{
 		doStats:                      doStats,
 		id:                           id,
@@ -93,7 +94,6 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, bal
 		dlog.AgentPrintfN(man.id, "Witnessed new maximum ballot %d.%d for instance %d", ballot.Number, ballot.PropID, inst)
 	}
 	pbk.MaxKnownBal = ballot
-
 	//NOTE: HERE WE WANT TO INCREASE BACKOFF EACH TIME THERE IS A NEW PROPOSAL SEEN
 	backedOff, botime := man.BackoffManager.CheckAndHandleBackoff(inst, pbk.PropCurBal, ballot, phase)
 
@@ -102,11 +102,6 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, bal
 			inst, botime, pbk.PropCurBal.Number, pbk.PropCurBal.PropID, phaseAt, ballot.Number, ballot.PropID)
 	}
 	return true
-}
-
-func (man *SimpleInstanceManager) howManyAttemptsToChoose(pbk *PBK, inst int32) {
-	attempts := man.Balloter.GetAttemptNumber(pbk.ProposeValueBal.Number)
-	dlog.AgentPrintfN(man.id, "Instance %d took %d attempts to be chosen", inst, attempts)
 }
 
 func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
@@ -135,8 +130,6 @@ func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, bal
 	if ballot.GreaterThan(pbk.MaxKnownBal) {
 		pbk.MaxKnownBal = ballot
 	}
-	dlog.AgentPrintfN(man.id, "Instance %d learnt to be chosen at ballot %d.%d", inst, ballot.Number, ballot.PropID)
-	man.howManyAttemptsToChoose(pbk, inst)
 
 	if man.doStats {
 		atmts := man.Balloter.GetAttemptNumber(ballot.Number) // (pbk.pbk.ProposeValueBal.Number / man.maxBalInc)

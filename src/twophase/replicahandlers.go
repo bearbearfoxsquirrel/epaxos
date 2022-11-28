@@ -6,6 +6,7 @@ import (
 	"epaxos/fastrpc"
 	"epaxos/genericsmr"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/learner"
 )
 
 type PrepareResponsesRPC struct {
@@ -20,35 +21,10 @@ func acceptorSyncHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *st
 		panic("Not got a prepare reply back")
 	}
 	if msg.IsNegative() {
-		panic("Not got a promise back")
+		return nil
+		//panic("Not got a promise back")
 	}
 	return msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
-}
-
-func acceptorSyncHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool) *stdpaxosproto.AcceptReply {
-	c := accptr.RecvAcceptRemote(accept)
-	msg := <-c
-	if msg.GetType() != rpc.acceptReply {
-		panic("Not got an accept reply back")
-	}
-	if msg.IsNegative() {
-		panic("Not got an acceptance back")
-	}
-
-	if bcastAcceptance || accept.LeaderId == -3 {
-		dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
-		//go func() {
-		replica.Mutex.Lock()
-		for i := 0; i < replica.N; i++ {
-			if i == int(id) {
-				continue
-			}
-			replica.SendMsgUNSAFE(int32(i), msg.GetType(), msg.GetSerialisable())
-		}
-		replica.Mutex.Unlock()
-		//}()
-	}
-	return msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 }
 
 func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *genericsmr.Replica, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, promiseChan chan<- fastrpc.Serializable) {
@@ -56,7 +32,11 @@ func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *generi
 	go func() {
 		for msg := range c {
 			if msg.ToWhom() != id {
-				replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
+				if replica.UDP {
+					replica.SendUDPMsg(msg.ToWhom(), msg.GetType(), msg.GetUDPaxos(), false)
+				} else {
+					replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
+				}
 				continue
 			}
 			preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
@@ -83,30 +63,68 @@ func isPreemptOrPromise(preply *stdpaxosproto.PrepareReply) string {
 	return isPreemptStr
 }
 
-func acceptorHandlePrepare(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastPrepare bool) {
-	resp := acc.RecvPrepareRemote(prepare)
-	go func() {
-		for msg := range resp {
-			if msg.GetType() == rpc.commit {
-				cmt := msg.GetSerialisable().(*stdpaxosproto.Commit)
-				dlog.AgentPrintfN(id, "Sending Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a Prepare in instance %d at ballot %d.%d", prepare.PropID, cmt.Instance, cmt.Number, cmt.PropID, cmt.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
-			}
+func learnerCheckChosen(l learner.Learner, inst int32, atmt stdpaxosproto.Ballot, atmtMsg string, who int32, cmtRPC uint8, replica *genericsmr.Replica, meID int32) bool {
+	if l.IsChosen(inst) && l.HasLearntValue(inst) {
+		b, v, whose := l.GetChosen(inst)
+		dlog.AgentPrintfN(meID, "Sending Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a %s in instance %d at ballot %d.%d",
+			who, inst, b.Number, b.PropID, whose, atmtMsg, inst, atmt.Number, atmt.PropID)
+		cmt := &stdpaxosproto.Commit{
+			LeaderId:   int32(b.PropID),
+			Instance:   inst,
+			Ballot:     b,
+			WhoseCmd:   whose,
+			MoreToCome: 0,
+			Command:    v,
+		}
+		if replica.UDP {
+			replica.SendUDPMsg(who, cmtRPC, cmt, false)
+		} else {
+			replica.SendMsg(who, cmtRPC, cmt)
+		}
+		return true
+	}
+	return false
+}
 
-			if msg.GetType() == rpc.prepareReply {
-				preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
-				isPreemptStr := isPreemptOrPromise(preply)
-				if msg.IsNegative() && bcastPrepare {
-					continue
-				}
-				dlog.AgentPrintfN(id, "Sending Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
-					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
-			}
-			if msg.ToWhom() == id {
-				continue
-			}
+func handlePrepareResponsesFromAcceptor(resp <-chan acceptor.Message, rpc PrepareResponsesRPC, prepare *stdpaxosproto.Prepare, id int32, replica *genericsmr.Replica, bcastPrepare bool) {
+	for msg := range resp {
+		if msg.GetType() != rpc.prepareReply {
+			continue
+		}
+		preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
+		isPreemptStr := isPreemptOrPromise(preply)
+		if msg.IsNegative() && bcastPrepare {
+			continue
+		}
+		dlog.AgentPrintfN(id, "Sending Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
+			isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
+		if msg.ToWhom() == id {
+			continue
+		}
+		if replica.UDP {
+			replica.SendUDPMsg(msg.ToWhom(), msg.GetType(), msg.GetUDPaxos(), false)
+		} else {
 			replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
 		}
-	}()
+	}
+}
+
+func acceptorHandlePrepare(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastPrepare bool) {
+	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.commit, replica, id) {
+		return
+	}
+
+	resp := acc.RecvPrepareRemote(prepare)
+	go func() { handlePrepareResponsesFromAcceptor(resp, rpc, prepare, id, replica, bcastPrepare) }()
+}
+
+func acceptorSyncHandlePrepare(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastPrepare bool) {
+	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.commit, replica, id) {
+		return
+	}
+
+	resp := acc.RecvPrepareRemote(prepare)
+	handlePrepareResponsesFromAcceptor(resp, rpc, prepare, id, replica, bcastPrepare)
 }
 
 type AcceptResponsesRPC struct {
@@ -114,41 +132,27 @@ type AcceptResponsesRPC struct {
 	commit      uint8
 }
 
-func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, acceptanceChan chan<- fastrpc.Serializable, replica *genericsmr.Replica, bcastAcceptance bool) {
+func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable) {
 	c := accptr.RecvAcceptRemote(accept)
 	go func() {
-		for msg := range c {
-			if msg.ToWhom() != id {
-				replica.SendMsg(msg.ToWhom(), msg.GetType(), msg.GetSerialisable())
-				continue
-			}
-
-			acc := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
-			if msg.GetType() == rpc.acceptReply {
-				areply := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
-				isPreemptStr := isPreemptOrAccept(areply)
-				dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
-					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-			}
-			if msg.IsNegative() {
-				continue
-			}
-			if !bcastAcceptance && accept.LeaderId != -3 {
-				acceptanceChan <- acc
-				continue
-			}
-			// send acceptances to everyone
-			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
-			replica.Mutex.Lock()
-			for i := 0; i < replica.N; i++ {
-				if i == int(id) {
-					continue
-				}
-				replica.SendMsgUNSAFE(int32(i), msg.GetType(), msg.GetSerialisable())
-			}
-			replica.Mutex.Unlock()
-			acceptanceChan <- acc
+		msg := <-c
+		if msg.GetType() != rpc.acceptReply {
+			return
 		}
+		if msg.IsNegative() {
+			return
+			//	panic("Not got an acceptance back")
+		}
+		areply := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
+		if bcastAcceptance || accept.LeaderId == -3 {
+			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			if replica.UDP {
+				bcastAcceptanceUDP(replica, areply, rpc.acceptReply, id)
+			} else {
+				bcastAcceptanceTCP(replica, areply, rpc.acceptReply, id)
+			}
+		}
+		acceptanceChan <- msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 	}()
 }
 
@@ -161,48 +165,79 @@ func isPreemptOrAccept(areply *stdpaxosproto.AcceptReply) string {
 	return isPreemptStr
 }
 
-func acceptorHandleAccept(id int32, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool) {
+func acceptorHandleAcceptResponse(responseC <-chan acceptor.Message, rpc AcceptResponsesRPC, id int32, bcastPrepare bool, replica *genericsmr.Replica, acceptanceChan chan<- fastrpc.Serializable, accept *stdpaxosproto.Accept, bcastAcceptDisklessNOOP bool, bcastAcceptance bool) {
+	for resp := range responseC {
+		if resp.ToWhom() == id {
+			continue
+		}
+		if resp.GetType() != rpc.acceptReply {
+			continue
+		}
+		if resp.IsNegative() && bcastPrepare {
+			continue
+		}
+		areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
+		isPreemptStr := isPreemptOrAccept(areply)
+		dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
+			isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
+
+		if resp.IsNegative() {
+			if replica.UDP {
+				replica.SendUDPMsg(resp.ToWhom(), resp.GetType(), areply, true)
+			} else {
+				replica.SendMsg(resp.ToWhom(), resp.GetType(), areply)
+			}
+			continue
+		}
+
+		if bcastAcceptance || (accept.LeaderId == -3 && bcastAcceptDisklessNOOP) {
+			dlog.AgentPrintfN(id, "Sending Acceptance for instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+			if replica.UDP {
+				bcastAcceptanceUDP(replica, areply, rpc.acceptReply, id)
+			} else {
+				bcastAcceptanceTCP(replica, areply, rpc.acceptReply, id)
+			}
+			acceptanceChan <- areply
+			continue
+		}
+
+		if replica.UDP {
+			replica.SendUDPMsg(resp.ToWhom(), resp.GetType(), areply, true)
+		} else {
+			replica.SendMsg(resp.ToWhom(), resp.GetType(), areply)
+		}
+		continue
+	}
+}
+
+func bcastAcceptanceUDP(replica *genericsmr.Replica, areply *stdpaxosproto.AcceptReply, rpcCode uint8, id int32) {
+	for i := 0; i < replica.N; i++ {
+		if i == int(id) {
+			continue
+		}
+		replica.SendUDPMsg(int32(i), rpcCode, areply, true)
+	}
+}
+
+func bcastAcceptanceTCP(replica *genericsmr.Replica, areply *stdpaxosproto.AcceptReply, rpcCode uint8, id int32) {
+	replica.Mutex.Lock()
+	for i := 0; i < replica.N; i++ {
+		if i == int(id) {
+			continue
+		}
+		replica.SendMsgUNSAFE(int32(i), rpcCode, areply)
+	}
+	replica.Mutex.Unlock()
+}
+
+func acceptorHandleAccept(id int32, l learner.Learner, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool, bcastAcceptDisklessNOOP bool) {
+	if learnerCheckChosen(l, accept.Instance, accept.Ballot, "Accept", int32(accept.PropID), rpc.commit, replica, id) {
+		return
+	}
+
 	dlog.AgentPrintfN(id, "Acceptor handing Accept from Replica %d in instance %d at ballot %d.%d as it can form a quorum", accept.PropID, accept.Instance, accept.Number, accept.PropID)
 	responseC := acc.RecvAcceptRemote(accept)
 	go func() {
-		for resp := range responseC {
-			if resp.ToWhom() == id {
-				continue
-			}
-
-			if resp.GetType() == rpc.acceptReply {
-				if resp.IsNegative() && bcastPrepare {
-					continue
-				}
-				areply := resp.GetSerialisable().(*stdpaxosproto.AcceptReply)
-				isPreemptStr := isPreemptOrAccept(areply)
-				dlog.AgentPrintfN(id, "Sending Accept Reply (%s) to Replica %d for instance %d with current ballot %d.%d and whose commands %d in response to a Accept in instance %d at ballot %d.%d",
-					isPreemptStr, accept.PropID, areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.WhoseCmd, accept.Instance, accept.Number, accept.PropID)
-			}
-
-			if resp.IsNegative() {
-				//if bcastPrepare {
-				//continue
-				//}
-				replica.SendMsg(resp.ToWhom(), resp.GetType(), resp.GetSerialisable())
-				continue
-			}
-
-			replica.Mutex.Lock()
-			if !bcastAcceptance && accept.LeaderId != -3 { // if acceptance broadcast
-				replica.SendMsgUNSAFE(resp.ToWhom(), resp.GetType(), resp.GetSerialisable())
-				replica.Mutex.Unlock()
-				continue
-			}
-			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
-			for i := 0; i < replica.N; i++ {
-				if i == int(id) {
-					continue
-				}
-				replica.SendMsgUNSAFE(int32(i), resp.GetType(), resp.GetSerialisable())
-			}
-			replica.Mutex.Unlock()
-			acceptanceChan <- resp.GetSerialisable()
-		}
+		acceptorHandleAcceptResponse(responseC, rpc, id, bcastPrepare, replica, acceptanceChan, accept, bcastAcceptDisklessNOOP, bcastAcceptance)
 	}()
 }

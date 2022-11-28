@@ -97,6 +97,7 @@ var requeueOnPreempt = flag.Bool("requeuepreempt", false, "Requeue a client prop
 var reducePropConfs = flag.Bool("reducepropconfs", false, "Reduce proposer conflicts in speculative proposals")
 
 var bcastAcceptance = flag.Bool("bcastacc", false, "In lwp broadcast acceptance")
+var bcastAcceptDisklessNOOP = flag.Bool("bcastaccdl", false, "In lwp broadcast acceptance of diskless noops")
 
 var batch = flag.Bool("batch", false, "turns on if batch wait > 0 also")
 
@@ -112,7 +113,7 @@ var logFilename = flag.String("logfilename", "", "Name for log file")
 
 var sendProposerState = flag.Bool("sendproposerstate", false, "Proposers periodically send their current state to each other")
 var proactivepreempt = flag.Bool("proactivepreempt", false, "Upon being preempted, the proposer prepares on the preempting ballot")
-var batchingAcceptor = flag.Bool("batchingacceptor", false, "Acceptor batches responses and disk writes")
+var batchingAcceptor = flag.Bool("bata", false, "Acceptor batches responses and disk writes")
 var accMaxBatchWaitMs = flag.Int("accmaxbatchwaitms", 5, "Max time in ms the acceptor waits to batch responses. Otherwise, commits and local events trigger syncing and responding. Subject to change")
 
 var minimalAcceptorNegatives = flag.Bool("minimalaccnegatives", false, "Only the minimal number (at most F+1) of acceptors will respond negatively in each quorum")
@@ -142,6 +143,9 @@ var disklessnoops = flag.Bool("disklessnoops", false, "Use diskless noops")
 var foceDisklessnoops = flag.Bool("fdisklessnoops", false, "Force diskless noops")
 
 var eagerByExec = flag.Bool("ebe", false, "Do eager by execute and crt instance gap")
+var eagerByExecFac = flag.Float64("ebef", 1, "What factor to use for eager by exec gap (how big the gap between executed and max opened instance should be)")
+
+var udp = flag.Bool("udp", false, "Use UDP (only available in two phase)")
 
 func main() {
 
@@ -190,14 +194,10 @@ func main() {
 	whenCrash := time.Duration(*whenCrashSeconds) * time.Second
 	howLongCrash := time.Duration(*howLongCrashSeconds) * time.Second
 
-	//TODO give parent dir to all replica types
-
-	//initalProposalWait := time.Duration(*initProposalWaitUs) * time.Microsecond
-
 	emulatedWriteTime := time.Nanosecond * time.Duration(*emulatedWriteTimeNs)
 	timeout := time.Microsecond * time.Duration(*timeoutus)
 
-	smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime), *batchFlush, time.Duration(*batchFlushWait)*time.Microsecond)
+	smrReplica := genericsmr.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *maxfailures, *storageParentDir, int32(*deadTime), *batchFlush, time.Duration(*batchFlushWait)*time.Microsecond, *udp)
 	var runnable runnable.Runnable
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
@@ -240,7 +240,7 @@ func main() {
 		//rep := stdpaxosglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, int32(*deadTime))
 		//rpc.Register(rep)
 		//runnable = rep
-	} else if *dostdEager || *doBaselineTwoPhase {
+	} else if *dostdEager || *doBaselineTwoPhase || *eagerByExec {
 		//aids := make([]int, len(nodeList))
 		//for i, _ := range aids {
 		//	aids[i] = i
@@ -256,7 +256,7 @@ func main() {
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt,
-			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops, *eagerByExec)
+			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops, *eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac))
 		runnable = rep
 		rpc.Register(rep)
 		//}

@@ -187,14 +187,14 @@ func (a *standardConf) handleMsgAlreadyCommitted(requestor int32, inst int32, re
 				towhom:     func() int32 { return requestor },
 				gettype:    func() uint8 { return a.commitRPC },
 				isnegative: func() bool { return true },
-				Serializable: &lwcproto.Commit{
-					LeaderId:   int32(iState.vBal.PropID),
-					Instance:   instI,
-					ConfigBal:  iState.getCurBal(a),
-					WhoseCmd:   iState.whoseCmds,
-					MoreToCome: 0,
-					Command:    iState.cmds,
-				},
+				//UDPaxos: &lwcproto.Commit{
+				//	LeaderId:   int32(iState.vBal.PropID),
+				//	Instance:   instI,
+				//	ConfigBal:  iState.getCurBal(a),
+				//	WhoseCmd:   iState.whoseCmds,
+				//	MoreToCome: 0,
+				//	Command:    iState.cmds,
+				//},
 			}
 			wg.Done()
 		}(i)
@@ -236,13 +236,13 @@ func (a *standardConf) RecvPrepareRemote(prepare *lwcproto.Prepare) <-chan Messa
 }
 
 func (a *standardConf) returnPrepareReply(msg *lwcproto.PrepareReply, responseC chan Message) {
-	toWhom := int32(msg.Req.PropID)
-	funcRet := func() uint8 { return a.prepareReplyRPC }
-	funcNeg := func() bool {
-		return !msg.Cur.Equal(msg.Req)
-	}
-	toRet := &protoMessage{giveToWhom(toWhom), funcRet, funcNeg, msg}
-	responseC <- toRet
+	//toWhom := int32(msg.Req.PropID)
+	//funcRet := func() uint8 { return a.prepareReplyRPC }
+	//funcNeg := func() bool {
+	//	return !msg.Cur.Equal(msg.Req)
+	//}
+	//toRet := &protoMessage{giveToWhom(toWhom), funcRet, funcNeg, msg}
+	//responseC <- toRet
 	close(responseC)
 }
 
@@ -307,10 +307,10 @@ func (a *standardConf) getAcceptReply(inst int32, accept *lwcproto.Accept) *lwcp
 
 func (a *standardConf) returnAcceptReply(acceptReply *lwcproto.AcceptReply, responseC chan Message) {
 	responseC <- protoMessage{
-		towhom:       giveToWhom(int32(acceptReply.Req.PropID)),
-		isnegative:   func() bool { return !acceptReply.Cur.Equal(acceptReply.Req) },
-		gettype:      func() uint8 { return a.acceptReplyRPC },
-		Serializable: acceptReply,
+		towhom:     giveToWhom(int32(acceptReply.Req.PropID)),
+		isnegative: func() bool { return !acceptReply.Cur.Equal(acceptReply.Req) },
+		gettype:    func() uint8 { return a.acceptReplyRPC },
+		//Serializable: acceptReply,
 	}
 	close(responseC)
 }

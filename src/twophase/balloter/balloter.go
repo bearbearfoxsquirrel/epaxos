@@ -1,8 +1,9 @@
-package proposalmanager
+package balloter
 
 import (
 	"epaxos/lwcproto"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/mapper"
 	"math"
 	"math/rand"
 	"time"
@@ -35,7 +36,7 @@ func (balloter *Balloter) GetNextProposingBal(config int32, maxPrevRoundNum int3
 			diff = 1e+7
 		}
 		jr := int32(10000) //within milliseconds just randomise
-		next := mapper(float64(diff), 0, 1e+7, mini, max-jr)
+		next := mapper.Mapper(float64(diff), 0, 1e+7, mini, max-jr)
 		if next < mini {
 			panic("too low bal")
 		}

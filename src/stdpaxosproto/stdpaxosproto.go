@@ -42,6 +42,7 @@ type Prepare struct {
 	Instance int32
 	Ballot
 }
+
 type PrepareReply struct {
 	Instance   int32
 	Req        Ballot
