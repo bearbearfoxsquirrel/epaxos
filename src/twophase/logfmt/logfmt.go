@@ -38,6 +38,11 @@ func LearntFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Ballo
 	return fmt.Sprintf("Learnt instance %d at ballot %d.%d (%d attempts) with whose commands %d", inst, ballot.Number, ballot.PropID, attempts, whose)
 }
 
+func LearntInlineFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32) string {
+	attempts := balloter.GetAttemptNumber(ballot.Number)
+	return fmt.Sprintf("learnt instance %d at ballot %d.%d (%d attempts) with whose commands %d", inst, ballot.Number, ballot.PropID, attempts, whose)
+}
+
 func LearntBatchFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32, batch batching.ProposalBatch) string {
 	return fmt.Sprintf("%s (%s)", LearntFmt(inst, ballot, balloter, whose), BatchFmt(batch))
 }

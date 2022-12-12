@@ -19,6 +19,12 @@ const (
 	CLOSED
 )
 
+type ProposerBK interface {
+	//GetQrm()
+	//GetStatus()
+	//GetProposeValue() (ballot, []*state.Command, whose)
+}
+
 type PBK struct {
 	Status          ProposerStatus
 	Qrms            map[lwcproto.ConfigBal]quorumsystem.SynodQuorumSystem

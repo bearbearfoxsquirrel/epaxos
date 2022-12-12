@@ -21,7 +21,7 @@ type ConfigAcceptor interface {
 //
 //func standardConfAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool) *standardConf {
 //	return &standardConf{
-//		instanceState:    make(map[int32]*AcceptorBookkeeping),
+//		instanceState:    make(map[int32]*InstanceBookkeeping),
 //		stableStore:      file,
 //		durable:          durable,
 //		emuatedWriteTime: emulatedWriteTime,
@@ -39,7 +39,7 @@ type ConfigAcceptor interface {
 //	bat := &betterBatchingConf{
 //
 //		batcher: &batchingAcceptor{
-//			instanceState:              make(map[int32]*AcceptorBookkeeping, 100),
+//			instanceState:              make(map[int32]*InstanceBookkeeping, 100),
 //			awaitingPrepareReplies:     make(map[int32]map[int32]outgoingPromiseResponses),
 //			awaitingAcceptReplies:      make(map[int32]map[int32]outgoingAcceptResponses),
 //			promiseRequests:            make(chan incomingPromiseRequests, 1000),
@@ -67,7 +67,7 @@ type ConfigAcceptor interface {
 
 type LWCAcceptorBookkeeping struct {
 	vConf int32
-	AcceptorBookkeeping
+	InstanceBookkeeping
 }
 
 type ConfigHolder interface {
@@ -123,7 +123,7 @@ func checkAndCreateConfigInstanceState(instanceState *map[int32]*LWCAcceptorBook
 	if _, exists := (*instanceState)[inst]; !exists {
 		(*instanceState)[inst] = &LWCAcceptorBookkeeping{
 			vConf: -1,
-			AcceptorBookkeeping: AcceptorBookkeeping{
+			InstanceBookkeeping: InstanceBookkeeping{
 				status: NOT_STARTED,
 				cmds:   nil,
 				curBal: stdpaxosproto.Ballot{Number: -1, PropID: -1},
@@ -410,7 +410,7 @@ func (a *standardConf) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) 
 //type batchingConfAcceptor struct {
 //	meID                   int32
 //	maxInstance            int32
-//	instanceState          map[int32]*AcceptorBookkeeping
+//	instanceState          map[int32]*InstanceBookkeeping
 //	awaitingPrepareReplies map[int32]map[int32]outgoingPromiseResponses
 //	awaitingAcceptReplies  map[int32]map[int32]outgoingAcceptResponses
 //	promiseRequests        chan incomingPromiseRequests
@@ -796,10 +796,10 @@ func (a *standardConf) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) 
 //	}()
 //}
 //
-//func (a *batchingAcceptor) getInstState(inst int32) *AcceptorBookkeeping {
+//func (a *batchingAcceptor) getInstState(inst int32) *InstanceBookkeeping {
 //	_, exists := a.instanceState[inst]
 //	if !exists {
-//		a.instanceState[inst] = &AcceptorBookkeeping{
+//		a.instanceState[inst] = &InstanceBookkeeping{
 //			status:    0,
 //			cmds:      nil,
 //			curBal:    stdpaxosproto.Ballot{-1, -1},
@@ -849,7 +849,7 @@ func (a *standardConf) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) 
 //	return phase
 //}
 //
-//func (abk *AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
+//func (abk *InstanceBookkeeping) getPhase() stdpaxosproto.Phase {
 //	var phase stdpaxosproto.Phase
 //	if abk.status == ACCEPTED {
 //		phase = stdpaxosproto.ACCEPTANCE
@@ -861,7 +861,7 @@ func (a *standardConf) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) 
 //	return phase
 //}
 //
-////func returnPrepareAndAcceptResponses(inst int32, myId int32, awaitingPromiseResps map[int32]outgoingPromiseResponses, awaitingAcceptResps map[int32]outgoingAcceptResponses, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
+////func returnPrepareAndAcceptResponses(inst int32, myId int32, awaitingPromiseResps map[int32]outgoingPromiseResponses, awaitingAcceptResps map[int32]outgoingAcceptResponses, abk *InstanceBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
 ////	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of %d responses for instance %d", myId, len(awaitingPromiseResps)+len(awaitingAcceptResps), inst)
 ////	if abk.status == COMMITTED {
 ////		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)
@@ -880,7 +880,7 @@ func (a *standardConf) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) 
 ////	returnAcceptRepliesAwaiting(inst, myId, awaitingAcceptResps, abk, acceptReplyRPC)
 ////}
 //
-//func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingAcceptResponses, abk *AcceptorBookkeeping, acceptReplyRPC uint8) {
+//func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingAcceptResponses, abk *InstanceBookkeeping, acceptReplyRPC uint8) {
 //	outOfOrderAccept := false
 //	for pid, accResp := range awaitingResps {
 //
@@ -930,7 +930,7 @@ func (a *standardConf) RecvCommitShortRemote(commit *stdpaxosproto.CommitShort) 
 //	}
 //}
 //
-//func returnPrepareRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingPromiseResponses, abk *AcceptorBookkeeping, prepareReplyRPC uint8) {
+//func returnPrepareRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingPromiseResponses, abk *InstanceBookkeeping, prepareReplyRPC uint8) {
 //	for pid, prepResp := range awaitingResps {
 //		prep := &stdpaxosproto.PrepareReply{
 //			Instance:   inst,

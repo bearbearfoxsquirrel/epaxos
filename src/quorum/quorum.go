@@ -5,7 +5,7 @@ type QuorumTally interface {
 	Reached() bool
 	Acknowledged(int32) bool
 	CanFormQuorum(int32) bool
-	//GetGroup() []int32
+	//GetAckersGroup() []int32
 }
 
 func (qrm *SpecificQuorumTally) CanFormQuorum(aid int32) bool {

@@ -17,7 +17,8 @@ const MAXDATAGRAMLEN = 65507
 const TIBSLLEN = 25
 
 type UDPaxos interface {
-	WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []MSGRReceipt
+	WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) MSGReceipt
+	BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) MSGReceipt
 	FromStrippedDatagrams(c CollectedM) error
 	NewUDP() UDPaxos
 	Serializable
@@ -31,7 +32,7 @@ type TIB struct {
 	BP int32
 }
 
-type MSGRReceipt struct {
+type MSGReceipt struct {
 	TIB
 	Seq  int32
 	Last int32
@@ -39,7 +40,7 @@ type MSGRReceipt struct {
 }
 
 // map of seqs to byte
-// MSGRReceipt has been stripped
+// MSGReceipt has been stripped
 type CollectedM struct {
 	//MLen     map[int32]int
 	Messages   map[int32][]byte
@@ -47,7 +48,7 @@ type CollectedM struct {
 	LastRecvAt time.Time
 }
 
-func DecodeTIBSL(b *[MAXDATAGRAMLEN]byte) MSGRReceipt {
+func DecodeTIBSL(b *[MAXDATAGRAMLEN]byte) MSGReceipt {
 	t := b[0]
 	i := int32(binary.BigEndian.Uint32(b[4:8]))
 	bb := int32(binary.BigEndian.Uint32(b[8:12]))
@@ -58,10 +59,10 @@ func DecodeTIBSL(b *[MAXDATAGRAMLEN]byte) MSGRReceipt {
 	if b[24] == 1 {
 		ack = true
 	}
-	return MSGRReceipt{TIB{t, i, bb, bp}, s, l, ack}
+	return MSGReceipt{TIB{t, i, bb, bp}, s, l, ack}
 }
 
-func DecodeTIBSLFromSlice(b []byte) MSGRReceipt {
+func DecodeTIBSLFromSlice(b []byte) MSGReceipt {
 	t := b[0]
 	i := int32(binary.BigEndian.Uint32(b[4:8]))
 	bb := int32(binary.BigEndian.Uint32(b[8:12]))
@@ -72,7 +73,7 @@ func DecodeTIBSLFromSlice(b []byte) MSGRReceipt {
 	if b[24] == 1 {
 		ack = true
 	}
-	return MSGRReceipt{TIB{t, i, bb, bp}, s, l, ack}
+	return MSGReceipt{TIB{t, i, bb, bp}, s, l, ack}
 }
 
 func EncodeTIBSL(t uint8, i int32, bb int32, bp int32, s int32, l int32, ack bool, b []byte) []byte {
@@ -91,7 +92,7 @@ func EncodeTIBSL(t uint8, i int32, bb int32, bp int32, s int32, l int32, ack boo
 	return b
 }
 
-func EncodeTIBSLFromStruct(tibsl MSGRReceipt, b []byte) []byte {
+func EncodeTIBSLFromStruct(tibsl MSGReceipt, b []byte) []byte {
 	b[0] = tibsl.T
 	binary.BigEndian.PutUint32(b[4:8], uint32(tibsl.I))
 	binary.BigEndian.PutUint32(b[8:12], uint32(tibsl.BB))

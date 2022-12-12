@@ -648,7 +648,7 @@ package configtwophase
 //
 //func (r *LWPReplica) makeEmptyInstance() *Instance {
 //	return &Instance{
-//		abk: &AcceptorBookkeeping{
+//		abk: &InstanceBookkeeping{
 //			status: NOT_STARTED,
 //			cmds:   nil,
 //			curBal: lwcproto.Ballot{-1, -1},

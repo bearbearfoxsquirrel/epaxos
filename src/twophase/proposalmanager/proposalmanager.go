@@ -13,7 +13,7 @@ import (
 )
 
 type ProposalManager interface {
-	StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32
+	StartNextInstance(instanceSpace *[]*PBK) []int32
 	StartNextProposal(initiator *PBK, inst int32)
 	//ProposingValue(instanceSpace *[]*PBK, inst int32, ballot stdpaxosproto.Ballot)
 	LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool // returns if proposer's ballot is preempted
@@ -30,7 +30,7 @@ type NoopLearner interface {
 	LearnNoop(inst int32, who int32)
 }
 
-type GlobalInstanceManager interface {
+type Proposer interface {
 	CrtInstanceOracle
 	ProposalManager
 }
@@ -131,7 +131,7 @@ func (manager *EagerFI) GetCrtInstance() int32 {
 	return manager.crtInstance
 }
 
-func (manager *EagerFI) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
+func (manager *EagerFI) StartNextInstance(instanceSpace *[]*PBK) []int32 {
 	next := int32(-1)
 	if len(manager.reservationsMade) == 0 {
 		dlog.AgentPrintfN(manager.id, "Starting next instance in log")
@@ -194,7 +194,6 @@ func (manager *EagerFI) StartNextInstance(instanceSpace *[]*PBK, startFunc func(
 
 	manager.reservationsGivenOut[next] = make(map[int32]struct{})
 	(*instanceSpace)[next] = manager.SingleInstanceManager.InitInstance(next)
-	startFunc(next)
 	opened := []int32{next}
 	manager.EagerSig.Opened(opened)
 	return opened
@@ -298,7 +297,7 @@ func (manager *EagerFI) checkIfIsGivenReservation(iSpace *[]*PBK, ballot lwcprot
 		}
 
 		//if givenTo, e := manager.propWithReservation[inst]; e {
-		//	g := manager.DetRandInstanceSetMapper.GetGroup(int(inst))
+		//	g := manager.DetRandInstanceSetMapper.GetAckersGroup(int(inst))
 		//	for _, pid := range g {
 		//		if pid == int(givenTo) {
 		//			dlog.AgentPrintfN(manager.id, "Ignoring invitation as we have given out before to someone with priority (ranking is %v)", g)
@@ -458,17 +457,16 @@ func SimpleProposalManagerNew(id int32, sig OpenInstSignal, signal BallotOpenIns
 
 func (manager *SimpleGlobalManager) GetCrtInstance() int32 { return manager.crtInstance }
 
-func (manager *SimpleGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
+func (manager *SimpleGlobalManager) StartNextInstance(instanceSpace *[]*PBK) []int32 {
 	manager.crtInstance = manager.crtInstance + 1
-
 	if (*instanceSpace)[manager.crtInstance] != nil {
 		panic("aslkdjfalksjflekjals;kdfj")
 	}
-
 	(*instanceSpace)[manager.crtInstance] = manager.SingleInstanceManager.InitInstance(manager.crtInstance)
-	startFunc(manager.crtInstance)
+	pbk := (*instanceSpace)[manager.crtInstance]
 	opened := []int32{manager.crtInstance}
 	manager.OpenInstSignal.Opened(opened)
+	manager.StartNextProposal(pbk, manager.crtInstance)
 	return opened
 }
 
@@ -532,6 +530,20 @@ func (manager *SimpleGlobalManager) LearnBallotChosen(instanceSpace *[]*PBK, ins
 
 //type
 
+type SingleLeaderStaticMapped struct {
+	// log manager
+	// instanceagentmapper.InstanceAgentMapper
+	//
+
+	// multiplex instances with groups // global instance mapper maps groups to logs
+	// log mapps instances to other things
+
+	// signal applies to group, or applies to log??? -- could specify a log, or could specify -- watch instance for failure and trigger reproposal, open instance does it for
+	// get batch signals instance
+	// failure signals retry
+	//
+}
+
 type StaticMappedProposalManager struct {
 	SingleInstanceManager
 	*SimpleGlobalManager
@@ -540,8 +552,6 @@ type StaticMappedProposalManager struct {
 }
 
 func MappedProposersProposalManagerNew(sig chan<- struct{}, simpleProposalManager *SimpleGlobalManager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper) *StaticMappedProposalManager {
-	//todo add dynamic on and off - when not detecting large numbers of proposals turn off F+1 or increase g+1
-	//simps := SimpleProposalManagerNew(id, n, quoralP, minBackoff, maxInitBackoff, maxBackoff, retries, factor, softFac, constBackoff, timeBasedBallots, doStats, tsStats, pStats, iStats, sigNewInst)
 	return &StaticMappedProposalManager{
 		newInstSig:            sig,
 		SimpleGlobalManager:   simpleProposalManager,
@@ -554,7 +564,7 @@ func (manager *StaticMappedProposalManager) GetProposerInstanceMapper() instance
 	return manager.InstanceAgentMapper
 }
 
-func (manager *StaticMappedProposalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
+func (manager *StaticMappedProposalManager) StartNextInstance(instanceSpace *[]*PBK) []int32 {
 	for gotInstance := false; !gotInstance; {
 		manager.crtInstance++
 		if (*instanceSpace)[manager.crtInstance] == nil {
@@ -575,7 +585,6 @@ func (manager *StaticMappedProposalManager) StartNextInstance(instanceSpace *[]*
 		gotInstance = true
 		dlog.AgentPrintfN(manager.id, "Starting instance %d as we are mapped to it", manager.crtInstance)
 	}
-	startFunc(manager.crtInstance)
 	opened := []int32{manager.crtInstance}
 	manager.OpenInstSignal.Opened(opened)
 	return opened
@@ -714,9 +723,9 @@ func DynamicMappedProposerManagerNew(sig chan<- struct{}, proposalManager *Simpl
 	return dMappedDecicider
 }
 
-func (decider *DynamicMappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
+func (decider *DynamicMappedGlobalManager) StartNextInstance(instanceSpace *[]*PBK) []int32 {
 	decider.updateGroupSize()
-	return decider.StaticMappedProposalManager.StartNextInstance(instanceSpace, startFunc)
+	return decider.StaticMappedProposalManager.StartNextInstance(instanceSpace)
 }
 
 func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
@@ -796,8 +805,8 @@ func (decider *DynamicMappedGlobalManager) LearnBallotChosen(instanceSpace *[]*P
 	decider.StaticMappedProposalManager.LearnBallotChosen(instanceSpace, inst, ballot)
 }
 
-//func (decider *DynamicMappedGlobalManager) GetGroup(Inst int32) []int {
-//	return decider.StaticMappedProposalManager.GetGroup(Inst)
+//func (decider *DynamicMappedGlobalManager) GetAckersGroup(Inst int32) []int {
+//	return decider.StaticMappedProposalManager.GetAckersGroup(Inst)
 //}
 
 func movingPointAvg(a, ob float64) float64 {
@@ -845,11 +854,11 @@ func HedgedBetsProposalManagerNew(id int32, manager *SimpleGlobalManager, n int3
 	return dMappedDecicider
 }
 
-func (manager *SimpleHedgedBets) StartNextInstance(instanceSpace *[]*PBK, startFunc func(inst int32)) []int32 {
+func (manager *SimpleHedgedBets) StartNextInstance(instanceSpace *[]*PBK) []int32 {
 	manager.updateHedgeSize()
 	opened := make([]int32, 0, manager.currentHedgeNum)
 	for i := int32(0); i < manager.currentHedgeNum; i++ {
-		opened = append(opened, manager.SimpleGlobalManager.StartNextInstance(instanceSpace, startFunc)...)
+		opened = append(opened, manager.SimpleGlobalManager.StartNextInstance(instanceSpace)...)
 	}
 	manager.OpenInstSignal.Opened(opened)
 	return opened
@@ -935,8 +944,8 @@ func (manager *SimpleHedgedBets) LearnNoop(inst int32, who int32) {
 }
 
 //
-//func (decider *SimpleHedgedBets) GetGroup(Inst int32) []int {
-//	return decider.SimpleGlobalManager.GetGroup(Inst)
+//func (decider *SimpleHedgedBets) GetAckersGroup(Inst int32) []int {
+//	return decider.SimpleGlobalManager.GetAckersGroup(Inst)
 //}
 
 // mapped hedged bets??

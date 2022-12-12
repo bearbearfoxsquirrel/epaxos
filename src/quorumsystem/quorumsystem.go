@@ -1,11 +1,8 @@
 package quorumsystem
 
 import (
-	"epaxos/dlog"
-	"epaxos/fastrpc"
 	"epaxos/genericsmr"
 	"epaxos/quorum"
-	"log"
 	"math"
 )
 
@@ -24,10 +21,10 @@ type SynodCountingQuorumSystemConstructor struct {
 	F       int
 	Thrifty bool
 	*genericsmr.Replica
-	BroadcastFastest bool
+	//BroadcastFastest bool
 	//broadcastStrat BroadcastStrat
-	AllAids          []int32
-	SendAllAcceptors bool
+	AllAids []int32
+	//SendAllAcceptors bool
 }
 
 func (constructor *SynodCountingQuorumSystemConstructor) Construct(acceptors []int32) SynodQuorumSystem {
@@ -50,15 +47,15 @@ func (constructor *SynodCountingQuorumSystemConstructor) getQrmSystem(acc []int3
 		panic("Acceptor group is too small to tolerate this number of failures")
 	}
 	return &CountingQuorumSynodQuorumSystem{
-		p1size:             len(acc) - constructor.F,
-		p2size:             constructor.F + 1,
-		thrifty:            constructor.Thrifty,
-		Replica:            constructor.Replica,
-		possibleAids:       acc,
-		broadcastFastest:   constructor.BroadcastFastest,
-		amIInQrm:           amIInQrm,
-		sendToAllAcceptors: constructor.SendAllAcceptors,
-		allAids:            constructor.AllAids,
+		p1size:       len(acc) - constructor.F,
+		p2size:       constructor.F + 1,
+		thrifty:      constructor.Thrifty,
+		Replica:      constructor.Replica,
+		possibleAids: acc,
+		//broadcastFastest:   constructor.BroadcastFastest,
+		amIInQrm: amIInQrm,
+		//sendToAllAcceptors: constructor.SendAllAcceptors,
+		allAids: constructor.AllAids,
 	}
 }
 
@@ -68,9 +65,9 @@ func (constructor *SynodCountingQuorumSystemConstructor) ConstructAQ(acc []int32
 }
 
 type SynodGridQuorumSystemConstructor struct {
-	F                int
-	Thrifty          bool
-	BroadcastFastest bool
+	F       int
+	Thrifty bool
+	//BroadcastFastest bool
 	*genericsmr.Replica
 }
 
@@ -126,12 +123,12 @@ func (constructor *SynodGridQuorumSystemConstructor) getQrmSystem(acc []int32) S
 		all[i] = aid
 	}
 	return &GridQuorumSynodQuorumSystem{
-		cols:             cols,
-		rows:             rows,
-		all:              all,
-		thrifty:          constructor.Thrifty,
-		Replica:          constructor.Replica,
-		broadcastFastest: constructor.BroadcastFastest,
+		cols:    cols,
+		rows:    rows,
+		all:     all,
+		thrifty: constructor.Thrifty,
+		Replica: constructor.Replica,
+		//broadcastFastest: constructor.BroadcastFastest,
 	}
 }
 
@@ -161,7 +158,7 @@ type SynodQuorumSystem interface {
 	QuorumReached() bool
 	AddToQuorum(int32)
 	HasAcknowledged(int32) bool
-	Broadcast(code uint8, msg fastrpc.Serializable) []int32
+	//Broadcast(code uint8, msg fastrpc.Serializable) []int32
 }
 
 type CountingQuorumSynodQuorumSystem struct {
@@ -216,70 +213,70 @@ func (qrmSys *CountingQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
 	qrmSys.Phase = ACCEPTANCE
 }
 
-func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int32 {
-	defer func() {
-		if err := recover(); err != nil {
-			dlog.Println("Prepare bcast failed:", err)
-		}
-		qrmSys.bcastAttempts++
-	}()
-
-	sentTo := make([]int32, 0, qrmSys.N)
-	if !qrmSys.thrifty { // || bcastatmpts > 0
-		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
-	}
-
-	var peerList []int32
-	if qrmSys.broadcastFastest {
-		peerList = qrmSys.Replica.GetPeerOrderLatency()
-	} else {
-		peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
-	}
-
-	//log.Println("peer list ", peerList)
-
-	qrmSys.Replica.SendMsg(qrmSys.Id, code, msg)
-	sentTo = append(sentTo, qrmSys.Id)
-
-	if len(peerList) < qrmSys.crtQrm.Threshold {
-		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
-	}
-
-	for _, preferredAcceptor := range peerList {
-		for _, quorumableAcceptor := range qrmSys.possibleAids {
-			if int32(quorumableAcceptor) == preferredAcceptor {
-				if preferredAcceptor != qrmSys.Id {
-					qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
-				}
-				//log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.id)
-				sentTo = append(sentTo, preferredAcceptor)
-				break
-			}
-		}
-		if len(sentTo) == qrmSys.crtQrm.Threshold { //todo fixme -- give out when either qrm reached and we are in it or qrm + us if we are not in it
-			break
-		}
-	}
-
-	if len(sentTo) < qrmSys.crtQrm.Threshold {
-		panic("Not sent to enough acceptors")
-	}
-	return sentTo // we managed to send to preferredAcceptor quorum so can return
-}
-
-func (qrmSys *CountingQuorumSynodQuorumSystem) bcastMsgToAllAlive(code uint8, msg fastrpc.Serializable, sentTo []int32) []int32 {
-	log.Println("Broadcasting to all")
-	sendToAll(qrmSys.possibleAids, qrmSys.Replica, code, msg)
-	qrmSys.Replica.Mutex.Lock()
-	for _, i := range qrmSys.possibleAids {
-		if !qrmSys.Alive[i] {
-			continue
-		}
-		sentTo = append(sentTo, i)
-	}
-	qrmSys.Replica.Mutex.Unlock()
-	return sentTo
-}
+//func (qrmSys *CountingQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int32 {
+//	defer func() {
+//		if err := recover(); err != nil {
+//			dlog.Println("Prepare bcast failed:", err)
+//		}
+//		qrmSys.bcastAttempts++
+//	}()
+//
+//	sentTo := make([]int32, 0, qrmSys.N)
+//	if !qrmSys.thrifty { // || bcastatmpts > 0
+//		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
+//	}
+//
+//	var peerList []int32
+//	if qrmSys.broadcastFastest {
+//		peerList = qrmSys.Replica.GetPeerOrderLatency()
+//	} else {
+//		peerList = qrmSys.Replica.GetAliveRandomPeerOrder()
+//	}
+//
+//	//log.Println("peer list ", peerList)
+//
+//	qrmSys.Replica.SendMsg(qrmSys.Id, code, msg)
+//	sentTo = append(sentTo, qrmSys.Id)
+//
+//	if len(peerList) < qrmSys.crtQrm.Threshold {
+//		return qrmSys.bcastMsgToAllAlive(code, msg, sentTo)
+//	}
+//
+//	for _, preferredAcceptor := range peerList {
+//		for _, quorumableAcceptor := range qrmSys.possibleAids {
+//			if int32(quorumableAcceptor) == preferredAcceptor {
+//				if preferredAcceptor != qrmSys.Id {
+//					qrmSys.Replica.SendMsg(preferredAcceptor, code, msg)
+//				}
+//				//log.Println("sent to ", preferredAcceptor, "I am ", qrmSys.id)
+//				sentTo = append(sentTo, preferredAcceptor)
+//				break
+//			}
+//		}
+//		if len(sentTo) == qrmSys.crtQrm.Threshold { //todo fixme -- give out when either qrm reached and we are in it or qrm + us if we are not in it
+//			break
+//		}
+//	}
+//
+//	if len(sentTo) < qrmSys.crtQrm.Threshold {
+//		panic("Not sent to enough acceptors")
+//	}
+//	return sentTo // we managed to send to preferredAcceptor quorum so can return
+//}
+//
+//func (qrmSys *CountingQuorumSynodQuorumSystem) bcastMsgToAllAlive(code uint8, msg fastrpc.Serializable, sentTo []int32) []int32 {
+//	log.Println("Broadcasting to all")
+//	sendToAll(qrmSys.possibleAids, qrmSys.Replica, code, msg)
+//	qrmSys.Replica.Mutex.Lock()
+//	for _, i := range qrmSys.possibleAids {
+//		if !qrmSys.Alive[i] {
+//			continue
+//		}
+//		sentTo = append(sentTo, i)
+//	}
+//	qrmSys.Replica.Mutex.Unlock()
+//	return sentTo
+//}
 
 type GridQuorumSynodQuorumSystem struct {
 	cols    [][]int32
@@ -329,61 +326,61 @@ func (qrmSys *GridQuorumSynodQuorumSystem) StartAcceptanceQuorum() {
 	qrmSys.Phase = ACCEPTANCE
 }
 
-func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int32 {
-	defer func() {
-		if err := recover(); err != nil {
-			dlog.Println("Prepare bcast failed:", err)
-		}
-	}()
-
-	possibleQrms := qrmSys.rows
-	if qrmSys.Phase == ACCEPTANCE {
-		possibleQrms = qrmSys.cols
-	}
-
-	sentTo := make([]int32, 0, qrmSys.Replica.N)
-	if qrmSys.thrifty { //qrmSys.bcastAttempts < 2 {
-		var selectedQrm []int32
-		if qrmSys.broadcastFastest {
-			selectedQrm = qrmSys.Replica.FromCandidatesSelectBestLatency(possibleQrms)
-		} else {
-			selectedQrm = qrmSys.Replica.FromCandidatesSelectRandom(possibleQrms)
-		}
-		if len(selectedQrm) > 0 {
-			for _, aid := range selectedQrm {
-				sentTo = append(sentTo, aid)
-				if aid == qrmSys.Replica.Id {
-					continue
-				}
-				qrmSys.Replica.SendMsg(int32(aid), code, msg)
-			}
-			qrmSys.bcastAttempts++
-			return sentTo
-		}
-		// fall back on sending to all
-	}
-	qrmSys.bcastAttempts++
-	// send to possibleAids
-	sendToAll(qrmSys.all, qrmSys.Replica, code, msg)
-	qrmSys.Mutex.Lock()
-	for _, i := range qrmSys.all {
-		if !qrmSys.Alive[i] {
-			continue
-		}
-		sentTo = append(sentTo, i)
-	}
-	qrmSys.Mutex.Unlock()
-	return sentTo
-}
-
-func sendToAll(all []int32, replica *genericsmr.Replica, code uint8, msg fastrpc.Serializable) {
-	// send to possibleAids
-	replica.CalculateAlive()
-	//replica.Mutex.Lock()
-	for _, aid := range all {
-		if aid != replica.Id {
-			replica.SendMsg(aid, code, msg)
-		}
-	}
-	//replica.Mutex.Unlock()
-}
+//func (qrmSys *GridQuorumSynodQuorumSystem) Broadcast(code uint8, msg fastrpc.Serializable) []int32 {
+//	defer func() {
+//		if err := recover(); err != nil {
+//			dlog.Println("Prepare bcast failed:", err)
+//		}
+//	}()
+//
+//	possibleQrms := qrmSys.rows
+//	if qrmSys.Phase == ACCEPTANCE {
+//		possibleQrms = qrmSys.cols
+//	}
+//
+//	sentTo := make([]int32, 0, qrmSys.Replica.N)
+//	if qrmSys.thrifty { //qrmSys.bcastAttempts < 2 {
+//		var selectedQrm []int32
+//		if qrmSys.broadcastFastest {
+//			selectedQrm = qrmSys.Replica.FromCandidatesSelectBestLatency(possibleQrms)
+//		} else {
+//			selectedQrm = qrmSys.Replica.FromCandidatesSelectRandom(possibleQrms)
+//		}
+//		if len(selectedQrm) > 0 {
+//			for _, aid := range selectedQrm {
+//				sentTo = append(sentTo, aid)
+//				if aid == qrmSys.Replica.Id {
+//					continue
+//				}
+//				qrmSys.Replica.SendMsg(int32(aid), code, msg)
+//			}
+//			qrmSys.bcastAttempts++
+//			return sentTo
+//		}
+//		// fall back on sending to all
+//	}
+//	qrmSys.bcastAttempts++
+//	// send to possibleAids
+//	sendToAll(qrmSys.all, qrmSys.Replica, code, msg)
+//	qrmSys.Mutex.Lock()
+//	for _, i := range qrmSys.all {
+//		if !qrmSys.Alive[i] {
+//			continue
+//		}
+//		sentTo = append(sentTo, i)
+//	}
+//	qrmSys.Mutex.Unlock()
+//	return sentTo
+//}
+//
+//func sendToAll(all []int32, replica *genericsmr.Replica, code uint8, msg fastrpc.Serializable) {
+//	// send to possibleAids
+//	replica.CalculateAlive()
+//	//replica.Mutex.Lock()
+//	for _, aid := range all {
+//		if aid != replica.Id {
+//			replica.SendMsg(aid, code, msg)
+//		}
+//	}
+//	//replica.Mutex.Unlock()
+//}

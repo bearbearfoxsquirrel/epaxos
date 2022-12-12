@@ -19,7 +19,7 @@ package acceptor
 //
 //func AltStandardAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool) *altstandard {
 //	return &altstandard{
-//		instanceState:    make(map[int32]*AcceptorBookkeeping),
+//		instanceState:    make(map[int32]*InstanceBookkeeping),
 //		stableStore:      file,
 //		durable:          durable,
 //		emuatedWriteTime: emulatedWriteTime,
@@ -41,7 +41,7 @@ package acceptor
 //		maxAcceptanceBatchWait:     maxAcceptanceBatchWait,
 //		batcher: &altbetterBatcher{
 //			awaitingResponses: make(map[int32]*responsesAwaiting, 100),
-//			instanceState:     make(map[int32]*AcceptorBookkeeping, 100),
+//			instanceState:     make(map[int32]*InstanceBookkeeping, 100),
 //			promiseRequests:   make(chan incomingPromiseRequests, 1000),
 //			acceptRequests:    make(chan incomingAcceptRequests, 1000),
 //			commits:           make(chan incomingCommitMsgs, 1000),
@@ -61,7 +61,7 @@ package acceptor
 //}
 //
 //type altstandard struct {
-//	instanceState              map[int32]*AcceptorBookkeeping
+//	instanceState              map[int32]*InstanceBookkeeping
 //	stableStore                stablestore.StableStore
 //	durable                    bool
 //	emuatedWriteTime           time.Duration
@@ -298,7 +298,7 @@ package acceptor
 //
 //type altbetterBatcher struct {
 //	awaitingResponses map[int32]*responsesAwaiting
-//	instanceState     map[int32]*AcceptorBookkeeping
+//	instanceState     map[int32]*InstanceBookkeeping
 //	promiseRequests   chan incomingPromiseRequests
 //	acceptRequests    chan incomingAcceptRequests
 //	commits           chan incomingCommitMsgs
@@ -621,10 +621,10 @@ package acceptor
 //	}()
 //}
 //
-//func (a *altbetterBatching) getInstState(inst int32) *AcceptorBookkeeping {
+//func (a *altbetterBatching) getInstState(inst int32) *InstanceBookkeeping {
 //	_, exists := a.batcher.instanceState[inst]
 //	if !exists {
-//		a.batcher.instanceState[inst] = &AcceptorBookkeeping{
+//		a.batcher.instanceState[inst] = &InstanceBookkeeping{
 //			status:    0,
 //			cmds:      nil,
 //			curBal:    stdpaxosproto.Ballot{-1, -1},
@@ -673,7 +673,7 @@ package acceptor
 //	return phase
 //}
 //
-//func altreturnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingResps *responsesAwaiting, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
+//func altreturnResponsesAndResetAwaitingResponses(inst int32, myId int32, awaitingResps *responsesAwaiting, abk *InstanceBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
 //	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of responses for instance %d", myId, inst)
 //	if abk.status == COMMITTED {
 //		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)

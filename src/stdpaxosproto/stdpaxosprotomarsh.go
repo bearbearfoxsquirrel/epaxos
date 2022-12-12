@@ -667,21 +667,33 @@ func (t *Prepare) FromStrippedDatagrams(c fastrpc.CollectedM) error {
 	return nil
 }
 
-//func (t *Prepare) GetTIBSL(code uint8) fastrpc.MSGRReceipt {
-//	return fastrpc.MSGRReceipt{
-//		TIB: fastrpc.TIB{
-//			T:  code,
-//			I:  t.Instance,
-//			BB: t.Number,
-//			BP: int32(t.PropID),
-//		},
-//		Seq:  0,
-//		Last: 0,
-//		//Ack:
-//	}
-//}
+func (t *Prepare) BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	bs := t.ToBuffer(code, requireAcks, b)
+	bcastToGroup(bcastList, writers, bs)
+	return t.getMsgReceipt(code, requireAcks)
+}
 
-func (t *Prepare) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []fastrpc.MSGRReceipt {
+func (t *Prepare) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	bs := t.ToBuffer(code, requireAck, b)
+	writer.Write(bs)
+	return t.getMsgReceipt(code, requireAck)
+}
+
+func (t *Prepare) getMsgReceipt(code uint8, requireAcks bool) fastrpc.MSGReceipt {
+	return fastrpc.MSGReceipt{
+		TIB: fastrpc.TIB{
+			T:  code,
+			I:  t.Instance,
+			BB: t.Number,
+			BP: int32(t.PropID),
+		},
+		Seq:  0,
+		Last: 0,
+		Ack:  requireAcks,
+	}
+}
+
+func (t *Prepare) ToBuffer(code uint8, requireAck bool, b *[65507]byte) []byte {
 	s := 14 + fastrpc.TIBSLLEN
 	var bs []byte
 	bs = b[:]
@@ -706,26 +718,46 @@ func (t *Prepare) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPCon
 	bs[12] = byte(tmp16)
 	bs[13] = byte(tmp16 >> 8)
 	bs = b[:s]
-	writer.Write(bs) //, addr)
-	return []fastrpc.MSGRReceipt{{
-		TIB: fastrpc.TIB{
-			T:  code,
-			I:  t.Instance,
-			BB: t.Number,
-			BP: int32(t.PropID),
-		},
-		Seq:  0,
-		Last: 0,
-		Ack:  requireAck,
-	}}
+	return bs
 }
 
 func (t *Prepare) NewUDP() fastrpc.UDPaxos {
 	return new(Prepare)
 }
 
-func (t *PrepareReply) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []fastrpc.MSGRReceipt {
+func bcastF(bcastList []int32, writers []*net.UDPConn) func(bs []byte) {
+	return func(bs []byte) {
+		for _, writer := range bcastList {
+			writers[writer].Write(bs)
+		}
+	}
+}
+
+func sendF(writer *net.UDPConn) func(bs []byte) {
+	return func(bs []byte) {
+		writer.Write(bs)
+	}
+}
+
+func bcastToGroup(bcastList []int32, writers []*net.UDPConn, bs []byte) {
+	for _, writer := range bcastList {
+		writers[writer].Write(bs)
+	}
+}
+
+func (t *PrepareReply) BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
 	s := 34 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAcks, b)
+	return WriteDatagramStream(bs, s, code, t.Instance, t.Req.Number, int32(t.Req.PropID), 0, requireAcks, t.Command, bcastF(bcastList, writers))
+}
+
+func (t *PrepareReply) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	s := 34 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAck, b)
+	return WriteDatagramStream(bs, s, code, t.Instance, t.Req.Number, int32(t.Req.PropID), 0, requireAck, t.Command, sendF(writer))
+}
+
+func (t *PrepareReply) ToBuffer(code uint8, requireAck bool, b *[65507]byte) []byte {
 	var bs = b[:]
 	bs = fastrpc.EncodeTIBSL(code, t.Instance, t.Req.Number, int32(t.Req.PropID), 0, -1, requireAck, bs)
 	bs = b[fastrpc.TIBSLLEN:]
@@ -780,9 +812,8 @@ func (t *PrepareReply) WriteDatagrams(code uint8, requireAck bool, writer *net.U
 	bs[31] = byte(tmp32 >> 8)
 	bs[32] = byte(tmp32 >> 16)
 	bs[33] = byte(tmp32 >> 24)
-
 	bs = b[:]
-	return WriteDatagramStream(bs, s, code, t.Instance, t.Req.Number, int32(t.Req.PropID), 0, requireAck, writer, addr, t.Command)
+	return bs
 }
 
 func (t *PrepareReply) FromStrippedDatagrams(c fastrpc.CollectedM) error {
@@ -806,8 +837,19 @@ func (t *PrepareReply) NewUDP() fastrpc.UDPaxos {
 	return new(PrepareReply)
 }
 
-func (t *Accept) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []fastrpc.MSGRReceipt {
+func (t *Accept) BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
 	s := 18 + fastrpc.TIBSLLEN
+	t.ToBuffer(code, requireAcks, b)
+	return WriteDatagramStream(b[:], s, code, t.Instance, t.Number, int32(t.PropID), 0, requireAcks, t.Command, bcastF(bcastList, writers))
+}
+
+func (t *Accept) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	s := 18 + fastrpc.TIBSLLEN
+	t.ToBuffer(code, requireAck, b)
+	return WriteDatagramStream(b[:], s, code, t.Instance, t.Number, int32(t.PropID), 0, requireAck, t.Command, sendF(writer))
+}
+
+func (t *Accept) ToBuffer(code uint8, requireAck bool, b *[65507]byte) []byte {
 	var bs = b[:]
 	bs = fastrpc.EncodeTIBSL(code, t.Instance, t.Number, int32(t.PropID), 0, -1, requireAck, bs)
 	bs = b[fastrpc.TIBSLLEN:]
@@ -835,8 +877,7 @@ func (t *Accept) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn
 	bs[16] = byte(tmp32 >> 16)
 	bs[17] = byte(tmp32 >> 24)
 	bs = b[:]
-	return WriteDatagramStream(bs, s, code, t.Instance, t.Number, int32(t.PropID), 0, requireAck, writer, addr, t.Command)
-	//return nil
+	return bs
 }
 
 func (t *Accept) FromStrippedDatagrams(c fastrpc.CollectedM) error {
@@ -855,8 +896,35 @@ func (t *Accept) NewUDP() fastrpc.UDPaxos {
 	return new(Accept)
 }
 
-func (t *AcceptReply) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []fastrpc.MSGRReceipt {
+func (t *AcceptReply) BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
 	s := 28 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAcks, b, s)
+	bcastToGroup(bcastList, writers, bs)
+	return t.getReceipt(code, requireAcks)
+}
+
+func (t *AcceptReply) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	s := 28 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAck, b, s)
+	writer.Write(bs)
+	return t.getReceipt(code, requireAck)
+}
+
+func (t *AcceptReply) getReceipt(code uint8, requireAck bool) fastrpc.MSGReceipt {
+	return fastrpc.MSGReceipt{
+		TIB: fastrpc.TIB{
+			T:  code,
+			I:  t.Instance,
+			BB: t.Req.Number,
+			BP: int32(t.Req.PropID),
+		},
+		Seq:  0,
+		Last: 0,
+		Ack:  requireAck,
+	}
+}
+
+func (t *AcceptReply) ToBuffer(code uint8, requireAck bool, b *[65507]byte, s int) []byte {
 	var bs = b[:]
 	bs = fastrpc.EncodeTIBSL(code, t.Instance, t.Req.Number, int32(t.Req.PropID), 0, 0, requireAck, bs)
 	bs = b[fastrpc.TIBSLLEN:]
@@ -902,19 +970,7 @@ func (t *AcceptReply) WriteDatagrams(code uint8, requireAck bool, writer *net.UD
 	bs[26] = byte(tmp32 >> 16)
 	bs[27] = byte(tmp32 >> 24)
 	bs = b[:s]
-	writer.Write(bs) //, addr)
-	return []fastrpc.MSGRReceipt{{
-		TIB: fastrpc.TIB{
-			T:  code,
-			I:  t.Instance,
-			BB: t.Req.Number,
-			BP: int32(t.Req.PropID),
-		},
-		Seq:  0,
-		Last: 0,
-		Ack:  requireAck,
-	}}
-	//return nil
+	return bs
 }
 
 func (t *AcceptReply) FromStrippedDatagrams(c fastrpc.CollectedM) error {
@@ -934,8 +990,19 @@ func (t *AcceptReply) NewUDP() fastrpc.UDPaxos {
 	return new(AcceptReply)
 }
 
-func (t *Commit) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []fastrpc.MSGRReceipt {
+func (t *Commit) BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
 	s := 22 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAcks, b)
+	return WriteDatagramStream(bs, s, code, t.Instance, t.Number, int32(t.PropID), 0, requireAcks, t.Command, bcastF(bcastList, writers))
+}
+
+func (t *Commit) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	s := 22 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAck, b)
+	return WriteDatagramStream(bs, s, code, t.Instance, t.Number, int32(t.PropID), 0, requireAck, t.Command, sendF(writer))
+}
+
+func (t *Commit) ToBuffer(code uint8, requireAck bool, b *[65507]byte) []byte {
 	var bs = b[:]
 	bs = fastrpc.EncodeTIBSL(code, t.Instance, t.Number, int32(t.PropID), 0, -1, requireAck, bs)
 	bs = b[fastrpc.TIBSLLEN:]
@@ -973,7 +1040,7 @@ func (t *Commit) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn
 	bs[21] = byte(tmp32 >> 24)
 
 	bs = b[:]
-	return WriteDatagramStream(bs, s, code, t.Instance, t.Number, int32(t.PropID), 0, requireAck, writer, addr, t.Command)
+	return bs
 }
 
 func (t *Commit) FromStrippedDatagrams(c fastrpc.CollectedM) error {
@@ -993,8 +1060,35 @@ func (t *Commit) NewUDP() fastrpc.UDPaxos {
 	return new(Commit)
 }
 
-func (t *CommitShort) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) []fastrpc.MSGRReceipt {
+func (t *CommitShort) BcastDatagrams(code uint8, requireAcks bool, bcastList []int32, writers []*net.UDPConn, addr []*net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
 	s := 22 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAcks, b, s)
+	bcastToGroup(bcastList, writers, bs)
+	return t.getMsgReceipt(code, requireAcks)
+}
+
+func (t *CommitShort) WriteDatagrams(code uint8, requireAck bool, writer *net.UDPConn, addr *net.UDPAddr, b *[65507]byte) fastrpc.MSGReceipt {
+	s := 22 + fastrpc.TIBSLLEN
+	bs := t.ToBuffer(code, requireAck, b, s)
+	writer.Write(bs)
+	return t.getMsgReceipt(code, requireAck)
+}
+
+func (t *CommitShort) getMsgReceipt(code uint8, requireAck bool) fastrpc.MSGReceipt {
+	return fastrpc.MSGReceipt{
+		TIB: fastrpc.TIB{
+			T:  code,
+			I:  t.Instance,
+			BB: t.Number,
+			BP: int32(t.PropID),
+		},
+		Seq:  0,
+		Last: 0,
+		Ack:  requireAck,
+	}
+}
+
+func (t *CommitShort) ToBuffer(code uint8, requireAck bool, b *[65507]byte, s int) []byte {
 	var bs = b[:]
 	bs = fastrpc.EncodeTIBSL(code, t.Instance, t.Number, int32(t.PropID), 0, 0, requireAck, bs)
 	bs = b[fastrpc.TIBSLLEN:]
@@ -1031,18 +1125,7 @@ func (t *CommitShort) WriteDatagrams(code uint8, requireAck bool, writer *net.UD
 	bs[20] = byte(tmp32 >> 16)
 	bs[21] = byte(tmp32 >> 24)
 	bs = b[:s]
-	writer.Write(bs) //, addr)
-	return []fastrpc.MSGRReceipt{{
-		TIB: fastrpc.TIB{
-			T:  code,
-			I:  t.Instance,
-			BB: t.Number,
-			BP: int32(t.PropID),
-		},
-		Seq:  0,
-		Last: 0,
-		Ack:  requireAck,
-	}}
+	return bs
 }
 
 func (t *CommitShort) FromStrippedDatagrams(c fastrpc.CollectedM) error {
@@ -1062,7 +1145,7 @@ func (t *CommitShort) NewUDP() fastrpc.UDPaxos {
 
 type CommandSlice []*state.Command
 
-func WriteDatagramStream(bs []byte, nextBytePos int, t uint8, i, bb, bp int32, s int32, requireAck bool, wire *net.UDPConn, addr *net.UDPAddr, c CommandSlice) []fastrpc.MSGRReceipt {
+func WriteDatagramStream(bs []byte, nextBytePos int, t uint8, i, bb, bp int32, s int32, requireAck bool, c CommandSlice, writeFunc func([]byte)) fastrpc.MSGReceipt {
 	// assume first tib is written if nextBytePos > 0
 	// assume len bs <= max datagram size
 	// assumes that a value is less than the size of a datagram - if isn't this will panic
@@ -1093,10 +1176,11 @@ func WriteDatagramStream(bs []byte, nextBytePos int, t uint8, i, bb, bp int32, s
 		cmdLen = 1 + 8 + 4 + vl
 		if nextBytePos+cmdLen > len(bs) {
 			//write and reset
-			wire.Write(bs[:nextBytePos]) //, addr)
+			writeFunc(bs[:nextBytePos])
+			//wire.Write(bs[:nextBytePos]) //, addr)
 			s += 1
 			bs = fastrpc.EncodeTIBSL(t, i, bb, bp, s, -1, requireAck, bs)
-			nextBytePos = 24
+			nextBytePos = fastrpc.TIBSLLEN
 		}
 		// serialise op
 		bs[nextBytePos] = op
@@ -1134,46 +1218,29 @@ func WriteDatagramStream(bs []byte, nextBytePos int, t uint8, i, bb, bp int32, s
 		}
 	}
 	bs = fastrpc.EncodeTIBSL(t, i, bb, bp, s, s, requireAck, bs)
-	wire.Write(bs[:nextBytePos]) //, addr)
-	tibsls := make([]fastrpc.MSGRReceipt, s+1)
-	for m := int32(0); m <= s; m++ {
-		if m == s {
-			tibsls[m] = fastrpc.MSGRReceipt{
-				TIB: fastrpc.TIB{
-					T:  t,
-					I:  i,
-					BB: bb,
-					BP: bp,
-				},
-				Seq:  s,
-				Last: s,
-				Ack:  requireAck,
-			}
-		} else {
-			tibsls[m] = fastrpc.MSGRReceipt{
-				TIB: fastrpc.TIB{
-					T:  t,
-					I:  i,
-					BB: bb,
-					BP: bp,
-				},
-				Seq:  m,
-				Last: -1,
-				Ack:  requireAck,
-			}
-		}
+	writeFunc(bs[:nextBytePos])
+	return fastrpc.MSGReceipt{
+		TIB: fastrpc.TIB{
+			T:  t,
+			I:  i,
+			BB: bb,
+			BP: bp,
+		},
+		Seq:  s,
+		Last: s,
+		Ack:  requireAck,
 	}
-
-	return tibsls
 }
 
 func FromDatagramStream(co fastrpc.CollectedM) []*state.Command {
 	// assume that any other message has been stripped
 	// first get number of commands
-	como := co.Messages[0]
-	cmdLen := int32((uint32(como[0]) | (uint32(como[1]) << 8) | (uint32(como[2]) << 16) | (uint32(como[3]) << 24)))
+	coM0 := co.Messages[0]
+	cmdLen := int32((uint32(coM0[0]) | (uint32(coM0[1]) << 8) | (uint32(coM0[2]) << 16) | (uint32(coM0[3]) << 24)))
 	cur := 4
 	cmds := make([]*state.Command, 0, cmdLen)
+
+	// change to detect if num commands filled
 
 	op := state.Operation(0)
 	k := state.Key(0)
@@ -1185,20 +1252,24 @@ func FromDatagramStream(co fastrpc.CollectedM) []*state.Command {
 		m := co.Messages[i]
 		for cur < len(m) {
 			// deserialise op
-			op = state.Operation(como[cur])
+			op = state.Operation(m[cur])
 			cur += 1
-			k = state.Key(int64((uint32(como[cur]) | (uint32(como[cur+1]) << 8) | (uint32(como[cur+2]) << 16) | (uint32(como[cur+3]) << 24)) |
-				(uint32(como[cur+4])<<32 | (uint32(como[cur+5]) << 40) | (uint32(como[cur+6]) << 48) | (uint32(como[cur+7]) << 54))))
+			k = state.Key(int64((uint32(m[cur]) | (uint32(m[cur+1]) << 8) | (uint32(m[cur+2]) << 16) | (uint32(m[cur+3]) << 24)) |
+				(uint32(m[cur+4])<<32 | (uint32(m[cur+5]) << 40) | (uint32(m[cur+6]) << 48) | (uint32(m[cur+7]) << 54))))
 			cur += 8
-			vl = int32((uint32(como[cur]) | (uint32(como[cur+1]) << 8) | (uint32(como[cur+2]) << 16) | (uint32(como[cur+3]) << 24)))
+			vl = int32((uint32(m[cur]) | (uint32(m[cur+1]) << 8) | (uint32(m[cur+2]) << 16) | (uint32(m[cur+3]) << 24)))
 			cur += 4
-			cmds = append(cmds, &state.Command{
+			cmd := &state.Command{
 				Op: op,
 				K:  k,
-				V:  como[cur : cur+int(vl)],
-			})
+				V:  m[cur : cur+int(vl)], // doesn't copy underlying buffer so can change
+				//V: make([]byte, vl),
+			}
+			//copy(cmd.V, m[cur:cur+int(vl)])
+			cmds = append(cmds, cmd)
 			cur += int(vl)
 		}
+		cur = 0
 	}
 
 	if len(cmds) != int(cmdLen) {

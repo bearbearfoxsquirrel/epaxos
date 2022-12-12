@@ -291,7 +291,7 @@ func PrewrittenBatcherAcceptorNew(file stablestore.StableStore, durable bool, em
 	bat := batchingAcceptor{
 		meID:                       id,
 		maxInstance:                -1,
-		instanceState:              make(map[int32]*AcceptorBookkeeping, 100),
+		instanceState:              make(map[int32]*InstanceBookkeeping, 100),
 		awaitingPrepareReplies:     make(map[int32]map[int32]outgoingPromiseResponses),
 		awaitingAcceptReplies:      make(map[int32]map[int32]outgoingAcceptResponses),
 		promiseRequests:            make(chan incomingPromiseRequests, 1000),

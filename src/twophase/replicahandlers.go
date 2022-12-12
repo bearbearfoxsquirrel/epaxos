@@ -10,14 +10,14 @@ import (
 )
 
 type PrepareResponsesRPC struct {
-	prepareReply uint8
-	commit       uint8
+	PrepareReply uint8
+	Commit       uint8
 }
 
 func acceptorSyncHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC) *stdpaxosproto.PrepareReply {
 	c := acc.RecvPrepareRemote(prepare)
 	msg := <-c
-	if msg.GetType() != rpc.prepareReply {
+	if msg.GetType() != rpc.PrepareReply {
 		panic("Not got a prepare reply back")
 	}
 	if msg.IsNegative() {
@@ -43,7 +43,7 @@ func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *generi
 			if msg.IsNegative() {
 				continue
 			}
-			if msg.GetType() == rpc.prepareReply {
+			if msg.GetType() == rpc.PrepareReply {
 				isPreemptStr := isPreemptOrPromise(preply)
 				dlog.AgentPrintfN(id, "Sending Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
 					isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
@@ -86,16 +86,16 @@ func learnerCheckChosen(l learner.Learner, inst int32, atmt stdpaxosproto.Ballot
 	return false
 }
 
-func handlePrepareResponsesFromAcceptor(resp <-chan acceptor.Message, rpc PrepareResponsesRPC, prepare *stdpaxosproto.Prepare, id int32, replica *genericsmr.Replica, bcastPrepare bool) {
+func handlePrepareResponsesFromAcceptor(resp <-chan acceptor.Message, rpc PrepareResponsesRPC, prepare *stdpaxosproto.Prepare, id int32, replica *genericsmr.Replica, noPreempt bool) {
 	for msg := range resp {
-		if msg.GetType() != rpc.prepareReply {
+		if msg.GetType() != rpc.PrepareReply {
+			continue
+		}
+		if msg.IsNegative() && noPreempt {
 			continue
 		}
 		preply := msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
 		isPreemptStr := isPreemptOrPromise(preply)
-		if msg.IsNegative() && bcastPrepare {
-			continue
-		}
 		dlog.AgentPrintfN(id, "Sending Prepare Reply (%s) to Replica %d for instance %d with current ballot %d.%d and value ballot %d.%d and whose commands %d in response to a Prepare in instance %d at ballot %d.%d",
 			isPreemptStr, prepare.PropID, preply.Instance, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd, prepare.Instance, prepare.Number, prepare.PropID)
 		if msg.ToWhom() == id {
@@ -109,17 +109,22 @@ func handlePrepareResponsesFromAcceptor(resp <-chan acceptor.Message, rpc Prepar
 	}
 }
 
-func acceptorHandlePrepare(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastPrepare bool) {
-	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.commit, replica, id) {
+func acceptorHandlePrepareFromRemote(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, noPreempt bool) {
+	//s := time.Now()
+	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.Commit, replica, id) {
 		return
 	}
 
 	resp := acc.RecvPrepareRemote(prepare)
-	go func() { handlePrepareResponsesFromAcceptor(resp, rpc, prepare, id, replica, bcastPrepare) }()
+	//dlog.AgentPrintfN(id, "It took %d µs for acceptor to handle prepare", time.Now().Sub(s).Microseconds())
+	go func() {
+		handlePrepareResponsesFromAcceptor(resp, rpc, prepare, id, replica, noPreempt)
+		//dlog.AgentPrintfN(id, "It took %d µs for acceptor to handle prepare and return message", time.Now().Sub(s).Microseconds())
+	}()
 }
 
 func acceptorSyncHandlePrepare(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastPrepare bool) {
-	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.commit, replica, id) {
+	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.Commit, replica, id) {
 		return
 	}
 
@@ -128,15 +133,15 @@ func acceptorSyncHandlePrepare(id int32, l learner.Learner, acc acceptor.Accepto
 }
 
 type AcceptResponsesRPC struct {
-	acceptReply uint8
-	commit      uint8
+	AcceptReply uint8
+	Commit      uint8
 }
 
 func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable) {
 	c := accptr.RecvAcceptRemote(accept)
 	go func() {
 		msg := <-c
-		if msg.GetType() != rpc.acceptReply {
+		if msg.GetType() != rpc.AcceptReply {
 			return
 		}
 		if msg.IsNegative() {
@@ -147,9 +152,9 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 		if bcastAcceptance || accept.LeaderId == -3 {
 			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			if replica.UDP {
-				bcastAcceptanceUDP(replica, areply, rpc.acceptReply, id)
+				bcastAcceptanceUDP(replica, areply, rpc.AcceptReply, id)
 			} else {
-				bcastAcceptanceTCP(replica, areply, rpc.acceptReply, id)
+				bcastAcceptanceTCP(replica, areply, rpc.AcceptReply, id)
 			}
 		}
 		acceptanceChan <- msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
@@ -170,7 +175,7 @@ func acceptorHandleAcceptResponse(responseC <-chan acceptor.Message, rpc AcceptR
 		if resp.ToWhom() == id {
 			continue
 		}
-		if resp.GetType() != rpc.acceptReply {
+		if resp.GetType() != rpc.AcceptReply {
 			continue
 		}
 		if resp.IsNegative() && bcastPrepare {
@@ -193,9 +198,9 @@ func acceptorHandleAcceptResponse(responseC <-chan acceptor.Message, rpc AcceptR
 		if bcastAcceptance || (accept.LeaderId == -3 && bcastAcceptDisklessNOOP) {
 			dlog.AgentPrintfN(id, "Sending Acceptance for instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
 			if replica.UDP {
-				bcastAcceptanceUDP(replica, areply, rpc.acceptReply, id)
+				bcastAcceptanceUDP(replica, areply, rpc.AcceptReply, id)
 			} else {
-				bcastAcceptanceTCP(replica, areply, rpc.acceptReply, id)
+				bcastAcceptanceTCP(replica, areply, rpc.AcceptReply, id)
 			}
 			acceptanceChan <- areply
 			continue
@@ -231,7 +236,7 @@ func bcastAcceptanceTCP(replica *genericsmr.Replica, areply *stdpaxosproto.Accep
 }
 
 func acceptorHandleAccept(id int32, l learner.Learner, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, isAccMsgFilter bool, msgFilter chan<- *messageFilterComm, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool, bcastAcceptDisklessNOOP bool) {
-	if learnerCheckChosen(l, accept.Instance, accept.Ballot, "Accept", int32(accept.PropID), rpc.commit, replica, id) {
+	if learnerCheckChosen(l, accept.Instance, accept.Ballot, "Accept", int32(accept.PropID), rpc.Commit, replica, id) {
 		return
 	}
 

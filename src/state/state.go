@@ -43,6 +43,8 @@ func CommandsEqual(a []*Command, b []*Command) bool {
 	return true
 }
 
+func DisklessNOOPP() []*Command { return []*Command{{NONE, -1, NIL()}} }
+
 func NOOP() []Command { return []Command{{NONE, 0, NIL()}} }
 
 func NOOPP() []*Command { return []*Command{{NONE, 0, NIL()}} }

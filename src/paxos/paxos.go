@@ -140,12 +140,12 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isle
 	// Quorum system
 	var qrm quorumsystem.SynodQuorumSystemConstructor
 	qrm = &quorumsystem.SynodCountingQuorumSystemConstructor{
-		F:                r.F,
-		Thrifty:          r.Thrifty,
-		Replica:          r.Replica,
-		BroadcastFastest: sendToFastestQrm,
-		AllAids:          pids,
-		SendAllAcceptors: false,
+		F:       r.F,
+		Thrifty: r.Thrifty,
+		Replica: r.Replica,
+		//BroadcastFastest: sendToFastestQrm,
+		AllAids: pids,
+		//SendAllAcceptors: false,
 	}
 
 	var instancequormaliser proposalmanager.InstanceQuormaliser = &proposalmanager.Standard{
@@ -322,6 +322,15 @@ func (r *Replica) run() {
 	}
 
 	for !r.Shutdown {
+		// detect down
+		// check forward requests
+		// on failure begin proposals
+		// detect when local batch is chosen
+		// on failure recovery, make sure that all client batches are proposed
+		// fill in all previous proposals
+
+		// need to have leadership spread -- each group has a leader
+
 		select {
 		case <-noopT.C:
 			//r.startNextInstance()
@@ -343,7 +352,7 @@ func (r *Replica) run() {
 			//		}
 			//	}
 			//}
-			//if count >= r.Replica.ReadQuorumSize()-1 && m > r.smallestDefaultBallot {
+			//if count >= r.Replica2.ReadQuorumSize()-1 && m > r.smallestDefaultBallot {
 			//	r.smallestDefaultBallot = m
 			//}
 			//
@@ -920,7 +929,7 @@ func (r *Replica) handleAcceptReply(areply *paxosproto.AcceptReply) {
 	//lb.acceptOKs++
 	r.Learner.ProposalAccepted(areply.Instance, stdpaxosproto.Ballot{areply.Ballot, -1}, areply.Who)
 	if r.Learner.IsChosen(areply.Instance) && r.Learner.HasLearntValue(areply.Instance) {
-		//if lb.acceptOKs+1 >= r.Replica.WriteQuorumSize() {
+		//if lb.acceptOKs+1 >= r.Replica2.WriteQuorumSize() {
 		dlog.Printf("Committing (crtInstance=%d)\n", r.crtInstance)
 		inst = r.instanceSpace[areply.Instance]
 		inst.status = COMMITTED

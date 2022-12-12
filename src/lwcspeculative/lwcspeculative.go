@@ -190,7 +190,7 @@ package lwcspeculative
 //	COMMITTED
 //)
 //
-//type AcceptorBookkeeping struct {
+//type InstanceBookkeeping struct {
 //	status   AcceptorStatus
 //	cmds     []state.Command
 //	curBal   lwcproto.Ballot
@@ -198,7 +198,7 @@ package lwcspeculative
 //}
 //
 //type Instance struct {
-//	abk *AcceptorBookkeeping
+//	abk *InstanceBookkeeping
 //	pbk *ProposingBookkeeping
 //}
 //
@@ -1157,7 +1157,7 @@ package lwcspeculative
 //
 //func (r *Replica) makeEmptyInstance() *Instance {
 //	return &Instance{
-//		abk: &AcceptorBookkeeping{
+//		abk: &InstanceBookkeeping{
 //			status: NOT_STARTED,
 //			cmds:   nil,
 //			curBal: lwcproto.Ballot{-1, -1},

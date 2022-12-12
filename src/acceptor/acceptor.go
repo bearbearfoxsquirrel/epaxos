@@ -23,7 +23,7 @@ type Acceptor interface {
 
 func StandardAcceptorNew(file stablestore.StableStore, durable bool, emulatedSS bool, emulatedWriteTime time.Duration, id int32, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8, commitShortRPC uint8, catchupOnProceedingCommits bool) *standard {
 	return &standard{
-		instanceState:    make(map[int32]*AcceptorBookkeeping),
+		instanceState:    make(map[int32]*InstanceBookkeeping),
 		stableStore:      file,
 		durable:          durable,
 		emuatedWriteTime: emulatedWriteTime,
@@ -40,7 +40,7 @@ func BetterBatchingAcceptorNew(file stablestore.StableStore, durable bool, emula
 	bat := &betterBatching{
 
 		batcher: &batchingAcceptor{
-			instanceState:              make(map[int32]*AcceptorBookkeeping, 100),
+			instanceState:              make(map[int32]*InstanceBookkeeping, 100),
 			awaitingPrepareReplies:     make(map[int32]map[int32]outgoingPromiseResponses),
 			awaitingAcceptReplies:      make(map[int32]map[int32]outgoingAcceptResponses),
 			promiseRequests:            make(chan incomingPromiseRequests, 1000),
@@ -75,7 +75,7 @@ const (
 	COMMITTED
 )
 
-type AcceptorBookkeeping struct {
+type InstanceBookkeeping struct {
 	status    InstanceStatus
 	cmds      []*state.Command
 	curBal    stdpaxosproto.Ballot
@@ -85,7 +85,7 @@ type AcceptorBookkeeping struct {
 }
 
 // append a log entry to stable storage
-func recordInstanceMetadata(abk *AcceptorBookkeeping, stableStore stablestore.StableStore, durable bool) {
+func recordInstanceMetadata(abk *InstanceBookkeeping, stableStore stablestore.StableStore, durable bool) {
 	if !durable {
 		return
 	}
@@ -126,9 +126,9 @@ func fsync(stableStore stablestore.StableStore, durable bool, emulatedSS bool, e
 	}
 }
 
-func checkAndCreateInstanceState(instanceState *map[int32]*AcceptorBookkeeping, inst int32) {
+func checkAndCreateInstanceState(instanceState *map[int32]*InstanceBookkeeping, inst int32) {
 	if _, exists := (*instanceState)[inst]; !exists {
-		(*instanceState)[inst] = &AcceptorBookkeeping{
+		(*instanceState)[inst] = &InstanceBookkeeping{
 			status:    NOT_STARTED,
 			cmds:      nil,
 			curBal:    stdpaxosproto.Ballot{Number: -1, PropID: -1},
@@ -138,7 +138,7 @@ func checkAndCreateInstanceState(instanceState *map[int32]*AcceptorBookkeeping, 
 	}
 }
 
-func checkAndHandleCommitted(inst int32, state *AcceptorBookkeeping) (bool, *stdpaxosproto.Commit) {
+func checkAndHandleCommitted(inst int32, state *InstanceBookkeeping) (bool, *stdpaxosproto.Commit) {
 	committed := state.status == COMMITTED
 	if committed {
 		return true, &stdpaxosproto.Commit{
@@ -155,7 +155,7 @@ func checkAndHandleCommitted(inst int32, state *AcceptorBookkeeping) (bool, *std
 }
 
 type standard struct {
-	instanceState              map[int32]*AcceptorBookkeeping
+	instanceState              map[int32]*InstanceBookkeeping
 	stableStore                stablestore.StableStore
 	durable                    bool
 	emuatedWriteTime           time.Duration
@@ -327,7 +327,7 @@ func (a *standard) returnAcceptReply(acceptReply *stdpaxosproto.AcceptReply, res
 	}
 }
 
-func nonDurableAccept(accept *stdpaxosproto.Accept, abk *AcceptorBookkeeping, stableStore stablestore.StableStore, durable bool) {
+func nonDurableAccept(accept *stdpaxosproto.Accept, abk *InstanceBookkeeping, stableStore stablestore.StableStore, durable bool) {
 	abk.status = ACCEPTED
 	abk.curBal = accept.Ballot
 	abk.vBal = accept.Ballot
@@ -424,7 +424,7 @@ type outgoingAcceptResponses struct {
 type batchingAcceptor struct {
 	meID                   int32
 	maxInstance            int32
-	instanceState          map[int32]*AcceptorBookkeeping
+	instanceState          map[int32]*InstanceBookkeeping
 	awaitingPrepareReplies map[int32]map[int32]outgoingPromiseResponses
 	awaitingAcceptReplies  map[int32]map[int32]outgoingAcceptResponses
 	promiseRequests        chan incomingPromiseRequests
@@ -810,10 +810,10 @@ func (a *batchingAcceptor) handleMsgAlreadyCommitted(requestor int32, inst int32
 	}()
 }
 
-func (a *batchingAcceptor) getInstState(inst int32) *AcceptorBookkeeping {
+func (a *batchingAcceptor) getInstState(inst int32) *InstanceBookkeeping {
 	_, exists := a.instanceState[inst]
 	if !exists {
-		a.instanceState[inst] = &AcceptorBookkeeping{
+		a.instanceState[inst] = &InstanceBookkeeping{
 			status:    0,
 			cmds:      nil,
 			curBal:    stdpaxosproto.Ballot{-1, -1},
@@ -863,7 +863,7 @@ func (a *betterBatching) getPhase(inst int32) stdpaxosproto.Phase {
 	return phase
 }
 
-func (abk *AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
+func (abk *InstanceBookkeeping) getPhase() stdpaxosproto.Phase {
 	var phase stdpaxosproto.Phase
 	if abk.status == ACCEPTED {
 		phase = stdpaxosproto.ACCEPTANCE
@@ -875,7 +875,7 @@ func (abk *AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
 	return phase
 }
 
-//func returnPrepareAndAcceptResponses(inst int32, myId int32, awaitingPromiseResps map[int32]outgoingPromiseResponses, awaitingAcceptResps map[int32]outgoingAcceptResponses, abk *AcceptorBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
+//func returnPrepareAndAcceptResponses(inst int32, myId int32, awaitingPromiseResps map[int32]outgoingPromiseResponses, awaitingAcceptResps map[int32]outgoingAcceptResponses, abk *InstanceBookkeeping, prepareReplyRPC uint8, acceptReplyRPC uint8, commitRPC uint8) {
 //	dlog.AgentPrintfN(myId, "Acceptor %d returning batch of %d responses for instance %d", myId, len(awaitingPromiseResps)+len(awaitingAcceptResps), inst)
 //	if abk.status == COMMITTED {
 //		dlog.AgentPrintfN(myId, "Acceptor %d returning no responses for instance %d as it has been committed in this batch", myId, inst)
@@ -894,7 +894,7 @@ func (abk *AcceptorBookkeeping) getPhase() stdpaxosproto.Phase {
 //	returnAcceptRepliesAwaiting(inst, myId, awaitingAcceptResps, abk, acceptReplyRPC)
 //}
 
-func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingAcceptResponses, abk *AcceptorBookkeeping, acceptReplyRPC uint8) {
+func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingAcceptResponses, abk *InstanceBookkeeping, acceptReplyRPC uint8) {
 	outOfOrderAccept := false
 	for pid, accResp := range awaitingResps {
 
@@ -944,7 +944,7 @@ func returnAcceptRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32
 	}
 }
 
-func returnPrepareRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingPromiseResponses, abk *AcceptorBookkeeping, prepareReplyRPC uint8) {
+func returnPrepareRepliesAwaiting(inst int32, myId int32, awaitingResps map[int32]outgoingPromiseResponses, abk *InstanceBookkeeping, prepareReplyRPC uint8) {
 	for pid, prepResp := range awaitingResps {
 		prep := &stdpaxosproto.PrepareReply{
 			Instance:   inst,
