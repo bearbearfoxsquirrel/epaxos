@@ -388,9 +388,9 @@ func (manager *EagerFI) GetInducedInstances(instanceSpace *[]*PBK) int32 {
 	}
 	for i := int32(1); i <= manager.Forwarding*manager.N; i++ { // will return 0 for all negative i values
 		k := int32(len(manager.Induced[manager.CrtInstance-i])) - (i - 1) // extend this to being in the proposer?
-		//if !(*instanceSpace)[manager.CrtInstance-i].PropCurBal.IsZero() {
-		//	k -= 1
-		//}
+		if !(*instanceSpace)[manager.CrtInstance-i].PropCurBal.IsZero() {
+			k -= 1
+		}
 		dlog.AgentPrintfN(manager.Id, "For instance %d, there are %d induced proposals", manager.CrtInstance-(i), len(manager.Induced[manager.CrtInstance-i]))
 		if k <= 0 {
 			continue
