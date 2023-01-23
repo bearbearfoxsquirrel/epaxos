@@ -1,12 +1,10 @@
-package proposalmanager
+package proposer
 
 import (
 	"epaxos/dlog"
 	"epaxos/lwcproto"
-	"epaxos/stats"
 	"epaxos/stdpaxosproto"
 	"epaxos/twophase/balloter"
-	"time"
 )
 
 type SingleInstanceManager interface {
@@ -19,26 +17,18 @@ type SingleInstanceManager interface {
 }
 
 type SimpleInstanceManager struct {
-	doStats bool
-	id      int32
+	id int32
 	*BackoffManager
 	*balloter.Balloter
 	ProposerInstanceQuorumaliser
-	*stats.TimeseriesStats
-	*stats.ProposalStats
-	*stats.InstanceStats
 }
 
-func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter *balloter.Balloter, doStats bool, qrm ProposerInstanceQuorumaliser, tsStats *stats.TimeseriesStats, proposalStats *stats.ProposalStats, instanceStats *stats.InstanceStats) *SimpleInstanceManager {
+func SimpleInstanceManagerNew(id int32, manager *BackoffManager, balloter *balloter.Balloter, qrm ProposerInstanceQuorumaliser) *SimpleInstanceManager {
 	return &SimpleInstanceManager{
-		doStats:                      doStats,
 		id:                           id,
 		BackoffManager:               manager,
 		Balloter:                     balloter,
 		ProposerInstanceQuorumaliser: qrm,
-		TimeseriesStats:              tsStats,
-		ProposalStats:                proposalStats,
-		InstanceStats:                instanceStats,
 	}
 }
 
@@ -78,7 +68,7 @@ func (man *SimpleInstanceManager) HandleReceivedBallot(pbk *PBK, inst int32, bal
 	//	return false
 	//}
 
-	if pbk.MaxKnownBal.GreaterThan(ballot) {
+	if pbk.MaxKnownBal.GreaterThan(ballot) || pbk.MaxKnownBal.Equal(ballot) {
 		return false
 	} // want to backoff in face of new phase
 
@@ -109,21 +99,7 @@ func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, bal
 		return
 	}
 
-	if man.doStats && pbk.Status != BACKING_OFF && !pbk.PropCurBal.IsZero() {
-		if pbk.PropCurBal.GreaterThan(ballot) {
-			man.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.PropCurBal, stats.LOWERPROPOSALCHOSEN)
-		} else if ballot.GreaterThan(pbk.PropCurBal) {
-			man.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.PropCurBal, stats.HIGHERPROPOSALONGOING)
-		} else {
-			man.ProposalStats.CloseAndOutput(stats.InstanceID{0, inst}, pbk.PropCurBal, stats.ITWASCHOSEN)
-		}
-	}
 	man.BackoffManager.StopBackoffs(inst)
-	//man.BackoffManager.ClearBackoff(inst)
-
-	if ballot.Equal(pbk.PropCurBal) && man.doStats {
-		man.InstanceStats.RecordComplexStatEnd(stats.InstanceID{0, inst}, "Phase 2", "Success")
-	}
 
 	pbk.Status = CLOSED
 	pbk.ProposeValueBal = ballot
@@ -131,15 +107,6 @@ func (man *SimpleInstanceManager) HandleProposalChosen(pbk *PBK, inst int32, bal
 		pbk.MaxKnownBal = ballot
 	}
 
-	if man.doStats {
-		atmts := man.Balloter.GetAttemptNumber(ballot.Number) // (pbk.pbk.ProposeValueBal.Number / man.maxBalInc)
-		man.InstanceStats.RecordCommitted(stats.InstanceID{0, inst}, atmts, time.Now())
-		man.TimeseriesStats.Update("Instances Learnt", 1)
-		if int32(ballot.PropID) == man.id {
-			man.TimeseriesStats.Update("Instances I Choose", 1)
-			man.InstanceStats.RecordOccurrence(stats.InstanceID{0, inst}, "I Chose", 1)
-		}
-	}
 	if ballot.PropID == int16(man.id) {
 		man.Balloter.UpdateProposalChosen()
 	}

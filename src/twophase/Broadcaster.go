@@ -6,7 +6,7 @@ import (
 	"epaxos/genericsmr"
 	"epaxos/state"
 	"epaxos/stdpaxosproto"
-	"epaxos/twophase/proposalmanager"
+	"epaxos/twophase/proposer"
 	"math/rand"
 )
 
@@ -157,12 +157,12 @@ type PrepareAllFromWriteAheadReplica struct {
 	n   int32
 	id  int32
 	rpc uint8
-	proposalmanager.AcceptorQrmInfo
+	proposer.AcceptorQrmInfo
 	PrepareSelfSender
 	ListSender
 }
 
-func NewPrepareAllFromWriteAheadReplica(n int32, id int32, rpc uint8, acceptorQrmInfo proposalmanager.AcceptorQrmInfo, prepareSelfSender PrepareSelfSender, listSender ListSender) *PrepareAllFromWriteAheadReplica {
+func NewPrepareAllFromWriteAheadReplica(n int32, id int32, rpc uint8, acceptorQrmInfo proposer.AcceptorQrmInfo, prepareSelfSender PrepareSelfSender, listSender ListSender) *PrepareAllFromWriteAheadReplica {
 	return &PrepareAllFromWriteAheadReplica{n: n, id: id, rpc: rpc, AcceptorQrmInfo: acceptorQrmInfo, PrepareSelfSender: prepareSelfSender, ListSender: listSender}
 }
 
@@ -193,7 +193,7 @@ type BcastFastLearning struct {
 	id             int32
 	n              int32
 	aids           []int32
-	proposalmanager.AcceptorQrmInfo
+	proposer.AcceptorQrmInfo
 	SendQrmSize
 	ListSender // ReliableListSender
 	AcceptSelfSender
@@ -294,7 +294,7 @@ type BcastSlowLearning struct {
 	id             int32
 	n              int32
 	aids           []int32
-	//proposalmanager.AcceptorQrmInfo
+	//proposer.AcceptorQrmInfo
 	SendQrmSize
 	ListSender // ReliableListSender
 	AcceptSelfSender
@@ -343,10 +343,13 @@ func (b *BcastSlowLearning) BcastAccept(instance int32, ballot stdpaxosproto.Bal
 		}
 		sentTo = append(sentTo, peer)
 	}
-	b.ListSender.BcastTo(sentTo, b.acceptRPC, &pa)
-	if selfInGroup {
-		b.AcceptSelfSender.Send(&pa)
+	if !selfInGroup {
+		b.ListSender.BcastTo(sentTo, b.acceptRPC, &pa)
+		dlog.AgentPrintfN(b.id, "Broadcasting Accept for instance %d with whose commands %d at ballot %d.%d to Replicas %v", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo)
+		return
 	}
+	b.AcceptSelfSender.Send(&pa)
+	b.ListSender.BcastTo(sentTo[1:], b.acceptRPC, &pa)
 	dlog.AgentPrintfN(b.id, "Broadcasting Accept for instance %d with whose commands %d at ballot %d.%d to Replicas %v", pa.Instance, pa.WhoseCmd, pa.Number, pa.PropID, sentTo)
 }
 
@@ -355,7 +358,7 @@ func (b *BcastSlowLearning) BcastCommit(instance int32, ballot stdpaxosproto.Bal
 	pcs := getCommitShort(b.id, instance, ballot, whose)
 	sList := make([]int32, 0, b.id)
 	list := make([]int32, 0, b.n)
-	for q := int32(0); q < b.id; q++ {
+	for q := int32(0); q < b.n; q++ {
 		if q == b.id {
 			continue
 		}
@@ -370,6 +373,6 @@ func (b *BcastSlowLearning) BcastCommit(instance int32, ballot stdpaxosproto.Bal
 	}
 	b.ListSender.BcastTo(list, b.commitPRC, &pc)
 	b.ListSender.BcastTo(sList, b.commitShortRPC, &pcs)
-	dlog.AgentPrintfN(b.id, "Broadcasting Commit for instance %d learnt with whose commands %d, at ballot %d.%d", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID)
+	dlog.AgentPrintfN(b.id, "Broadcasting Commit for instance %d learnt with whose commands %d, at ballot %d.%d (short list %v, long list %v)", instance, pcs.WhoseCmd, pcs.Number, pcs.PropID, sList, list)
 
 }

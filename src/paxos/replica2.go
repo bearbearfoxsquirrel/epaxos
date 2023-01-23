@@ -22,7 +22,7 @@ package paxos
 //	"epaxos/twophase/exec"
 //	"epaxos/twophase/learner"
 //	"epaxos/twophase/logfmt"
-//	"epaxos/twophase/proposalmanager"
+//	"epaxos/twophase/proposer"
 //	"fmt"
 //	"math"
 //	"math/rand"
@@ -97,7 +97,7 @@ package paxos
 //type TimeoutInfo struct {
 //	inst    int32
 //	ballot  stdpaxosproto.Ballot
-//	phase   proposalmanager.ProposerStatus
+//	phase   proposer.ProposerStatus
 //	msgCode uint8
 //	msg     fastrpc.Serializable
 //}
@@ -120,21 +120,21 @@ package paxos
 //}
 //
 //type Replica2 struct {
-//	exec.Executor
+//	exec.SimpleExecutor
 //	learner.Learner
 //
-//	proposalmanager.CrtInstanceOracle
+//	proposer.CrtInstanceOracle
 //	twophase.ProposeBatchOracle
 //
 //	balloter *balloter2.Balloter
 //
-//	proposalmanager.Proposer
-//	proposalmanager.ProposerInstanceQuorumaliser
-//	proposalmanager.LearnerQuorumaliser
-//	proposalmanager.AcceptorQrmInfo
+//	proposer.Proposer
+//	proposer.ProposerInstanceQuorumaliser
+//	proposer.LearnerQuorumaliser
+//	proposer.AcceptorQrmInfo
 //
 //	batchLearners []MyBatchLearner
-//	noopLearners  []proposalmanager.NoopLearner
+//	noopLearners  []proposer.NoopLearner
 //
 //	*genericsmr.Replica           // extends a generic Paxos replica
 //	configChan                    chan fastrpc.Serializable
@@ -152,14 +152,14 @@ package paxos
 //	commitShortRPC                uint8
 //	prepareReplyRPC               uint8
 //	acceptReplyRPC                uint8
-//	instanceSpace                 []*proposalmanager.PBK // the space of all instances (used and not yet used)
+//	instanceSpace                 []*proposer.PBK // the space of all instances (used and not yet used)
 //	Shutdown                      bool
 //	counter                       int
 //	maxBatchWait                  int
 //	crtOpenedInstances            []int32
 //	proposableInstances           chan struct{} //*time.Timer
 //	noopWaitUs                    int32
-//	retryInstance                 chan proposalmanager.RetryInfo
+//	retryInstance                 chan proposer.RetryInfo
 //	alwaysNoop                    bool
 //	lastTimeClientChosen          time.Time
 //	lastOpenProposalTime          time.Time
@@ -198,7 +198,7 @@ package paxos
 //	classesLeased        map[int32]stdpaxosproto.Ballot
 //	iWriteAhead          int32
 //	writeAheadAcceptor   bool
-//	tryInitPropose       chan proposalmanager.RetryInfo
+//	tryInitPropose       chan proposer.RetryInfo
 //	sendFastestQrm       bool
 //	nudge                chan chan batching.ProposalBatch
 //	bcastCommit          bool
@@ -215,7 +215,7 @@ package paxos
 //	nextNoop                *time.Timer
 //	noops                   int
 //	resetTo                 chan time.Duration
-//	execSig                 proposalmanager.ExecOpenInstanceSignal
+//	execSig                 proposer.ExecOpenInstanceSignal
 //	bcastAcceptDisklessNOOP bool
 //}
 //
@@ -270,14 +270,14 @@ package paxos
 //		commitShortChan:              make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 //		prepareReplyChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 //		acceptReplyChan:              make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
-//		tryInitPropose:               make(chan proposalmanager.RetryInfo, 100),
+//		tryInitPropose:               make(chan proposer.RetryInfo, 100),
 //		prepareRPC:                   0,
 //		acceptRPC:                    0,
 //		commitRPC:                    0,
 //		commitShortRPC:               0,
 //		prepareReplyRPC:              0,
 //		acceptReplyRPC:               0,
-//		instanceSpace:                make([]*proposalmanager.PBK, _const.ISpaceLen),
+//		instanceSpace:                make([]*proposer.PBK, _const.ISpaceLen),
 //		Shutdown:                     false,
 //		counter:                      0,
 //		//flush:                        true,
@@ -285,7 +285,7 @@ package paxos
 //		crtOpenedInstances:           make([]int32, maxOpenInstances),
 //		proposableInstances:          make(chan struct{}, MAXPROPOSABLEINST*replica.N),
 //		noopWaitUs:                   noopwait,
-//		retryInstance:                make(chan proposalmanager.RetryInfo, maxOpenInstances*10000),
+//		retryInstance:                make(chan proposer.RetryInfo, maxOpenInstances*10000),
 //		alwaysNoop:                   alwaysNoop,
 //		fastLearn:                    false,
 //		whoCrash:                     whoCrash,
@@ -451,8 +451,8 @@ package paxos
 //		}
 //	}
 //
-//	var instancequormaliser proposalmanager.InstanceQuormaliser
-//	instancequormaliser = &proposalmanager.Standard{
+//	var instancequormaliser proposer.InstanceQuormaliser
+//	instancequormaliser = &proposer.Standard{
 //		SynodQuorumSystemConstructor: qrm,
 //		Aids:                         pids,
 //		MyID:                         r.Id,
@@ -482,7 +482,7 @@ package paxos
 //			}
 //		}
 //
-//		instancequormaliser = &proposalmanager.Minimal{
+//		instancequormaliser = &proposer.Minimal{
 //			AcceptorMapper:               mapper,
 //			SynodQuorumSystemConstructor: qrm,
 //			MapperCache:                  make(map[int32][]int32),
@@ -495,7 +495,7 @@ package paxos
 //		amapping := instanceagentmapper.GetAMap(pamapping)
 //		//pmapping := instanceagentmapper.GetPMap(pamapping)
 //		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
-//		instancequormaliser = &proposalmanager.StaticMapped{
+//		instancequormaliser = &proposer.StaticMapped{
 //			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
 //			SynodQuorumSystemConstructor: qrm,
 //			MyID:                         r.Id,
@@ -508,7 +508,7 @@ package paxos
 //
 //	l := learner.GetBcastAcceptLearner(aqc)
 //	r.Learner = &l
-//	r.Executor = exec.GetNewExecutor(int32(id), replica, r.StableStore, r.Dreply)
+//	r.SimpleExecutor = exec.GetNewExecutor(int32(id), replica, r.StableStore, r.Dreply)
 //
 //	r.ProposerInstanceQuorumaliser = instancequormaliser
 //	r.AcceptorQrmInfo = instancequormaliser
@@ -525,38 +525,38 @@ package paxos
 //	balloter := &balloter2.Balloter{r.Id, int32(r.N), 10000, time.Time{}, timeBasedBallots}
 //	r.balloter = balloter
 //
-//	backoffManager := proposalmanager.BackoffManagerNew(minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, r.Id)
-//	var instanceManager proposalmanager.SingleInstanceManager = proposalmanager.SimpleInstanceManagerNew(r.Id, backoffManager, balloter, doStats,
+//	backoffManager := proposer.BackoffManagerNew(minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, r.Id)
+//	var instanceManager proposer.SingleInstanceManager = proposer.SimpleInstanceManagerNew(r.Id, backoffManager, balloter, doStats,
 //		r.ProposerInstanceQuorumaliser, r.TimeseriesStats, r.ProposalStats, r.InstanceStats)
 //
 //	var awaitingGroup ProposerGroupGetter = SimpleProposersAwaitingGroupGetterNew(pids)
 //	var minimalGroupGetter *MinimalProposersAwaitingGroup
 //	if minimalProposers {
-//		minimalShouldMaker := proposalmanager.MinimalProposersShouldMakerNew(int16(r.Id), r.F)
-//		instanceManager = proposalmanager.MinimalProposersInstanceManagerNew(instanceManager.(*proposalmanager.SimpleInstanceManager), minimalShouldMaker)
+//		minimalShouldMaker := proposer.MinimalProposersShouldMakerNew(int16(r.Id), r.F)
+//		instanceManager = proposer.MinimalProposersInstanceManagerNew(instanceManager.(*proposer.SimpleInstanceManager), minimalShouldMaker)
 //		minimalGroupGetter = MinimalProposersAwaitingGroupNew(awaitingGroup.(*SimpleProposersAwaitingGroup), minimalShouldMaker, int32(r.F))
 //		awaitingGroup = minimalGroupGetter
 //	}
 //
 //	// SET UP SIGNAL
-//	sig := proposalmanager.SimpleSigNew(r.startInstanceSig, r.Id)
-//	var openInstSig proposalmanager.OpenInstSignal = sig
-//	var ballotInstSig proposalmanager.BallotOpenInstanceSignal = sig
+//	sig := proposer.SimpleSigNew(r.startInstanceSig, r.Id)
+//	var openInstSig proposer.OpenInstSignal = sig
+//	var ballotInstSig proposer.BallotOpenInstanceSignal = sig
 //	if doEager || eagerByExec {
-//		eSig := proposalmanager.EagerSigNew(openInstSig.(*proposalmanager.SimpleSig), maxOpenInstances)
+//		eSig := proposer.EagerSigNew(openInstSig.(*proposer.SimpleSig), maxOpenInstances)
 //		openInstSig = eSig
 //		ballotInstSig = eSig
 //	}
 //
 //	if eagerByExec {
-//		eESig := proposalmanager.EagerExecUpToSigNew(openInstSig.(*proposalmanager.EagerSig), float32(r.N), eagerByExecFac)
+//		eESig := proposer.EagerExecUpToSigNew(openInstSig.(*proposer.EagerSig), float32(r.N), eagerByExecFac)
 //		openInstSig = eESig
 //		ballotInstSig = eESig
 //		r.execSig = eESig
 //	}
 //
-//	simpleGlobalManager := proposalmanager.SimpleProposalManagerNew(r.Id, openInstSig, ballotInstSig, instanceManager, backoffManager)
-//	var globalManager proposalmanager.Proposer = simpleGlobalManager
+//	simpleGlobalManager := proposer.SimpleProposalManagerNew(r.Id, openInstSig, ballotInstSig, instanceManager, backoffManager)
+//	var globalManager proposer.Proposer = simpleGlobalManager
 //
 //	if instsToOpenPerBatch < 1 {
 //		panic("Will not open any instances")
@@ -565,7 +565,7 @@ package paxos
 //		panic("incompatible options")
 //	}
 //
-//	r.noopLearners = []proposalmanager.NoopLearner{}
+//	r.noopLearners = []proposer.NoopLearner{}
 //	// PROPOSER QUORUMS
 //	if mappedProposers || dynamicMappedProposers || pam {
 //		var agentMapper instanceagentmapper.InstanceAgentMapper
@@ -580,15 +580,15 @@ package paxos
 //			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: pmap}
 //		}
 //
-//		globalManager = proposalmanager.MappedProposersProposalManagerNew(r.startInstanceSig, simpleGlobalManager, instanceManager, agentMapper)
+//		globalManager = proposer.MappedProposersProposalManagerNew(r.startInstanceSig, simpleGlobalManager, instanceManager, agentMapper)
 //		mappedGroupGetter := MappedProposersAwaitingGroupNew(agentMapper)
 //		if dynamicMappedProposers {
-//			dAgentMapper := &proposalmanager.DynamicInstanceSetMapper{
+//			dAgentMapper := &proposer.DynamicInstanceSetMapper{
 //				DetRandInstanceSetMapper: *agentMapper.(*instanceagentmapper.DetRandInstanceSetMapper),
 //			}
-//			globalManager = proposalmanager.DynamicMappedProposerManagerNew(r.startInstanceSig, simpleGlobalManager, instanceManager, dAgentMapper, int32(r.N), int32(r.F))
+//			globalManager = proposer.DynamicMappedProposerManagerNew(r.startInstanceSig, simpleGlobalManager, instanceManager, dAgentMapper, int32(r.N), int32(r.F))
 //			mappedGroupGetter = MappedProposersAwaitingGroupNew(dAgentMapper)
-//			r.noopLearners = []proposalmanager.NoopLearner{globalManager.(*proposalmanager.DynamicMappedGlobalManager)}
+//			r.noopLearners = []proposer.NoopLearner{globalManager.(*proposer.DynamicMappedGlobalManager)}
 //		}
 //		if minimalProposers {
 //			awaitingGroup = MinimalMappedProposersAwaitingGroupNew(*minimalGroupGetter, *mappedGroupGetter)
@@ -596,8 +596,8 @@ package paxos
 //	}
 //
 //	if instsToOpenPerBatch > 1 {
-//		openInstSig = proposalmanager.HedgedSigNew(r.Id, r.startInstanceSig)
-//		globalManager = proposalmanager.HedgedBetsProposalManagerNew(r.Id, simpleGlobalManager, int32(r.N), instsToOpenPerBatch)
+//		openInstSig = proposer.HedgedSigNew(r.Id, r.startInstanceSig)
+//		globalManager = proposer.HedgedBetsProposalManagerNew(r.Id, simpleGlobalManager, int32(r.N), instsToOpenPerBatch)
 //	}
 //
 //	r.CrtInstanceOracle = globalManager
@@ -772,7 +772,7 @@ package paxos
 //				}
 //				dlog.AgentPrintfN(r.Id, "Rechecking whether to propose in instance %d", min)
 //				//	/pbk.PropCurBal.Ballot.GreaterThan(retry.proposingBal) ||/
-//				if pbk.Status != proposalmanager.READY_TO_PROPOSE {
+//				if pbk.Status != proposer.READY_TO_PROPOSE {
 //					dlog.AgentPrintfN(r.Id, "Decided to not propose in instance %d as we are no longer on ballot %d.%d", min, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 //					break
 //				}
@@ -1385,7 +1385,7 @@ package paxos
 //	r.Proposer.StartNextInstance(&r.instanceSpace, do)
 //}
 //
-//func getPrepareMessage(id int32, inst int32, curInst *proposalmanager.PBK) *stdpaxosproto.Prepare {
+//func getPrepareMessage(id int32, inst int32, curInst *proposer.PBK) *stdpaxosproto.Prepare {
 //	prepMsg := &stdpaxosproto.Prepare{
 //		LeaderId: id,
 //		Instance: inst,
@@ -1397,7 +1397,7 @@ package paxos
 //// show at several scales th throughput latency graph
 //// compare approaches on failure and restarting
 //// compare the throughput latency difference
-//func (r *Replica2) tryNextAttempt(next proposalmanager.RetryInfo) {
+//func (r *Replica2) tryNextAttempt(next proposer.RetryInfo) {
 //	inst := r.instanceSpace[next.Inst]
 //	if !r.Proposer.DecideRetry(inst, next) {
 //		return
@@ -1417,14 +1417,14 @@ package paxos
 //	r.bcastPrepare(next.Inst)
 //}
 //
-//func (r *Replica2) recordStatsPreempted(inst int32, pbk *proposalmanager.PBK) {
-//	if pbk.Status != proposalmanager.BACKING_OFF && r.doStats {
+//func (r *Replica2) recordStatsPreempted(inst int32, pbk *proposer.PBK) {
+//	if pbk.Status != proposer.BACKING_OFF && r.doStats {
 //		id := stats.InstanceID{Log: 0, Seq: inst}
-//		if pbk.Status == proposalmanager.PREPARING || pbk.Status == proposalmanager.READY_TO_PROPOSE {
+//		if pbk.Status == proposer.PREPARING || pbk.Status == proposer.READY_TO_PROPOSE {
 //			r.InstanceStats.RecordOccurrence(id, "My Phase 1 Preempted", 1)
 //			r.TimeseriesStats.Update("My Phase 1 Preempted", 1)
 //			r.ProposalStats.CloseAndOutput(id, pbk.PropCurBal, stats.HIGHERPROPOSALONGOING)
-//		} else if pbk.Status == proposalmanager.PROPOSING {
+//		} else if pbk.Status == proposer.PROPOSING {
 //			r.InstanceStats.RecordOccurrence(id, "My Phase 2 Preempted", 1)
 //			r.TimeseriesStats.Update("My Phase 2 Preempted", 1)
 //			r.ProposalStats.CloseAndOutput(id, pbk.PropCurBal, stats.HIGHERPROPOSALONGOING)
@@ -1456,7 +1456,7 @@ package paxos
 //		}
 //	}
 //
-//	//if r.instanceSpace[prepare.Instance].Status == proposalmanager.CLOSED {
+//	//if r.instanceSpace[prepare.Instance].Status == proposer.CLOSED {
 //	//	return
 //	//}
 //
@@ -1482,7 +1482,7 @@ package paxos
 //	}
 //	r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, inst, lwcproto.ConfigBal{Config: -1, Ballot: accepted}, whoseCmds)
 //	pbk := r.instanceSpace[inst]
-//	//if pbk.Status == proposalmanager.CLOSED {
+//	//if pbk.Status == proposer.CLOSED {
 //	//	return false
 //	//}
 //	r.clientRequestManager.ProposedClientValuesManager.learnOfBallotValue(pbk, inst, lwcproto.ConfigBal{Config: -1, Ballot: accepted}, val, whoseCmds, r.clientRequestManager)
@@ -1495,7 +1495,7 @@ package paxos
 //	return newVal
 //}
 //
-//func setProposingValue(pbk *proposalmanager.PBK, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
+//func setProposingValue(pbk *proposer.PBK, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
 //	pbk.WhoseCmds = whoseCmds
 //	pbk.ProposeValueBal = lwcproto.ConfigBal{Config: -1, Ballot: bal}
 //	pbk.Cmds = val
@@ -1508,7 +1508,7 @@ package paxos
 //		r.patientProposals.gotPromise(preply.Instance, preply.Req, preply.AcceptorId)
 //	}
 //	pbk := r.instanceSpace[preply.Instance]
-//	if r.disklessNOOP && (pbk.Status == proposalmanager.READY_TO_PROPOSE || pbk.Status == proposalmanager.PREPARING) {
+//	if r.disklessNOOP && (pbk.Status == proposer.READY_TO_PROPOSE || pbk.Status == proposer.PREPARING) {
 //		if _, e := r.disklessNOOPPromises[preply.Instance]; !e {
 //			r.disklessNOOPPromises[preply.Instance] = make(map[stdpaxosproto.Ballot]map[int32]struct{})
 //		}
@@ -1520,7 +1520,7 @@ package paxos
 //		//	c <- struct{}{}
 //		//}
 //	}
-//	if pbk.Status != proposalmanager.PREPARING {
+//	if pbk.Status != proposer.PREPARING {
 //		return
 //	}
 //	qrm := pbk.Qrms[pbk.PropCurBal]
@@ -1536,7 +1536,7 @@ package paxos
 //func (r *Replica2) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 //	pbk := r.instanceSpace[preply.Instance]
 //	dlog.AgentPrintfN(r.Id, "Replica2 received a Prepare Reply from Replica2 %d in instance %d at requested ballot %d.%d and current ballot %d.%d", preply.AcceptorId, preply.Instance, preply.Req.Number, preply.Req.PropID, preply.Cur.Number, preply.Cur.PropID)
-//	if r.instanceSpace[preply.Instance].Status == proposalmanager.CLOSED {
+//	if r.instanceSpace[preply.Instance].Status == proposer.CLOSED {
 //		return
 //	}
 //
@@ -1557,7 +1557,7 @@ package paxos
 //		setProposingValue(pbk, preply.WhoseCmd, preply.VBal, preply.Command)
 //	}
 //
-//	if pbk.Status == proposalmanager.CLOSED {
+//	if pbk.Status == proposer.CLOSED {
 //		dlog.AgentPrintfN(r.Id, "Discarding Prepare Reply from Replica2 %d in instance %d at requested ballot %d.%d because it's already chosen", preply.AcceptorId, preply.Instance, preply.Req.Number, preply.Req.PropID)
 //		return
 //	}
@@ -1600,7 +1600,7 @@ package paxos
 //
 //func (r *Replica2) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot) {
 //	pbk := r.instanceSpace[inst]
-//	if !pbk.PropCurBal.Ballot.Equal(ballot) || pbk.Status != proposalmanager.PREPARING {
+//	if !pbk.PropCurBal.Ballot.Equal(ballot) || pbk.Status != proposer.PREPARING {
 //		return
 //	}
 //
@@ -1609,7 +1609,7 @@ package paxos
 //		dlog.AgentPrintfN(r.Id, "Not safe to send accept requests for instance %d, need to wait until a lease or promise from our acceptor is received", inst)
 //		go func() {
 //			time.Sleep(5 * time.Millisecond) // todo replace with check upon next message to see if try propose again or clean up this info
-//			r.tryInitPropose <- proposalmanager.RetryInfo{
+//			r.tryInitPropose <- proposer.RetryInfo{
 //				Inst:           inst,
 //				AttemptedBal:   lwcproto.ConfigBal{Config: -1, Ballot: ballot},
 //				PreempterBal:   lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}},
@@ -1633,7 +1633,7 @@ package paxos
 //		pbk.ClientProposals = nil // at this point, our client proposal will not be chosen
 //	}
 //
-//	pbk.Status = proposalmanager.READY_TO_PROPOSE
+//	pbk.Status = proposer.READY_TO_PROPOSE
 //	//timeDelay := time.Duration(0)
 //	//if r.doPatientProposals {
 //	//	timeDelay = r.patientProposals.getTimeToDelayProposal(inst, pbk.PropCurBal.Ballot)
@@ -1659,7 +1659,7 @@ package paxos
 //
 //func (r *Replica2) tryPropose(inst int32, priorAttempts int) {
 //	pbk := r.instanceSpace[inst]
-//	if pbk.Status != proposalmanager.READY_TO_PROPOSE {
+//	if pbk.Status != proposer.READY_TO_PROPOSE {
 //		panic("asjfalskdjf")
 //	}
 //	dlog.AgentPrintfN(r.Id, "Attempting to propose value in instance %d", inst)
@@ -1726,17 +1726,17 @@ package paxos
 //
 //	r.Learner.ProposalValue(inst, pbk.PropCurBal.Ballot, pbk.Cmds, pbk.WhoseCmds)
 //	if pbk.ClientProposals != nil {
-//		r.Executor.ProposedBatch(inst, pbk.ClientProposals)
+//		r.SimpleExecutor.ProposedBatch(inst, pbk.ClientProposals)
 //	}
 //	r.bcastAccept(inst)
 //}
 //
 //func (r *Replica2) isProposingDisklessNOOP(inst int32) bool {
 //	pbk := r.instanceSpace[inst]
-//	return r.disklessNOOP && pbk.WhoseCmds == -1 && pbk.Status >= proposalmanager.PROPOSING && r.GotPromisesFromAllInGroup(inst, pbk.PropCurBal.Ballot)
+//	return r.disklessNOOP && pbk.WhoseCmds == -1 && pbk.Status >= proposer.PROPOSING && r.GotPromisesFromAllInGroup(inst, pbk.PropCurBal.Ballot)
 //}
 //
-//func (r *Replica2) BeginWaitingForClientProposals(inst int32, pbk *proposalmanager.PBK) {
+//func (r *Replica2) BeginWaitingForClientProposals(inst int32, pbk *proposer.PBK) {
 //	r.clientRequestManager.sleepingInsts[inst] = time.Now()
 //	if len(r.clientRequestManager.sleepingInsts) > 1 {
 //		dlog.AgentPrintfN(r.Id, "No client value to propose in instance %d at ballot %d.%d. Queued instance for checking again.", inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
@@ -1842,7 +1842,7 @@ package paxos
 //
 //func (r *Replica2) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
 //	pbk := r.instanceSpace[inst]
-//	if pbk.Status == proposalmanager.CLOSED {
+//	if pbk.Status == proposer.CLOSED {
 //		return
 //	}
 //	if r.Id == int32(chosenAt.PropID) {
@@ -1866,11 +1866,11 @@ package paxos
 //
 //	r.noLongerSleepingInstance(inst)
 //	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
-//	r.Executor.Learnt(inst, chosenVal, whoseCmd)
+//	r.SimpleExecutor.Learnt(inst, chosenVal, whoseCmd)
 //	if r.execSig == nil {
 //		return
 //	}
-//	r.execSig.CheckExec(r.Proposer, &r.Executor)
+//	r.execSig.CheckExec(r.Proposer, &r.SimpleExecutor)
 //}
 //
 //// todo make it so proposer acceptor and learner all guard on chosen

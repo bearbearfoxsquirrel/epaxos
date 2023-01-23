@@ -39,9 +39,6 @@ var doLWCPatient = flag.Bool("lp", false, "Use Less Writey Consensus as the repl
 var doSTDSpec = flag.Bool("ss", false, "Use Standard Paxos Consensus as the replication protocol with Speculative proposals. Defaults to false.")
 var doSTDGlobalSpec = flag.Bool("sgs", false, "Use Standard Paxos Consensus as the replication protocol with Speculative proposals. Defaults to false.")
 
-var dostdEager = flag.Bool("e2p", false, "Use eager 2 phase paxos algorithm")
-var doBaselineTwoPhase = flag.Bool("bl2p", false, "Use ELP algorithm")
-
 var crtConfig = flag.Int("config", 1, "Current config in LWC")
 var maxOInstances = flag.Int("oi", 1, "Max number of open instances in leaderless LWC")
 var minBackoff = flag.Int("minbackoff", 5000, "Minimum backoff for a proposing replica that been preempted")
@@ -130,7 +127,6 @@ var batchFlushWait = flag.Int("batchflushwait", -1, "How long to wait before flu
 
 var patientProposals = flag.Bool("patprops", false, "Use patient proposals to minimise preempted accept messages")
 var prepwrittenpromises = flag.Bool("pwa", false, "Use Prewriting acceptor to reduce writes in phase 1")
-var eagerFwInduction = flag.Bool("fwi", false, "Use forward induction for eager promise quorums")
 var q1 = flag.Bool("q1", false, "Which queueing system to use (0 or 1)")
 var bcastCommit = flag.Bool("bcastc", false, "bcast commits when using bcast accept")
 var nopreempt = flag.Bool("np", false, "don't send preempt messages")
@@ -142,6 +138,11 @@ var syncacceptor = flag.Bool("synca", false, "2 Phase acceptor synchronously pre
 var disklessnoops = flag.Bool("disklessnoops", false, "Use diskless noops")
 var foceDisklessnoops = flag.Bool("fdisklessnoops", false, "Force diskless noops")
 
+var eagerFwInduction = flag.Bool("fwi", false, "Use forward induction for eager promise quorums")
+var forwardingInstances = flag.Int("fwinsts", 0, "How pipelined instances to induce forwards")
+var inductiveConfs = flag.Bool("ic", false, "Use inductive conflicts in baseline 2 phase algorithm")
+var doEager = flag.Bool("eager", false, "Use eager 2 phase paxos algorithm")
+var doBaselineTwoPhase = flag.Bool("bl2p", false, "Use baseline (non eager algorithm)")
 var eagerByExec = flag.Bool("ebe", false, "Do eager by execute and crt instance gap")
 var eagerByExecFac = flag.Float64("ebef", 1, "What factor to use for eager by exec gap (how big the gap between executed and max opened instance should be)")
 
@@ -162,7 +163,7 @@ func main() {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	if (*dostdEager || *doBaselineTwoPhase) && *logFilename != "" {
+	if (*doEager || *doBaselineTwoPhase) && *logFilename != "" {
 		file, _ := os.Create(*statsLoc + fmt.Sprintf("/%s", *logFilename))
 		log.SetOutput(file)
 	}
@@ -240,7 +241,7 @@ func main() {
 		//rep := stdpaxosglobalspec.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *durable, *batchWait, *maxfailures, int32(*crtConfig), *storageParentDir, int32(*maxOInstances), int32(*minBackoff), int32(*maxInitBackoff), int32(*maxBackoff), int32(*noopWait), *alwaysNoop, *factor, int32(*whoCrash), whenCrash, howLongCrash, time.Duration(*initProposalWaitUs)*time.Microsecond, *emulatedSS, emulatedWriteTime, int32(*catchupBatchSize), timeout, *group1Size, *flushCommit, *softExp, int32(*deadTime))
 		//rpc.Register(rep)
 		//runnable = rep
-	} else if *dostdEager || *doBaselineTwoPhase || *eagerByExec {
+	} else if *doEager || *doBaselineTwoPhase || *eagerByExec {
 		//aids := make([]int, len(nodeList))
 		//for i, _ := range aids {
 		//	aids[i] = i
@@ -254,9 +255,9 @@ func main() {
 			*tsStatsFilename, *instStatsFilename, *proposalStatsFilename, *sendProposerState,
 			*proactivepreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
-			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *dostdEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
-			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *q1, *bcastCommit, *nopreempt,
-			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops, *eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac))
+			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *doEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
+			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, int32(*forwardingInstances), *q1, *bcastCommit, *nopreempt,
+			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops, *eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs)
 		runnable = rep
 		rpc.Register(rep)
 		//}

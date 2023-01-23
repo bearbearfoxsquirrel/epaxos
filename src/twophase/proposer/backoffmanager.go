@@ -1,4 +1,4 @@
-package proposalmanager
+package proposer
 
 import (
 	"epaxos/dlog"
@@ -82,7 +82,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	curBackoffInfo, exists := bm.currentBackoffs[inst]
 
 	if !bm.ShouldBackoff(inst, preempter, prempterPhase) {
-		//dlog.AgentPrintfN(bm.id, "Ignoring backoff request as already backing off instance %d because of ballot %d.%d", inst, curBackoffInfo.PreempterBal.Ballot.Number, curBackoffInfo.PreempterBal.Ballot.PropID)
+		//dlog.AgentPrintfN(bm.Id, "Ignoring backoff request as already backing off instance %d because of ballot %d.%d", inst, curBackoffInfo.PreempterBal.Ballot.Number, curBackoffInfo.PreempterBal.Ballot.PropID)
 		return false, -1
 	}
 
@@ -111,7 +111,7 @@ func (bm *BackoffManager) CheckAndHandleBackoff(inst int32, attemptedBal lwcprot
 	if next < 0 {
 		panic("can't have negative backoff")
 	}
-	//dlog.AgentPrintfN(bm.id, "Beginning backoff of %d us for instance %d because of ballot %d.%d", next, inst, attemptedBal.Number, attemptedBal.PropID)
+	//dlog.AgentPrintfN(bm.Id, "Beginning backoff of %d us for instance %d because of ballot %d.%d", next, inst, attemptedBal.Number, attemptedBal.PropID)
 	info := RetryInfo{
 		Inst:           inst,
 		AttemptedBal:   attemptedBal,

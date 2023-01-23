@@ -1440,7 +1440,6 @@ func (r *Replica) GetPeerOrderLatency() []int32 {
 		if r.Id == i {
 			continue
 		}
-		//peers[i] = i
 		peers = append(peers, i)
 	}
 
@@ -1450,33 +1449,12 @@ func (r *Replica) GetPeerOrderLatency() []int32 {
 	now := time.Now().UnixNano()
 	pl := peers[1:]
 
-	//latencies := make([]int64, r.N)
-	//for p := 0; p < r.N; p++ {
-	//	if int32(p) == r.Id {
-	//		continue
-	//	}
-	//	for _, beac := range r.lastSentBeacons[p] {
-	//		//for j := 0; j < 20; j++ {
-	//		recv := beac.got
-	//		if recv == 0 {
-	//			recv = now
-	//		}
-	//		latencies[p] += recv - beac.send
-	//	}
-	//	latencies[p] = latencies[p] / 20
-	//}
-
 	sort.Slice(pl, func(i, j int) bool {
 		lhs := r.Ewma[pl[i]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[pl[i]].send)*r.ewmaWeight
 		rhs := r.Ewma[pl[j]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[pl[j]].send)*r.ewmaWeight
 		return lhs < rhs //now-r.mostRecentRepliedBeacon[pl[i]] < now-r.mostRecentRepliedBeacon[pl[j]]
 	})
-	////
-	//lat := make([]float64, r.N)
-	//for i := 0; i < r.N; i++ {
-	//	lat[i] = r.Ewma[peers[i]]*(1-r.ewmaWeight) + float64(now-r.mostRecentRepliedBeacon[peers[i]].send)*r.ewmaWeight
-	//}
-	//dlog.AgentPrintfN(r.Id, "for this we send to %v", peers)
+
 	r.Mutex.Unlock()
 	return peers
 }
@@ -1554,8 +1532,8 @@ func (r *Replica) PeerFlushBuffer(to int32) {
 
 func (r *Replica) replicaUDPListenerMultiple(i int32) {
 	crtmsgs := make(map[fastrpc.TIB]msgWB)
-	b := [fastrpc.MAXDATAGRAMLEN]byte{}
-	bs := b[:]
+	b := &[fastrpc.MAXDATAGRAMLEN]byte{}
+	//bs := b[:]
 	tibsl := fastrpc.MSGReceipt{}
 	tib := fastrpc.TIB{}
 
@@ -1568,21 +1546,21 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 	validCode := false
 	gotAllDatagrams := false
 
-	preAlloc := make(chan struct{}, 50)
-	buffers := make(chan [fastrpc.MAXDATAGRAMLEN]byte, 50)
-	go func() {
-		for {
-			<-preAlloc
-			buf := [fastrpc.MAXDATAGRAMLEN]byte{}
-			buffers <- buf
-		}
-	}()
+	//preAlloc := make(chan struct{}, 50)
+	//buffers := make(chan [fastrpc.MAXDATAGRAMLEN]byte, 50)
+	//go func() {
+	//	for {
+	//		<-preAlloc
+	//		buf := [fastrpc.MAXDATAGRAMLEN]byte{}
+	//		buffers <- buf
+	//	}
+	//}()
 
 	//timeOut := time.Duration(0)
 	now := time.Time{}
 
 	for {
-		n, addr, err = r.UDPPeers[i].ReadFromUDP(bs)
+		n, addr, err = r.UDPPeers[i].ReadFromUDP((*b)[:])
 		if err != nil {
 			continue
 			//panic(err)
@@ -1592,11 +1570,11 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 		}
 		switch b[0] {
 		case genericsmrproto.GENERIC_SMR_BEACON:
-			s := time.Now()
+			//s := time.Now()
 			if n != 13 {
 				panic("oh no")
 			}
-			ts = int64(binary.BigEndian.Uint64(bs[1:9]))
+			ts = int64(binary.BigEndian.Uint64((*b)[1:9]))
 			go func() {
 				bbs := [13]byte{genericsmrproto.GENERIC_SMR_BEACON_REPLY}
 				binary.BigEndian.PutUint64(bbs[1:], uint64(ts))
@@ -1604,35 +1582,35 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 					panic(e)
 				}
 			}()
-			e := time.Now()
-			dlog.AgentPrintfN(r.Id, "It took %d µs to handle beacon", e.Sub(s).Microseconds())
+			//e := time.Now()
+			//dlog.AgentPrintfN(r.Id, "It took %d µs to handle beacon", e.Sub(s).Microseconds())
 			break
 		case genericsmrproto.GENERIC_SMR_BEACON_REPLY:
-			s := time.Now()
+			//s := time.Now()
 			if n != 13 {
 				panic("oh no")
 			}
-			ts = int64(binary.BigEndian.Uint64(bs[1:9]))
+			ts = int64(binary.BigEndian.Uint64((*b)[1:9]))
 			g := genericsmrproto.BeaconReply{ts}
 			r.udpUpdateReplicaKnowledge(int(i), g)
-			e := time.Now()
-			dlog.AgentPrintfN(r.Id, "It took %d µs to handle beacon reply", e.Sub(s).Microseconds())
+			//e := time.Now()
+			//dlog.AgentPrintfN(r.Id, "It took %d µs to handle beacon reply", e.Sub(s).Microseconds())
 			break
 		case genericsmrproto.UDP_TIBSL_ACK:
-			s := time.Now()
-			tibsl2 := fastrpc.DecodeTIBSLFromSlice(b[5:])
+			//s := time.Now()
+			tibsl2 := fastrpc.DecodeTIBSLFromSlice((*b)[5:])
 			go func() {
 				r.ackedTIBSLs <- ack{
 					MSGReceipt: tibsl2,
 					acker:      i,
 				}
 			}()
-			e := time.Now()
+			//e := time.Now()
 			//dlog.AgentPrintfN(r.Id, "It took %d µs to handle ack message", e.Sub(s).Microseconds())
-			dlog.AgentPrintfN(r.Id, "It took %d µs to handle ack of %s message with tibsl %d.%d.%d.%d from %d", e.Sub(s).Microseconds(), r.udprpcTable[tibsl2.T].Name, tibsl2.I, tibsl2.BB, tibsl2.BP, tibsl2.Seq, i)
+			//dlog.AgentPrintfN(r.Id, "It took %d µs to handle ack of %s message with tibsl %d.%d.%d.%d from %d", e.Sub(s).Microseconds(), r.udprpcTable[tibsl2.T].Name, tibsl2.I, tibsl2.BB, tibsl2.BP, tibsl2.Seq, i)
 			break
 		default:
-			tibsl = fastrpc.DecodeTIBSL(&b)
+			tibsl = fastrpc.DecodeTIBSL(b)
 			tib = tibsl.TIB
 			if _, validCode = r.udprpcTable[tibsl.T]; !validCode {
 				panic(fmt.Sprintf("Got unknown message code %d", tibsl.T))
@@ -1643,13 +1621,15 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 				if tibsl.Ack {
 					go r.sendReceiptAck(i, tibsl, addr)
 				}
-				s := time.Now()
+				//s := time.Now()
 				colM := fastrpc.CollectedM{
 					Messages: make(map[int32][]byte),
 					Last:     0,
 				}
-				colM.Messages[tibsl.Seq] = make([]byte, n-fastrpc.TIBSLLEN) // make([]byte, n-fastrpc.N)
-				copy(colM.Messages[tibsl.Seq], bs[fastrpc.TIBSLLEN:n])
+				//colM.Messages[tibsl.Seq] = (*b)[fastrpc.TIBSLLEN:n]
+				//b = &[fastrpc.MAXDATAGRAMLEN]byte{}
+				colM.Messages[tibsl.Seq] = make([]byte, n-fastrpc.TIBSLLEN)
+				copy(colM.Messages[tibsl.Seq], (*b)[fastrpc.TIBSLLEN:n])
 				go func(tibsl fastrpc.MSGReceipt) {
 					if rpair, present := r.udprpcTable[tibsl.T]; present {
 						obj := rpair.Obj.NewUDP()
@@ -1659,13 +1639,13 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 						rpair.Chan <- obj
 					}
 				}(tibsl)
-				e := time.Now()
-				dlog.AgentPrintfN(r.Id, "It took %d µs to fast path unmarshall this %s message with tibsl %d.%d.%d.%d", e.Sub(s).Microseconds(), r.udprpcTable[tibsl.T].Name, tibsl.I, tibsl.BB, tibsl.BP, tibsl.Seq)
+				//e := time.Now()
+				//dlog.AgentPrintfN(r.Id, "It took %d µs to fast path unmarshall this %s message with tibsl %d.%d.%d.%d", e.Sub(s).Microseconds(), r.udprpcTable[tibsl.T].Name, tibsl.I, tibsl.BB, tibsl.BP, tibsl.Seq)
 				break
 			}
 
 			now = time.Now()
-			go func() { preAlloc <- struct{}{} }()
+			//go func() { preAlloc <- struct{}{} }()
 			// if new message, allocate
 			if _, validCode = crtmsgs[tib]; !validCode {
 				crtmsgs[tib] = msgWB{
@@ -1689,9 +1669,14 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 					buffers: crtmsgs[tib].buffers,
 				}
 			}
-			a := [fastrpc.MAXDATAGRAMLEN]byte{}                            //<-buffers                                                 //[fastrpc.MAXDATAGRAMLEN]byte{}
-			crtmsgs[tib].Messages[tibsl.Seq] = a[:n-fastrpc.TIBSLLEN]      // make([]byte, n-fastrpc.TIBSLLEN)
-			copy(crtmsgs[tib].Messages[tibsl.Seq], bs[fastrpc.TIBSLLEN:n]) //bs[fastrpc.TIBSLLEN:n]
+			//a := [fastrpc.MAXDATAGRAMLEN]byte{}                            //<-buffers                                                 //[fastrpc.MAXDATAGRAMLEN]byte{}
+
+			crtmsgs[tib].Messages[tibsl.Seq] = (*b)[fastrpc.TIBSLLEN:n]
+			d := make(chan struct{})
+			go func() {
+				b = &[fastrpc.MAXDATAGRAMLEN]byte{}
+				d <- struct{}{}
+			}()
 
 			if crtmsgs[tib].Last != -1 {
 				gotAllDatagrams = false
@@ -1715,15 +1700,15 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 							if err = obj.FromStrippedDatagrams(msgB.CollectedM); err != nil {
 								panic("Could not deserialise msg")
 							}
-							dlog.AgentPrintfN(r.Id, "got %d message with tibsl %d.%d.%d.%d")
+							//dlog.AgentPrintfN(r.Id, "Got %d message with tibsl %d.%d.%d.%d")
 							rpair.Chan <- obj
 						}
 					}(crtmsgs[tib], tibsl.T, tibsl)
 					delete(crtmsgs, tib)
 				}
 			}
-			e := time.Now()
-			dlog.AgentPrintfN(r.Id, "It took %d µs to slow path unmarshall this %s message with tibsl %d.%d.%d.%d", e.Sub(now).Microseconds(), r.udprpcTable[tibsl.T].Name, tibsl.I, tibsl.BB, tibsl.BP, tibsl.Seq)
+			//e := time.Now()
+			//dlog.AgentPrintfN(r.Id, "It took %d µs to slow path unmarshall this %s message with tibsl %d.%d.%d.%d", e.Sub(now).Microseconds(), r.udprpcTable[tibsl.T].Name, tibsl.I, tibsl.BB, tibsl.BP, tibsl.Seq)
 			//timeOut := time.Duration(r.AtomicEWMA[i].Load().(float64)*2) * time.Nanosecond
 			t := time.Millisecond * 100
 			now := time.Now()
@@ -1735,6 +1720,7 @@ func (r *Replica) replicaUDPListenerMultiple(i int32) {
 				dlog.AgentPrintfN(r.Id, "Dropping %s message in instance %d at ballot %d.%d as it timed out on receiving. Received only %d datagrams.", r.udprpcTable[k.T].Name, k.I, k.BB, k.BP, len(crtmsgs[k].Messages))
 				delete(crtmsgs, k)
 			}
+			<-d
 			break
 		}
 	}

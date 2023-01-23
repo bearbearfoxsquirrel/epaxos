@@ -27,7 +27,10 @@ func acceptorSyncHandlePrepareLocal(id int32, acc acceptor.Acceptor, prepare *st
 	return msg.GetSerialisable().(*stdpaxosproto.PrepareReply)
 }
 
-func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, replica *genericsmr.Replica, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, promiseChan chan<- fastrpc.Serializable) {
+func acceptorHandlePrepareLocal(id int32, acc acceptor.Acceptor, learner learner.Learner, replica *genericsmr.Replica, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, promiseChan chan<- fastrpc.Serializable) {
+	if learnerCheckChosen(learner, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.Commit, replica, id) {
+		return
+	}
 	c := acc.RecvPrepareRemote(prepare)
 	go func() {
 		for msg := range c {
@@ -65,6 +68,9 @@ func isPreemptOrPromise(preply *stdpaxosproto.PrepareReply) string {
 
 func learnerCheckChosen(l learner.Learner, inst int32, atmt stdpaxosproto.Ballot, atmtMsg string, who int32, cmtRPC uint8, replica *genericsmr.Replica, meID int32) bool {
 	if l.IsChosen(inst) && l.HasLearntValue(inst) {
+		if who == meID {
+			return true
+		}
 		b, v, whose := l.GetChosen(inst)
 		dlog.AgentPrintfN(meID, "Sending Commit to Replica %d for instance %d at ballot %d.%d with whose commands %d in response to a %s in instance %d at ballot %d.%d",
 			who, inst, b.Number, b.PropID, whose, atmtMsg, inst, atmt.Number, atmt.PropID)

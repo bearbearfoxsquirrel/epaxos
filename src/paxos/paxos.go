@@ -11,7 +11,7 @@ import (
 	"epaxos/state"
 	"epaxos/stdpaxosproto"
 	"epaxos/twophase/learner"
-	"epaxos/twophase/proposalmanager"
+	"epaxos/twophase/proposer"
 	"io"
 	"log"
 	"math"
@@ -27,7 +27,7 @@ const SLEEP_TIME_NS = 1e6
 
 type Replica struct {
 	learner.Learner
-	proposalmanager.AcceptorQrmInfo
+	proposer.AcceptorQrmInfo
 	proposerInstanceMapper instanceagentmapper.InstanceAgentMapper
 
 	*genericsmr.Replica   // extends a generic Paxos replica
@@ -148,7 +148,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isle
 		//SendAllAcceptors: false,
 	}
 
-	var instancequormaliser proposalmanager.InstanceQuormaliser = &proposalmanager.Standard{
+	var instancequormaliser proposer.InstanceQuormaliser = &proposer.Standard{
 		SynodQuorumSystemConstructor: qrm,
 		Aids:                         pids,
 		MyID:                         r.Id,
@@ -165,7 +165,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isle
 		amapping := instanceagentmapper.GetAMap(pamapping)
 		//pmapping := instanceagentmapper.GetPMap(pamapping)
 		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
-		instancequormaliser = &proposalmanager.StaticMapped{
+		instancequormaliser = &proposer.StaticMapped{
 			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
 			SynodQuorumSystemConstructor: qrm,
 			MyID:                         r.Id,

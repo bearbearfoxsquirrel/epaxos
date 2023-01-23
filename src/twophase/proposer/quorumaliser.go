@@ -1,4 +1,4 @@
-package proposalmanager
+package proposer
 
 import (
 	"epaxos/dlog"
@@ -69,7 +69,7 @@ func (qrmliser *Standard) GetGroup(inst int32) []int32 {
 //	GroupGetter
 //}
 //
-//func (q *MinimalSpecific) Add(id int32) {
+//func (q *MinimalSpecific) Add(Id int32) {
 //	//TODO implement me
 //	panic("implement me")
 //}

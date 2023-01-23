@@ -5,7 +5,7 @@ import (
 	"epaxos/instanceagentmapper"
 	"epaxos/lwcproto"
 	"epaxos/stdpaxosproto"
-	"epaxos/twophase/proposalmanager"
+	"epaxos/twophase/proposer"
 	"sort"
 	"time"
 )
@@ -32,13 +32,13 @@ func (g *SimpleProposersAwaitingGroup) GetGroup(inst int32) []int32 {
 }
 
 type MinimalProposersAwaitingGroup struct {
-	*proposalmanager.MinimalProposersShouldMaker
-	//*proposalmanager.MinimalProposersInstanceManager
+	*proposer.MinimalProposersShouldMaker
+	//*proposer.MinimalProposersInstanceManager
 	*SimpleProposersAwaitingGroup
 	f int32
 }
 
-func MinimalProposersAwaitingGroupNew(simpleG *SimpleProposersAwaitingGroup, maker *proposalmanager.MinimalProposersShouldMaker, f int32) *MinimalProposersAwaitingGroup {
+func MinimalProposersAwaitingGroupNew(simpleG *SimpleProposersAwaitingGroup, maker *proposer.MinimalProposersShouldMaker, f int32) *MinimalProposersAwaitingGroup {
 	return &MinimalProposersAwaitingGroup{
 		MinimalProposersShouldMaker:  maker,
 		SimpleProposersAwaitingGroup: simpleG,

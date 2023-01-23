@@ -1,4 +1,4 @@
-package proposalmanager
+package proposer
 
 import (
 	"epaxos/lwcproto"
@@ -77,7 +77,7 @@ func (p *MinimalProposersShouldMaker) ShouldSkipInstance(inst int32) bool {
 
 func (p *MinimalProposersShouldMaker) startedMyProposal(inst int32, ballot lwcproto.ConfigBal) {
 	if ballot.PropID != p.myId {
-		panic("Not my id")
+		panic("Not my Id")
 	}
 	if p.ShouldSkipInstance(inst) { //len(p.ongoingProposals[Inst]) > p.f+1 {
 		panic("Should not make proposal once f+1 greater proposals wittnessed")

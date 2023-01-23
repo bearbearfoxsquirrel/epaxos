@@ -8,15 +8,12 @@ import (
 	"epaxos/instanceagentmapper"
 	"epaxos/proposerstate"
 	"epaxos/quorumsystem"
-	"epaxos/stats"
 	"epaxos/stdpaxosproto"
 	"epaxos/twophase/aceptormessagefilter"
-	balloter2 "epaxos/twophase/balloter"
+	"epaxos/twophase/balloter"
 	_const "epaxos/twophase/const"
-	"epaxos/twophase/exec"
 	"epaxos/twophase/learner"
-	"epaxos/twophase/proposalmanager"
-	"fmt"
+	"epaxos/twophase/proposer"
 	"sync"
 	"time"
 )
@@ -32,7 +29,8 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int32,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
 	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool,
-	q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool, forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32) *Replica {
+	forwardingInstances int32, q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool,
+	forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32, inductiveConfs bool) *Replica {
 
 	r := &Replica{
 		bcastAcceptDisklessNOOP:      bcastAcceptDisklessNoop,
@@ -56,14 +54,14 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		commitShortChan:              make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		prepareReplyChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		acceptReplyChan:              make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
-		tryInitPropose:               make(chan proposalmanager.RetryInfo, 100),
+		tryInitPropose:               make(chan proposer.RetryInfo, 100),
 		prepareRPC:                   0,
 		acceptRPC:                    0,
 		commitRPC:                    0,
 		commitShortRPC:               0,
 		prepareReplyRPC:              0,
 		acceptReplyRPC:               0,
-		instanceSpace:                make([]*proposalmanager.PBK, _const.ISpaceLen),
+		instanceSpace:                make([]*proposer.PBK, _const.ISpaceLen),
 		Shutdown:                     false,
 		counter:                      0,
 		flush:                        true,
@@ -71,7 +69,6 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		crtOpenedInstances:           make([]int32, maxOpenInstances),
 		proposableInstances:          make(chan struct{}, MAXPROPOSABLEINST*replica.N),
 		noopWaitUs:                   noopwait,
-		retryInstance:                make(chan proposalmanager.RetryInfo, maxOpenInstances*10000),
 		alwaysNoop:                   alwaysNoop,
 		fastLearn:                    false,
 		whoCrash:                     whoCrash,
@@ -85,21 +82,18 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		flushCommit:                  flushCommit,
 		commitCatchUp:                commitCatchup,
 		maxBatchSize:                 batchSize,
-		doStats:                      doStats,
 		sendProposerState:            sendProposerState,
 		noopWait:                     time.Duration(noopwait) * time.Microsecond,
 		proactivelyPrepareOnPreempt:  proactivePreemptOnNewB,
 		expectedBatchedRequests:      200,
 		sendPreparesToAllAcceptors:   sendPreparesToAllAcceptors,
-		startInstanceSig:             make(chan struct{}, 100),
-		doEager:                      doEager,
 		instanceProposeValueTimeout: &InstanceProposeValueTimeout{
-			ProposedClientValuesManager: ProposedClientValuesManagerNew(int32(id), nil, false),
-			nextBatch: curBatch{
-				maxLength:  0,
-				cmds:       nil,
-				clientVals: nil,
-				uid:        0,
+			ProposedClientValuesManager: proposer.ProposedClientValuesManagerNew(int32(id)), //todo move to proposer
+			nextBatch: proposer.CurBatch{
+				MaxLength:  0,
+				Cmds:       nil,
+				ClientVals: nil,
+				Uid:        0,
 			},
 			sleepingInsts:              make(map[int32]time.Time),
 			constructedAwaitingBatches: make([]batching.ProposalBatch, 100),
@@ -163,10 +157,6 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		Commit:      r.commitRPC,
 	}
 
-	//if leaderbased {
-	//
-	//}
-
 	if prewriteAcceptor {
 		r.iWriteAhead = 10000000
 		r.promiseLeases = make(chan acceptor.PromiseLease, r.iWriteAhead)
@@ -202,28 +192,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 
 	}
 
-	if r.doStats {
-		phaseStarts := []string{"Fast Quorum", "Slow Quorum"}
-		phaseEnds := []string{"Success", "Failure"}
-		phaseRes := map[string][]string{
-			"Fast Quorum": phaseEnds,
-			"Slow Quorum": phaseEnds,
-		}
-		phaseNegs := map[string]string{
-			"Fast Quorum": "Failure",
-			"Slow Quorum": "Failure",
-		}
-		phaseCStats := []stats.MultiStartMultiOutStatConstructor{
-			{"Phase 1", phaseStarts, phaseRes, phaseNegs, true},
-			{"Phase 2", phaseStarts, phaseRes, phaseNegs, true},
-		}
-
-		r.InstanceStats = stats.InstanceStatsNew(statsParentLoc+fmt.Sprintf("/%s", instStatsFilename), stats.DefaultIMetrics{}.Get(), phaseCStats)
-		r.ProposalStats = stats.ProposalStatsNew([]string{"Phase 1 Fast Quorum", "Phase 1 Slow Quorum", "Phase 2 Fast Quorum", "Phase 2 Slow Quorum"}, statsParentLoc+fmt.Sprintf("/%s", propsStatsFilename))
-		r.TimeseriesStats = stats.TimeseriesStatsNew(stats.DefaultTSMetrics{}.Get(), statsParentLoc+fmt.Sprintf("/%s", tsStatsFilename), time.Second)
-	}
-
-	r.clientBatcher = GetBatcher(int32(id), 500)
+	//r.ClientBatcher = proposer.GetBatcher(int32(id), batchSize)
 
 	// Quorum system
 	var qrm quorumsystem.SynodQuorumSystemConstructor
@@ -231,21 +200,18 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		F:       r.F,
 		Thrifty: r.Thrifty,
 		Replica: r.Replica,
-		//BroadcastFastest: sendFastestQrm,
 		AllAids: pids,
-		//SendAllAcceptors: false,
 	}
 	if useGridQrms {
 		qrm = &quorumsystem.SynodGridQuorumSystemConstructor{
 			F:       r.F,
 			Replica: r.Replica,
 			Thrifty: r.Thrifty,
-			//BroadcastFastest: sendFastestQrm,
 		}
 	}
 
-	var instancequormaliser proposalmanager.InstanceQuormaliser
-	instancequormaliser = &proposalmanager.Standard{
+	var instancequormaliser proposer.InstanceQuormaliser
+	instancequormaliser = &proposer.Standard{
 		SynodQuorumSystemConstructor: qrm,
 		Aids:                         pids,
 		MyID:                         r.Id,
@@ -275,7 +241,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 			}
 		}
 
-		instancequormaliser = &proposalmanager.Minimal{
+		instancequormaliser = &proposer.Minimal{
 			AcceptorMapper:               mapper,
 			SynodQuorumSystemConstructor: qrm,
 			MapperCache:                  make(map[int32][]int32),
@@ -288,7 +254,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		amapping := instanceagentmapper.GetAMap(pamapping)
 		//pmapping := instanceagentmapper.GetPMap(pamapping)
 		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
-		instancequormaliser = &proposalmanager.StaticMapped{
+		instancequormaliser = &proposer.StaticMapped{
 			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
 			SynodQuorumSystemConstructor: qrm,
 			MyID:                         r.Id,
@@ -301,9 +267,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 
 	l := learner.GetBcastAcceptLearner(aqc)
 	r.Learner = &l
-	r.Executor = exec.GetNewExecutor(int32(id), replica, r.StableStore, r.Dreply)
 
-	r.ProposerInstanceQuorumaliser = instancequormaliser
 	r.AcceptorQrmInfo = instancequormaliser
 	r.LearnerQuorumaliser = instancequormaliser
 
@@ -313,131 +277,202 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		r.group1Size = group1Size
 	}
 
-	r.instanceProposeValueTimeout.ProposedClientValuesManager = ProposedClientValuesManagerNew(r.Id, r.TimeseriesStats, r.doStats)
+	ReplicaProposerSetup(r.Id, int32(r.F), int32(r.N), instancequormaliser, maxOpenInstances, minBackoff,
+		maxInitBackoff, maxBackoff, factor, softFac, constBackoff, minimalProposers, timeBasedBallots, mappedProposers,
+		dynamicMappedProposers, mappedProposersNum, pam, pamloc, doEager, forwardInduction, forwardingInstances,
+		eagerByExec, eagerByExecFac, r, batchSize, inductiveConfs)
 
-	balloter := &balloter2.Balloter{r.Id, int32(r.N), 10000, time.Time{}, timeBasedBallots}
-	r.balloter = balloter
+	r.Durable = durable
 
-	backoffManager := proposalmanager.BackoffManagerNew(minBackoff, maxInitBackoff, maxBackoff, r.retryInstance, factor, softFac, constBackoff, r.Id)
-	var instanceManager proposalmanager.SingleInstanceManager = proposalmanager.SimpleInstanceManagerNew(r.Id, backoffManager, balloter, doStats,
-		r.ProposerInstanceQuorumaliser, r.TimeseriesStats, r.ProposalStats, r.InstanceStats)
+	var acceptSelfSender AcceptSelfSender = &AsyncAcceptSender{
+		acceptChan: r.acceptChan,
+	}
+	var prepareSelfSender PrepareSelfSender = &AsyncPrepareSender{
+		prepareChan: r.prepareChan,
+	}
 
-	var awaitingGroup ProposerGroupGetter = SimpleProposersAwaitingGroupGetterNew(pids)
-	var minimalGroupGetter *MinimalProposersAwaitingGroup
+	if syncaceptor {
+		prepareSelfSender = &SyncPrepareSender{
+			id: r.Id,
+			r:  r,
+		}
+	}
+
+	var sendQrmSize SendQrmSize = &NonThrifty{
+		f: r.F,
+	}
+	if r.Thrifty {
+		sendQrmSize = &Thrifty{r.F}
+	}
+	tcpSender := TCPListSender{
+		Replica: r.Replica,
+	}
+	var prepareSender ListSender = &tcpSender
+	var valueSender ListSender = &tcpSender
+	if r.UDP {
+		if !r.sendPreparesToAllAcceptors {
+			panic("Not implemented yet")
+		}
+		prepareSender = &UnreliableUDPListSender{Replica: r.Replica}
+		valueSender = &ReliableUDPListSender{Replica: r.Replica}
+	}
+	r.PrepareBroadcaster = NewPrepareAllFromWriteAheadReplica(int32(r.N), r.Id, r.prepareRPC, r.AcceptorQrmInfo, prepareSelfSender, prepareSender)
+	r.ValueBroadcaster = NewBcastSlowLearning(r.acceptRPC, r.commitShortRPC, r.commitRPC, r.Id, int32(r.N), pids, sendQrmSize, valueSender, acceptSelfSender, r)
+
+	go r.run()
+	return r
+}
+
+func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumaliser proposer.ProposerInstanceQuorumaliser,
+	maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, factor float64, softFac bool,
+	constBackoff bool, minimalProposers bool, timeBasedBallots bool, mappedProposers bool, dynamicMappedProposers bool,
+	mappedProposersNum int32, pam bool, pamloc string, doEager bool, doEagerFI bool, forwardingInstances int32,
+	eagerByExec bool, eagerByExecFac float32, replica *Replica, maxBatchSize int, inductiveConfs bool) {
+
+	replica.ProposerInstanceQuorumaliser = proposerInstanceQuorumaliser
+	pids := make([]int32, n)
+	for i := range pids {
+		pids[i] = int32(i)
+	}
+
+	retrySig := make(chan proposer.RetryInfo, maxOpenInstances*n)
+	replica.RetryInstance = retrySig
+	balloter := &balloter.Balloter{
+		PropID:            id,
+		N:                 n,
+		MaxInc:            10000,
+		DoTimeBasedBallot: timeBasedBallots,
+	}
+	backoffManager := proposer.BackoffManagerNew(minBackoff, maxInitBackoff, maxBackoff, retrySig, factor, softFac, constBackoff, id)
+
+	// single instance manager
+	var instanceManager proposer.SingleInstanceManager = proposer.SimpleInstanceManagerNew(id, backoffManager, balloter, proposerInstanceQuorumaliser)
 	if minimalProposers {
-		minimalShouldMaker := proposalmanager.MinimalProposersShouldMakerNew(int16(r.Id), r.F)
-		instanceManager = proposalmanager.MinimalProposersInstanceManagerNew(instanceManager.(*proposalmanager.SimpleInstanceManager), minimalShouldMaker)
-		minimalGroupGetter = MinimalProposersAwaitingGroupNew(awaitingGroup.(*SimpleProposersAwaitingGroup), minimalShouldMaker, int32(r.F))
-		awaitingGroup = minimalGroupGetter
+		minimalShouldMaker := proposer.MinimalProposersShouldMakerNew(int16(id), int(f))
+		instanceManager = proposer.MinimalProposersInstanceManagerNew(instanceManager.(*proposer.SimpleInstanceManager), minimalShouldMaker)
 	}
 
-	// SET UP SIGNAL
-	sig := proposalmanager.SimpleSigNew(r.startInstanceSig, r.Id)
-	var openInstSig proposalmanager.OpenInstSignal = sig
-	var ballotInstSig proposalmanager.BallotOpenInstanceSignal = sig
-	if doEager || eagerByExec {
-		eSig := proposalmanager.EagerSigNew(openInstSig.(*proposalmanager.SimpleSig), maxOpenInstances)
-		openInstSig = eSig
-		ballotInstSig = eSig
+	openInstanceSig := make(chan struct{}, maxOpenInstances)
+	sig := proposer.SimpleSigNew(openInstanceSig, id)
+
+	simpleBatcher := proposer.GetBatcher(id, maxBatchSize)
+
+	baselineProposer := proposer.BaselineProposerNew(id, sig, sig, instanceManager, backoffManager, balloter)
+
+	simpleExecutor := proposer.GetNewExecutor(id, replica.Replica, replica.StableStore, replica.Dreply)
+	if !doEager && !doEagerFI && pam {
+		panic("pam requires some form of eagerness")
 	}
 
-	if eagerByExec {
-		eESig := proposalmanager.EagerExecUpToSigNew(openInstSig.(*proposalmanager.EagerSig), float32(r.N), eagerByExecFac)
-		openInstSig = eESig
-		ballotInstSig = eESig
-		r.execSig = eESig
+	// setup baseline
+	if !doEager && !eagerByExec && !doEagerFI {
+		replica.ClientBatcher = &proposer.StartProposalBatcher{
+			Sig:           openInstanceSig,
+			SimpleBatcher: simpleBatcher,
+		}
+		replica.Executor = &simpleExecutor
+		if inductiveConfs {
+			inductiveGlobalManager := proposer.InductiveConflictsManager{baselineProposer}
+			replica.Proposer = &inductiveGlobalManager
+			return
+		}
+		replica.Proposer = baselineProposer
+		return
 	}
 
-	simpleGlobalManager := proposalmanager.SimpleProposalManagerNew(r.Id, openInstSig, ballotInstSig, instanceManager, backoffManager)
-	var globalManager proposalmanager.Proposer = simpleGlobalManager
+	// setup eager sig
+	eSig := proposer.EagerSigNew(sig, maxOpenInstances)
+	eESig := proposer.EagerExecUpToSigNew(eSig, float32(n), eagerByExecFac)
+	baselineProposer = proposer.BaselineProposerNew(id, eESig, eESig, instanceManager, backoffManager, balloter)
 
-	if instsToOpenPerBatch < 1 {
-		panic("Will not open any instances")
+	// decide between eager and eager fi
+	var eagerProposer proposer.EagerByExecProposer = nil
+	if doEagerFI {
+		eagerProposer = &proposer.EagerFI{
+			CrtInstance:           -1,
+			InducedUpTo:           -1,
+			Induced:               make(map[int32]map[int32]stdpaxosproto.Ballot),
+			Id:                    id,
+			N:                     n,
+			SingleInstanceManager: instanceManager,
+			BackoffManager:        backoffManager,
+			Windy:                 make(map[int32][]int32),
+			EagerExecUpToSig:      eESig,
+			Balloter:              balloter,
+			Forwarding:            forwardingInstances,
+			//Forwarding:            (maxOpenInstances - 2) * n,
+			MaxStarted: -1,
+			MaxAt:      make(map[int32]int32),
+		}
+
+		for _, pid := range pids {
+			eagerProposer.(*proposer.EagerFI).Windy[pid] = make([]int32, forwardingInstances+1)
+		}
+
+	} else {
+		inductiveGlobalManager := proposer.InductiveConflictsManager{baselineProposer}
+		eagerProposer = &proposer.Eager{
+			InductiveConflictsManager: inductiveGlobalManager,
+			ExecOpenInstanceSignal:    eESig,
+		}
+
 	}
-	if instsToOpenPerBatch > 1 && (mappedProposers || dynamicMappedProposers || doEager) {
-		panic("incompatible options")
+	replica.ClientBatcher = &simpleBatcher
+	replica.Executor = &proposer.EagerByExecExecutor{
+		SimpleExecutor:         simpleExecutor,
+		ExecOpenInstanceSignal: eagerProposer.GetExecSignaller(),
 	}
 
-	r.noopLearners = []proposalmanager.NoopLearner{}
-	// PROPOSER QUORUMS
-	if mappedProposers || dynamicMappedProposers || pam {
-		var agentMapper instanceagentmapper.InstanceAgentMapper
+	if !pam || mappedProposers || dynamicMappedProposers {
+		replica.Proposer = eagerProposer
+		return
+	}
+
+	//baselineProposer.OpenInstSignal = openInstSig
+	//baselineProposer.BallotOpenInstanceSignal = ballotInstSig
+	//NewLoLProposer(BaselineProposerNew(r.Id, openInstSig, ballotInstSig, instanceManager, backoffManager, r.startInstanceSig), int32(r.N), r.startInstanceSig)
+
+	if !pam && !mappedProposers {
+		return
+	}
+
+	if doEagerFI {
+		panic("eager fi and pam not yet implemented")
+	}
+
+	//PROPOSER QUORUMS
+	var agentMapper instanceagentmapper.InstanceAgentMapper
+	if mappedProposers {
 		agentMapper = &instanceagentmapper.DetRandInstanceSetMapper{
 			Ids: pids,
 			G:   mappedProposersNum,
-			N:   int32(r.N),
+			N:   n,
 		}
-		if pam { // PAM get from file the proposer mappings
-			pamap := instanceagentmapper.ReadFromFile(pamloc)
-			pmap := instanceagentmapper.GetPMap(pamap)
-			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: pmap}
-		}
-
-		globalManager = proposalmanager.MappedProposersProposalManagerNew(r.startInstanceSig, simpleGlobalManager, instanceManager, agentMapper)
-		mappedGroupGetter := MappedProposersAwaitingGroupNew(agentMapper)
-		if dynamicMappedProposers {
-			dAgentMapper := &proposalmanager.DynamicInstanceSetMapper{
-				DetRandInstanceSetMapper: *agentMapper.(*instanceagentmapper.DetRandInstanceSetMapper),
-			}
-			globalManager = proposalmanager.DynamicMappedProposerManagerNew(r.startInstanceSig, simpleGlobalManager, instanceManager, dAgentMapper, int32(r.N), int32(r.F))
-			mappedGroupGetter = MappedProposersAwaitingGroupNew(dAgentMapper)
-			r.noopLearners = []proposalmanager.NoopLearner{globalManager.(*proposalmanager.DynamicMappedGlobalManager)}
-		}
-		if minimalProposers {
-			awaitingGroup = MinimalMappedProposersAwaitingGroupNew(*minimalGroupGetter, *mappedGroupGetter)
-		}
+	} else if pam {
+		//pamapping := instanceagentmapper.ReadFromFile(pamloc)
+		pamap := instanceagentmapper.ReadFromFile(pamloc)
+		pmap := instanceagentmapper.GetPMap(pamap)
+		agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: pmap}
+	} else {
+		panic("invalid options")
 	}
 
-	if instsToOpenPerBatch > 1 {
-		openInstSig = proposalmanager.HedgedSigNew(r.Id, r.startInstanceSig)
-		globalManager = proposalmanager.HedgedBetsProposalManagerNew(r.Id, simpleGlobalManager, int32(r.N), instsToOpenPerBatch)
-	}
+	pamProposer := proposer.MappedProposersProposalManagerNew(openInstanceSig, eagerProposer.(*proposer.Eager), instanceManager, agentMapper)
+	replica.Proposer = pamProposer
 
-	r.CrtInstanceOracle = globalManager
-	r.Proposer = globalManager
-	r.Durable = durable
+	// todo add eager fi pam proposer
 
-	//var acceptSelfSender AcceptSelfSender = &AsyncAcceptSender{
-	//	acceptChan: r.acceptChan,
-	//}
-	//var prepareSelfSender PrepareSelfSender =  &AsyncPrepareSender{
-	//	prepareChan: r.prepareChan,
-	//}
-	//
-	//if syncaceptor {
-	//	prepareSelfSender = &SyncPrepareSender{
-	//		id: r.Id,
-	//		r:  r,
+	//mappedGroupGetter := MappedProposersAwaitingGroupNew(agentMapper)
+
+	//if dynamicMappedProposers {
+	//	dAgentMapper := &DynamicInstanceSetMapper{
+	//		DetRandInstanceSetMapper: *agentMapper.(*instanceagentmapper.DetRandInstanceSetMapper),
 	//	}
+	//	globalManager = DynamicMappedProposerManagerNew(r.startInstanceSig, baselineProposer.BaselineManager, instanceManager, dAgentMapper, int32(r.N), int32(r.F))
+	//	mappedGroupGetter = MappedProposersAwaitingGroupNew(dAgentMapper)
+	//	r.noopLearners = []NoopLearner{globalManager.(*DynamicMappedGlobalManager)}
 	//}
-
-	//var sendQrmSize SendQrmSize = &NonThrifty{
-	//	f: r.F,
+	//if minimalProposers {
+	//	awaitingGroup = MinimalMappedProposersAwaitingGroupNew(*minimalGroupGetter, *mappedGroupGetter)
 	//}
-	//if r.Thrifty {
-	//	sendQrmSize = &Thrifty{r.F}
-	//}
-	//if r.UDP {
-	//	if !r.sendPreparesToAllAcceptors {
-	//		panic("Not implemented yet")
-	//	}
-	//	reliableSender := &UnreliableUDPListSender{Replica: r.Replica}
-	//	r.PrepareBroadcaster = NewPrepareAllFromWriteAheadReplica(int32(r.N), r.Id, r.prepareRPC, r.AcceptorQrmInfo, prepareSelfSender, reliableSender)
-	//	unreliableSender := &ReliableUDPListSender{Replica: r.Replica}
-	//	r.ValueBroadcaster = NewBcastSlowLearning(r.acceptRPC, r.commitShortRPC, r.commitRPC, r.Id, int32(r.N), pids, sendQrmSize, unreliableSender, acceptSelfSender, r)
-	//}
-	//r.doPatientProposals = doPatientProposals
-	//if r.doPatientProposals {
-	//	r.patientProposals = patientProposals{
-	//		myId:                r.Id,
-	//		promisesRequestedAt: make(map[int32]map[stdpaxosproto.Ballot]time.Time),
-	//		pidsPropRecv:        make(map[int32]map[int32]struct{}),
-	//		doPatient:           true,
-	//		Ewma:                make([]float64, r.N),
-	//ProposerGroupGetter: awaitingGroup,
-	//closed:              make(map[int32]struct{}),
-	//}
-	//}
-	go r.run()
-	return r
 }

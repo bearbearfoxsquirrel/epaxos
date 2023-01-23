@@ -1,4 +1,4 @@
-package exec
+package proposer
 
 import (
 	"encoding/binary"
@@ -9,10 +9,24 @@ import (
 	"epaxos/stablestore"
 	"epaxos/state"
 	_const "epaxos/twophase/const"
-	"epaxos/twophase/logfmt"
 )
 
-type Executor struct {
+type Executor interface {
+	Learnt(inst int32, cmds []*state.Command, whose int32)
+	ProposedBatch(inst int32, b batching.ProposalBatch)
+}
+
+type EagerByExecExecutor struct {
+	SimpleExecutor
+	ExecOpenInstanceSignal
+}
+
+func (e *EagerByExecExecutor) Learnt(inst int32, cmds []*state.Command, whose int32) {
+	e.SimpleExecutor.Learnt(inst, cmds, whose)
+	e.ExecOpenInstanceSignal.CheckExec(e)
+}
+
+type SimpleExecutor struct {
 	executedUpTo  int32
 	clientBatches []batching.ProposalBatch
 	cmds          [][]*state.Command
@@ -29,12 +43,12 @@ type ExecInformer interface {
 	GetExecutedUpTo() int32
 }
 
-func (e *Executor) GetExecutedUpTo() int32 {
+func (e *SimpleExecutor) GetExecutedUpTo() int32 {
 	return e.executedUpTo
 }
 
-func GetNewExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore, dreply bool) Executor {
-	return Executor{
+func GetNewExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore, dreply bool) SimpleExecutor {
+	return SimpleExecutor{
 		executedUpTo:  -1,
 		clientBatches: make([]batching.ProposalBatch, _const.ISpaceLen),
 		cmds:          make([][]*state.Command, _const.ISpaceLen),
@@ -48,7 +62,7 @@ func GetNewExecutor(id int32, r *genericsmr.Replica, store stablestore.StableSto
 	}
 }
 
-func (ex *Executor) ProposedBatch(inst int32, b batching.ProposalBatch) {
+func (ex *SimpleExecutor) ProposedBatch(inst int32, b batching.ProposalBatch) {
 	if ex.clientBatches[inst] != nil {
 		if b.GetUID() != ex.clientBatches[inst].GetUID() {
 			panic("Should not propose multiple batches to a single instance")
@@ -58,7 +72,7 @@ func (ex *Executor) ProposedBatch(inst int32, b batching.ProposalBatch) {
 	ex.clientBatches[inst] = b
 }
 
-func (ex *Executor) Learnt(inst int32, cmds []*state.Command, whose int32) {
+func (ex *SimpleExecutor) Learnt(inst int32, cmds []*state.Command, whose int32) {
 	if ex.learnt[inst] == true {
 		return
 	}
@@ -71,29 +85,22 @@ func (ex *Executor) Learnt(inst int32, cmds []*state.Command, whose int32) {
 		ex.clientBatches[inst] = nil
 	}
 
-	//if whoseCmd == -1 {
-	//	for _, l := range r.noopLearners {
-	//		l.LearnNoop(inst, int32(chosenAt.PropID))
-	//	}
-	//}
-	//
-	//if pbk.ClientProposals != nil && !r.Dreply {
 	if ex.clientBatches[inst] != nil && !ex.dreply {
 		ex.replyToNondurablyClients(inst)
 	}
 	ex.exec()
 }
 
-func (ex *Executor) exec() {
+func (ex *SimpleExecutor) exec() {
 	oldExecutedUpTo := ex.executedUpTo
 
 	for ex.learnt[ex.executedUpTo+1] {
 		crt := ex.executedUpTo + 1
 		ex.executedUpTo += 1
 		if ex.whose[crt] != ex.meId {
-			dlog.AgentPrintfN(ex.meId, logfmt.ExecutingFmt(crt, ex.whose[crt]))
+			dlog.AgentPrintfN(ex.meId, ExecutingFmt(crt, ex.whose[crt]))
 		} else {
-			dlog.AgentPrintfN(ex.meId, logfmt.ExecutingBatchFmt(crt, ex.whose[crt], ex.clientBatches[crt]))
+			dlog.AgentPrintfN(ex.meId, ExecutingBatchFmt(crt, ex.whose[crt], ex.clientBatches[crt]))
 		}
 		if ex.whose[crt] == -1 {
 			// is NOOP
@@ -125,7 +132,7 @@ func (ex *Executor) exec() {
 	}
 }
 
-func (ex *Executor) replyToClientOfCmd(inst int32, i int, value state.Value) {
+func (ex *SimpleExecutor) replyToClientOfCmd(inst int32, i int, value state.Value) {
 	proposals := ex.clientBatches[inst].GetProposals()
 	propreply := &genericsmrproto.ProposeReplyTS{
 		1,
@@ -135,13 +142,13 @@ func (ex *Executor) replyToClientOfCmd(inst int32, i int, value state.Value) {
 	ex.Replica.ReplyProposeTS(propreply, proposals[i].Reply, proposals[i].Mutex)
 }
 
-func (ex *Executor) recordExecutedUpTo() {
+func (ex *SimpleExecutor) recordExecutedUpTo() {
 	var b [4]byte
 	binary.LittleEndian.PutUint32(b[0:4], uint32(ex.executedUpTo))
 	ex.StableStore.WriteAt(b[:], 4)
 }
 
-func (ex *Executor) replyToNondurablyClients(inst int32) {
+func (ex *SimpleExecutor) replyToNondurablyClients(inst int32) {
 	b := ex.clientBatches[inst]
 	for i := 0; i < len(b.GetCmds()); i++ {
 		ex.replyToClientOfCmd(inst, i, state.NIL())

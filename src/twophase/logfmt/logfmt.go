@@ -1,63 +1,10 @@
 package logfmt
 
 import (
-	"epaxos/batching"
 	"epaxos/dlog"
 	"epaxos/stdpaxosproto"
-	"epaxos/twophase/balloter"
 	"fmt"
 )
-
-func UIDFmt(batch batching.ProposalBatch) string {
-	return fmt.Sprintf("UID %d (length %d values)", batch.GetUID(), len(batch.GetCmds()))
-}
-
-func BatchFmt(batch batching.ProposalBatch) string {
-	return fmt.Sprintf("batch with %s", UIDFmt(batch))
-}
-
-func RequeuingBatchFmt(batch batching.ProposalBatch) string {
-	return fmt.Sprintf("Requeuing %s", BatchFmt(batch))
-}
-
-func RequeuingBatchPreempted(inst int32, ballot stdpaxosproto.Ballot, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("Encountered preempting ballot in instance %d ballot %d.%d. %s",
-		inst, ballot.Number, ballot.PropID, RequeuingBatchFmt(batch))
-}
-func RequeuingBatchAcceptedValue(inst int32, ballot stdpaxosproto.Ballot, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("Encountered previously accepted value in instance %d whose value %d from ballot %d.%d. %s",
-		inst, whose, ballot.Number, ballot.PropID, RequeuingBatchFmt(batch))
-}
-func RequeuingBatchDifferentValueChosen(inst int32, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("Instance %d chosen with different value than ours (whose command %d). %s",
-		inst, whose, RequeuingBatchFmt(batch))
-}
-
-func LearntFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32) string {
-	attempts := balloter.GetAttemptNumber(ballot.Number)
-	return fmt.Sprintf("Learnt instance %d at ballot %d.%d (%d attempts) with whose commands %d", inst, ballot.Number, ballot.PropID, attempts, whose)
-}
-
-func LearntInlineFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32) string {
-	attempts := balloter.GetAttemptNumber(ballot.Number)
-	return fmt.Sprintf("learnt instance %d at ballot %d.%d (%d attempts) with whose commands %d", inst, ballot.Number, ballot.PropID, attempts, whose)
-}
-
-func LearntBatchFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("%s (%s)", LearntFmt(inst, ballot, balloter, whose), BatchFmt(batch))
-}
-
-func LearntBatchAgainFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("%s (again learnt %s)", LearntFmt(inst, ballot, balloter, whose), BatchFmt(batch))
-}
-
-func ExecutingFmt(inst int32, whose int32) string {
-	return fmt.Sprintf("Executing instance %d with whose commands %d", inst, whose)
-}
-
-func ExecutingBatchFmt(inst int32, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("%s (%s)", ExecutingFmt(inst, whose), BatchFmt(batch))
-}
 
 func OpenInstanceSignalChosen(id int32, inst int32, chosenAt stdpaxosproto.Ballot) {
 	s := "(by someone else)"
@@ -65,4 +12,26 @@ func OpenInstanceSignalChosen(id int32, inst int32, chosenAt stdpaxosproto.Ballo
 		s = "(by us)"
 	}
 	dlog.AgentPrintfN(id, "Signalling to open new instance as attempted instance %d is chosen %s", inst, s)
+}
+
+// Receive Messages
+func ReceivePrepareFmt(prepare *stdpaxosproto.Prepare) string {
+	return fmt.Sprintf("Replica received a Prepare from Replica %d in instance %d at ballot %d.%d", prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID)
+}
+func ReceivePrepareReplyFmt(preply *stdpaxosproto.PrepareReply) string {
+	return fmt.Sprintf("Replica received a Prepare Reply from Replica %d in instance %d at requested ballot %d.%d, current ballot %d.%d and value ballot %d.%d with whose commands %d", preply.AcceptorId, preply.Instance, preply.Req.Number, preply.Req.PropID, preply.Cur.Number, preply.Cur.PropID, preply.VBal.Number, preply.VBal.PropID, preply.WhoseCmd)
+}
+
+func ReceiveAcceptFmt(accept *stdpaxosproto.Accept) string {
+	return fmt.Sprintf("Replica received Accept from Replica %d in instance %d at ballot %d.%d", accept.PropID, accept.Instance, accept.Number, accept.PropID)
+}
+func ReceiveAcceptReplyFmt(areply *stdpaxosproto.AcceptReply) string {
+	return fmt.Sprintf("Replica received Accept Reply from Replica %d in instance %d at requested ballot %d.%d and current ballot %d.%d", areply.AcceptorId, areply.Instance, areply.Req.Number, areply.Req.PropID, areply.Cur.Number, areply.Cur.PropID)
+}
+func ReceiveCommitFmt(commit *stdpaxosproto.Commit) string {
+	return fmt.Sprintf("Replica received Commit from Replica %d in instance %d at ballot %d.%d with whose commands %d", commit.PropID, commit.Instance, commit.Ballot.Number, commit.Ballot.PropID, commit.WhoseCmd)
+}
+
+func ReceiveCommitShortFmt(commit *stdpaxosproto.CommitShort) string {
+	return fmt.Sprintf("Replica received Commit Short from Replica %d in instance %d at ballot %d.%d with whose commands %d", commit.PropID, commit.Instance, commit.Ballot.Number, commit.Ballot.PropID, commit.WhoseCmd)
 }

@@ -1,25 +1,25 @@
-package proposalmanager
+package proposer
 
 import (
 	"epaxos/dlog"
 	"epaxos/lwcproto"
 	"epaxos/stdpaxosproto"
-	"epaxos/twophase/exec"
 	"epaxos/twophase/logfmt"
 )
 
 type OpenInstSignal interface {
 	Opened(opened []int32)
+	GetSignaller() <-chan struct{}
 }
 
 type BallotOpenInstanceSignal interface {
 	CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase)
 	CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
-	CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal)
+	CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32)
 }
 
 type ExecOpenInstanceSignal interface {
-	CheckExec(oracle CrtInstanceOracle, informer exec.ExecInformer)
+	CheckExec(informer ExecInformer)
 }
 
 type SimpleSig struct {
@@ -34,6 +34,10 @@ func SimpleSigNew(newInstSig chan struct{}, id int32) *SimpleSig {
 		sigNewInst:   newInstSig,
 		id:           id,
 	}
+}
+
+func (sig *SimpleSig) GetSignaller() <-chan struct{} {
+	return sig.sigNewInst
 }
 
 func (sig *SimpleSig) Opened(opened []int32) {
@@ -65,9 +69,9 @@ func (sig *SimpleSig) ballotShouldOpen(pbk *PBK, inst int32, ballot lwcproto.Con
 	//if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
 	//	return
 	//}
-	if pbk.PropCurBal.GreaterThan(ballot) && pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
-		return false
-	}
+	//if  pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
+	//	return false
+	//}
 
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
 	return true
@@ -79,9 +83,6 @@ func (sig *SimpleSig) sigNextInst(inst int32) {
 }
 
 func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-	//if pbk.Status == CLOSED {
-	//	return
-	//}
 	if !sig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
 		return
 	}
@@ -89,13 +90,10 @@ func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.
 }
 
 func (sig *SimpleSig) acceptedShouldSignal(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) bool {
-	if int32(ballot.PropID) == sig.id {
-		return false
-	}
 	if _, e := sig.instsStarted[inst]; !e {
 		return false
 	}
-	if whosecmds == sig.id {
+	if int32(ballot.PropID) == sig.id && (whosecmds == sig.id || whosecmds == -1) {
 		return false
 	}
 	if pbk.Status == PROPOSING && pbk.PropCurBal.GreaterThan(ballot) { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
@@ -105,37 +103,34 @@ func (sig *SimpleSig) acceptedShouldSignal(pbk *PBK, inst int32, ballot lwcproto
 	return true
 }
 
-func (sig *SimpleSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
-	//if pbk.Status == CLOSED {
-	//	return
-	//}
+func (sig *SimpleSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 	// either we choose or didn't start the instance
-	if !sig.chosenShouldSignal(inst, ballot) {
+	if !sig.chosenShouldSignal(inst, ballot, whoseCmds) {
 		return
 	}
 	sig.sigNextInst(inst)
 }
 
-func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal) bool {
+func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, whoseCmd int32) bool {
 	if _, e := sig.instsStarted[inst]; !e {
-		//dlog.AgentPrintfN(sig.id, "not siging inst %d cause 2", inst)
+		//dlog.AgentPrintfN(Sig.Id, "not siging inst %d cause 2", inst)
 		return false
 	}
-	if int32(ballot.PropID) == sig.id {
+	if int32(ballot.PropID) == sig.id && (whoseCmd == sig.id || whoseCmd == -1) {
 		return false
 	}
 
-	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
+	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else or proposed someone else's value ", inst)
 	return true
 }
 
-// func (sig *SimpleSig) CheckPreempted(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot, reason string) {
-//
-// }
 type EagerExecUpToSig struct {
 	EagerSig
-	n   float32
-	fac float32
+	n        float32
+	fac      float32
+	sigged   int32
+	crtInst  int32
+	execUpTo int32
 }
 
 func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32) *EagerExecUpToSig {
@@ -143,32 +138,121 @@ func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32) *EagerExecU
 		EagerSig: *eagerSig,
 		n:        n,
 		fac:      fac,
+		crtInst:  -1,
+		execUpTo: -1,
+		sigged:   eagerSig.MaxOpenInsts,
 	}
 }
 
-func (manager *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
-	//if pbk.Status == CLOSED {
-	//	return
-	//}
+func (sig *EagerExecUpToSig) updateCrtInst(inst int32) {
+	if sig.crtInst >= inst {
+		return
+	}
+	sig.crtInst = inst
+}
+
+func (sig *EagerExecUpToSig) Opened(o []int32) {
+	if sig.sigged <= 0 {
+		panic("No recorded signals to open")
+	}
+	for _, i := range o {
+		sig.updateCrtInst(i)
+	}
+	sig.SimpleSig.Opened(o)
+	sig.sigged -= int32(len(o))
+}
+
+func (sig *EagerExecUpToSig) sigNextInst(inst int32) {
+	if _, e := sig.instsStarted[inst]; !e {
+		panic("signalling for instance not started")
+	}
+	sig.SimpleSig.sigNextInst(inst)
+	sig.sigged += 1
+}
+
+func (manager *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+	manager.updateCrtInst(inst)
+	if !manager.ballotShouldOpen(pbk, inst, ballot, phase) {
+		return
+	}
+	manager.sigNextInst(inst)
+}
+
+func (manager *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+	manager.updateCrtInst(inst)
+	if !manager.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
+		return
+	}
+	manager.sigNextInst(inst)
+}
+
+func (manager *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+	manager.updateCrtInst(inst)
 	if _, e := manager.instsStarted[inst]; !e {
 		return
 	}
-	delete(manager.instsStarted, inst)
-}
-
-func (manager *EagerExecUpToSig) CheckExec(oracle CrtInstanceOracle, informer exec.ExecInformer) {
-	dlog.AgentPrintfN(manager.id, "Checking whether to open up new instances")
-	if oracle.GetCrtInstance() > informer.GetExecutedUpTo()+int32(float32(manager.MaxOpenInsts)*manager.n*manager.fac) {
-		dlog.AgentPrintfN(manager.id, "Not opening up new instances as executed instance %d hasn't caught up with current instance %d", informer.GetExecutedUpTo(), oracle.GetCrtInstance())
+	if int32(ballot.PropID) == manager.id {
+		if manager.PipelineTooLong() {
+			return
+		}
+		manager.sigNextInst(inst)
 		return
 	}
 
-	dlog.AgentPrintfN(manager.id, "Signalling to open %d new instance(s) as executed instance has caught up", manager.MaxOpenInsts-int32(len(manager.instsStarted)))
+	dlog.AgentPrintfN(manager.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
+	manager.sigNextInst(inst)
+}
+
+func (manager *EagerExecUpToSig) CheckExec(informer ExecInformer) {
+	if manager.execUpTo >= informer.GetExecutedUpTo() {
+		return
+	}
+	manager.execUpTo = informer.GetExecutedUpTo()
+	dlog.AgentPrintfN(manager.id, "Checking whether to open up new instances")
+	if manager.PipelineTooLong() {
+		return
+	}
+
+	if int32(len(manager.instsStarted)) > manager.MaxOpenInsts {
+		panic("too long")
+	}
+
+	for i, _ := range manager.instsStarted {
+		if i > informer.GetExecutedUpTo() {
+			continue
+		}
+		delete(manager.instsStarted, i)
+	}
+	toOpen := manager.MaxOpenInsts - (int32(len(manager.instsStarted)) + manager.sigged)
+	if toOpen+int32(len(manager.instsStarted))+manager.sigged > manager.MaxOpenInsts {
+		panic("going to make a too long pipeline")
+	}
+	if toOpen <= 0 {
+		dlog.AgentPrintfN(manager.id, "Not opening up new instances as we have currently opened %d instances in the pipeline", len(manager.instsStarted))
+		return
+	}
+
+	//manager.sigged += toOpen
+
+	dlog.AgentPrintfN(manager.id, "Signalling to open %d new instance(s) as executed instance has caught up with current", toOpen)
+	manager.sigged += toOpen
 	go func(toOpen int32) {
 		for i := int32(0); i < toOpen; i++ {
 			manager.sigNewInst <- struct{}{}
 		}
-	}(manager.MaxOpenInsts - int32(len(manager.instsStarted)))
+	}(toOpen)
+}
+
+func (manager *EagerExecUpToSig) PipelineTooLong() bool {
+	if manager.crtInst >= manager.GetMaxPipelineLen() {
+		dlog.AgentPrintfN(manager.id, "Not opening up new instances as executed instance %d hasn't caught up with current instance %d", manager.execUpTo, manager.crtInst)
+		return true
+	}
+	return false
+}
+
+func (manager *EagerExecUpToSig) GetMaxPipelineLen() int32 {
+	return manager.execUpTo + int32(float32(manager.MaxOpenInsts)*manager.n*manager.fac)
 }
 
 type EagerSig struct {
@@ -177,7 +261,6 @@ type EagerSig struct {
 }
 
 func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
-	//exec.
 	e := &EagerSig{
 		SimpleSig:    simpleSig,
 		MaxOpenInsts: maxOI,
@@ -190,12 +273,9 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 	return e
 }
 
-func (sig *EagerSig) Opened(o []int32) {
-	//if int32(len(sig.instsStarted)) >= sig.MaxOpenInsts {
-	//	panic("saldkjfakl;jfls;kdfj")
-	//}
-	sig.SimpleSig.Opened(o)
-}
+//func (Sig *EagerSig) Opened(o []int32) {
+//	Sig.SimpleSig.Opened(o)
+//}
 
 func (manager *EagerSig) Close(inst int32) {
 	delete(manager.instsStarted, inst)
@@ -205,17 +285,17 @@ func (manager *EagerSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcprot
 	if !manager.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
 	}
-	manager.openNewInstance(inst)
+	manager.tryOpenNewInst(inst)
 }
 
 func (manager *EagerSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	if !manager.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
 		return
 	}
-	manager.openNewInstance(inst)
+	manager.tryOpenNewInst(inst)
 }
 
-func (manager *EagerSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
+func (manager *EagerSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 	if pbk.Status == CLOSED {
 		return
 	}
@@ -223,10 +303,10 @@ func (manager *EagerSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.Confi
 		return
 	}
 	logfmt.OpenInstanceSignalChosen(manager.id, inst, ballot.Ballot)
-	manager.openNewInstance(inst)
+	manager.tryOpenNewInst(inst)
 }
 
-func (manager *EagerSig) openNewInstance(inst int32) {
+func (manager *EagerSig) tryOpenNewInst(inst int32) {
 	delete(manager.instsStarted, inst)
 	if len(manager.instsStarted) >= int(manager.MaxOpenInsts) {
 		return
@@ -262,11 +342,6 @@ func (sig *HedgedSig) Opened(opened []int32) {
 }
 
 func (sig *HedgedSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-	//sig.checkInstFailed(pbk, inst, ballot)
-	//if pbk.Status == CLOSED {
-	//	return
-	//}
-
 	curHedge, e := sig.currentHedges[inst]
 	if !e {
 		return
@@ -277,7 +352,7 @@ func (sig *HedgedSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.C
 		return
 	}
 
-	//if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == sig.id) {
+	//if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == Sig.Id) {
 	//	return
 	//}
 
@@ -286,11 +361,11 @@ func (sig *HedgedSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.C
 	sig.checkNeedsSig(pbk, inst)
 }
 
-func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal) {
+func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 	//if pbk.Status == CLOSED {
 	//	return
 	//}
-	//sig.checkInstFailed(pbk, inst, ballot)
+	//Sig.checkInstFailed(pbk, inst, ballot)
 	curHedge, e := sig.currentHedges[inst]
 	if !e {
 		return
@@ -308,11 +383,6 @@ func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBa
 		delete(sig.currentHedges, i)
 	}
 
-	// check percentage of choosing
-	// if we are above a threshold then reduce
-	// if we are below, then increase
-
-	//sig.checkInstChosenByMe(pbk, inst, ballot)
 }
 
 func (sig *HedgedSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
@@ -339,7 +409,3 @@ func (sig *HedgedSig) checkNeedsSig(pbk *PBK, inst int32) {
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as all hedged attempts related to %d failed", inst)
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
-
-// if proposed noop in opened instance, then reduce pipeline (ignore one sig?)
-
-// eager hedged?

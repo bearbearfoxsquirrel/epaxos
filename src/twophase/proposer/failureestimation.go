@@ -1,4 +1,4 @@
-package proposalmanager
+package proposer
 
 import (
 	"epaxos/fastrpc"

@@ -13,6 +13,7 @@ type Balloter struct {
 	PropID, N, MaxInc          int32
 	TimeSinceValueLastSelected time.Time
 	DoTimeBasedBallot          bool
+	//instanceSpace              *[]proposer.PBK
 }
 
 //func (balloter *Balloter) Learn(bat batching.ProposalBatch) {
@@ -25,6 +26,9 @@ func (balloter *Balloter) UpdateProposalChosen() {
 }
 
 func (balloter *Balloter) GetNextProposingBal(config int32, maxPrevRoundNum int32) lwcproto.ConfigBal {
+	//if balloter.instanceSpace[]
+	// if cur bal is -1 and inst - buffer was chosen by us then we can propose immediately
+
 	mini := ((maxPrevRoundNum / balloter.MaxInc) + 1) * balloter.MaxInc
 	var max int32
 	max = mini + balloter.MaxInc

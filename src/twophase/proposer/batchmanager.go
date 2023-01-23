@@ -1,40 +1,41 @@
-package twophase
+package proposer
 
 import (
 	"epaxos/batching"
 	"epaxos/dlog"
+	"epaxos/genericsmr"
 	"epaxos/lwcproto"
 	"epaxos/state"
-	"epaxos/stats"
 	"epaxos/stdpaxosproto"
-	"epaxos/twophase/logfmt"
-	"epaxos/twophase/proposalmanager"
 )
 
 type BatchManager interface {
+	AddProposal(clientRequest *genericsmr.Propose, othersAwaiting <-chan *genericsmr.Propose) bool
 	GetBatchToPropose() batching.ProposalBatch
 	PutBatch(batch batching.ProposalBatch)
+	CurrentBatchLen() int
+	GetNumBatchesMade() int
 }
 
 type ValuePreemptedHandler interface {
-	learnOfBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, bm BatchManager)
+	LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm BatchManager)
 }
 
 type AcceptedValueHandler interface {
-	learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32, bm BatchManager)
+	LearnOfBallotValue(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32, bm BatchManager)
 }
 
 type ValueChosenHandler interface {
-	valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager)
+	ValueChosen(pbk *PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager)
 }
 
 type ClientBatchProposedHandler interface {
-	proposingBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch)
+	proposingBatch(pbk *PBK, inst int32, batch batching.ProposalBatch)
 }
 
 //
-//type Executor interface {
-//	Learnt(inst int32, cmds []*state.Command, whosecmds int32)
+//type SimpleExecutor interface {
+//	Learnt(inst int32, Cmds []*state.Command, whosecmds int32)
 //}
 
 // ProposedClientValuesManager handles information that could affect proposed values and uses it to inform future values to be
@@ -48,34 +49,30 @@ type ProposedClientValuesManager interface {
 
 type SimpleBatchManager struct {
 	id         int32
-	stats      *stats.TimeseriesStats
-	doStats    bool
 	requeuedAt map[int32]map[lwcproto.ConfigBal]struct{}
 }
 
-func ProposedClientValuesManagerNew(id int32, tsStats *stats.TimeseriesStats, doStats bool) ProposedClientValuesManager {
+func ProposedClientValuesManagerNew(id int32) ProposedClientValuesManager {
 	return &SimpleBatchManager{
 		id:         id,
-		stats:      tsStats,
-		doStats:    doStats,
 		requeuedAt: make(map[int32]map[lwcproto.ConfigBal]struct{}),
 	}
 }
 
-func (manager *SimpleBatchManager) proposingBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
+func (manager *SimpleBatchManager) proposingBatch(pbk *PBK, inst int32, batch batching.ProposalBatch) {
 	pbk.PutBatch(batch)
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, bm BatchManager) {
+func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm BatchManager) {
 	//todo log
 	if pbk.ClientProposals == nil {
 		return
 	}
-	if pbk.Status == proposalmanager.NOT_BEGUN || pbk.Status == proposalmanager.CLOSED {
+	if pbk.Status == NOT_BEGUN || pbk.Status == CLOSED {
 		return
 	}
-	if pbk.Status == proposalmanager.PROPOSING {
+	if pbk.Status == PROPOSING {
 		return
 	}
 	if pbk.PropCurBal.GreaterThan(ballot) || pbk.PropCurBal.Equal(ballot) {
@@ -86,29 +83,29 @@ func (manager *SimpleBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst 
 		return
 	}
 
-	dlog.AgentPrintfN(manager.id, logfmt.RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
+	dlog.AgentPrintfN(manager.id, RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
 	bm.PutBatch(pbk.ClientProposals)
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32, bm BatchManager) {
+func (manager *SimpleBatchManager) LearnOfBallotValue(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32, bm BatchManager) {
 	if pbk.ClientProposals == nil {
 		return
 	}
 	if whoseCmds == manager.id {
 		return
 	}
-	if pbk.Status == proposalmanager.NOT_BEGUN || pbk.Status == proposalmanager.CLOSED { // || pbk.Status == PROPOSING {
+	if pbk.Status == NOT_BEGUN || pbk.Status == CLOSED { // || pbk.Status == PROPOSING {
 		return
 	}
-	if pbk.Status == proposalmanager.PROPOSING && pbk.PropCurBal.GreaterThan(ballot) {
+	if pbk.Status == PROPOSING && pbk.PropCurBal.GreaterThan(ballot) {
 		return
 	}
 	if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; e {
 		return
 	}
-	dlog.AgentPrintfN(manager.id, logfmt.RequeuingBatchAcceptedValue(inst, ballot.Ballot, whoseCmds, pbk.ClientProposals))
+	dlog.AgentPrintfN(manager.id, RequeuingBatchAcceptedValue(inst, ballot.Ballot, whoseCmds, pbk.ClientProposals))
 	//todo log
 	bm.PutBatch(pbk.ClientProposals)
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
@@ -116,7 +113,7 @@ func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, 
 	//pbk.WhoseCmds = whoseCmds
 }
 
-//func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+//func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposer.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 //
 //}
 
@@ -135,7 +132,7 @@ const (
 	ProposedAndChosen
 )
 
-func whatHappenedToClientProposals(pbk *proposalmanager.PBK, whoseCmds int32, myId int32) ClientProposalStory {
+func whatHappenedToClientProposals(pbk *PBK, whoseCmds int32, myId int32) ClientProposalStory {
 	if pbk.ClientProposals == nil {
 		return NotProposed
 	}
@@ -145,8 +142,8 @@ func whatHappenedToClientProposals(pbk *proposalmanager.PBK, whoseCmds int32, my
 	return ProposedAndChosen
 }
 
-func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager) {
-	//if pbk.Status == proposalmanager.CLOSED {
+func (manager *SimpleBatchManager) ValueChosen(pbk *PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager) {
+	//if pbk.Status == proposer.CLOSED {
 	//	return
 	//}
 	//if pbk.ClientProposals == nil {
@@ -156,19 +153,19 @@ func (manager *SimpleBatchManager) valueChosen(pbk *proposalmanager.PBK, inst in
 		panic("client values chosen but we won't recognise that")
 	}
 
-	//dlog.AgentPrintfN(manager.id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
+	//dlog.AgentPrintfN(manager.Id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
 	switch whatHappenedToClientProposals(pbk, whoseCmds, manager.id) {
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		//dlog.AgentPrintfN(manager.id, "%d client value(s) proposed in instance %d not chosen", len(pbk.ClientProposals.GetCmds()), inst)
-		dlog.AgentPrintfN(manager.id, logfmt.RequeuingBatchDifferentValueChosen(inst, whoseCmds, pbk.ClientProposals))
+		//dlog.AgentPrintfN(manager.Id, "%d client value(s) proposed in instance %d not chosen", len(pbk.ClientProposals.GetCmds()), inst)
+		dlog.AgentPrintfN(manager.id, RequeuingBatchDifferentValueChosen(inst, whoseCmds, pbk.ClientProposals))
 		if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; !e {
 			bm.PutBatch(pbk.ClientProposals)
 		}
 		break
 	case ProposedAndChosen:
-		//dlog.AgentPrintfN(manager.id, "%d client value(s) chosen in instance %d", len(pbk.ClientProposals.GetCmds()), inst)
+		//dlog.AgentPrintfN(manager.Id, "%d client value(s) chosen in instance %d", len(pbk.ClientProposals.GetCmds()), inst)
 		break
 	}
 	pbk.ClientProposals = nil
@@ -210,7 +207,7 @@ type ValueSelector interface {
 // MyBatchLearner Wants to answer whether a batch has been chosen or not
 //
 //type HedgedBetsBatchManager struct {
-//	id    int32
+//	Id    int32
 //	stats *stats.TimeseriesStats
 //	Requeueing
 //	doStats            bool
@@ -222,9 +219,9 @@ type ValueSelector interface {
 //	failedAttempts map[int32]map[int32]struct{} // instances that a batch has been chosen and preempted (or requesting requeuing)
 //}
 //
-//func HedgedBetsBatchManagerNew(id int32, tsStats *stats.TimeseriesStats, doStats bool, q Queueing) *HedgedBetsBatchManager {
+//func HedgedBetsBatchManagerNew(Id int32, tsStats *stats.TimeseriesStats, doStats bool, q Queueing) *HedgedBetsBatchManager {
 //	return &HedgedBetsBatchManager{
-//		id:                 id,
+//		Id:                 Id,
 //		stats:              tsStats,
 //		Requeueing:         q,
 //		doStats:            doStats,
@@ -235,9 +232,9 @@ type ValueSelector interface {
 //	}
 //}
 //
-//func (manager *HedgedBetsBatchManager) proposingBatch(pbk *proposalmanager.PBK, inst int32, batch batching.ProposalBatch) {
+//func (manager *HedgedBetsBatchManager) proposingBatch(pbk *proposer.PBK, inst int32, batch batching.ProposalBatch) {
 //	// this counts up how many times we are attempting to tryPropose a batch at the same time
-//	if pbk.Status == proposalmanager.CLOSED {
+//	if pbk.Status == proposer.CLOSED {
 //		panic("Should not be attempting instance that is chosen")
 //	}
 //	if _, e := manager.chosen[batch.GetUID()]; e {
@@ -247,7 +244,7 @@ type ValueSelector interface {
 //	}
 //
 //	pbk.ClientProposals = batch
-//	dlog.AgentPrintfN(manager.id, "Attempting batch with UID %d in instance %d", batch.GetUID(), inst)
+//	dlog.AgentPrintfN(manager.Id, "Attempting batch with UID %d in instance %d", batch.GetUID(), inst)
 //	if _, e := manager.attemptedInstances[batch.GetUID()]; !e {
 //		manager.attemptedInstances[batch.GetUID()] = make(map[int32]struct{})
 //	}
@@ -266,19 +263,19 @@ type ValueSelector interface {
 //}
 //
 //// is this after or before
-//func (manager *HedgedBetsBatchManager) learnOfBallot(pbk *proposalmanager.PBK, inst int32, ballot stdpaxosproto.Ballot) {
+//func (manager *HedgedBetsBatchManager) learnOfBallot(pbk *proposer.PBK, inst int32, ballot stdpaxosproto.Ballot) {
 //	// should we do anything here? - in future track preempting?
 //	if pbk.ClientProposals == nil {
 //		return
 //	}
-//	if pbk.Status == proposalmanager.NOT_BEGUN || pbk.Status == proposalmanager.CLOSED {
+//	if pbk.Status == proposer.NOT_BEGUN || pbk.Status == proposer.CLOSED {
 //		return
 //	}
 //	if pbk.PropCurBal.GreaterThan(ballot) || pbk.PropCurBal.Equal(ballot) {
 //		return
 //	}
 //
-//	dlog.AgentPrintfN(manager.id, "Encountered preempting ballot in instance %d for batch with UID %d",
+//	dlog.AgentPrintfN(manager.Id, "Encountered preempting ballot in instance %d for batch with UID %d",
 //		inst, pbk.ClientProposals.GetUID())
 //	batch, attempted := manager.attemptedBatches[inst]
 //	if !attempted {
@@ -299,26 +296,26 @@ type ValueSelector interface {
 //}
 //
 //func (manager *HedgedBetsBatchManager) markedFailed(inst int32, batch batching.ProposalBatch) {
-//	uid := batch.GetUID()
-//	if _, e := manager.failedAttempts[uid]; !e {
-//		manager.failedAttempts[uid] = make(map[int32]struct{})
+//	Uid := batch.GetUID()
+//	if _, e := manager.failedAttempts[Uid]; !e {
+//		manager.failedAttempts[Uid] = make(map[int32]struct{})
 //	}
-//	manager.failedAttempts[uid][inst] = struct{}{}
+//	manager.failedAttempts[Uid][inst] = struct{}{}
 //}
 //
 //// is this after or before
-//func (manager *HedgedBetsBatchManager) learnOfBallotValue(pbk *proposalmanager.PBK, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
+//func (manager *HedgedBetsBatchManager) learnOfBallotValue(pbk *proposer.PBK, inst int32, ballot stdpaxosproto.Ballot, whoseCmds int32) {
 //	// consider the instance preempted?
 //	if pbk.ClientProposals == nil {
 //		return
 //	}
-//	if whoseCmds == manager.id {
+//	if whoseCmds == manager.Id {
 //		return
 //	}
-//	if pbk.Status == proposalmanager.NOT_BEGUN || pbk.Status == proposalmanager.CLOSED || pbk.Status == proposalmanager.PROPOSING {
+//	if pbk.Status == proposer.NOT_BEGUN || pbk.Status == proposer.CLOSED || pbk.Status == proposer.PROPOSING {
 //		return
 //	}
-//	dlog.AgentPrintfN(manager.id, "Encountered accepted value in instance %d, whose value %d from ballot %d.%d when attempting batch with UID %d",
+//	dlog.AgentPrintfN(manager.Id, "Encountered accepted value in instance %d, whose value %d from ballot %d.%d when attempting batch with UID %d",
 //		inst, whoseCmds, ballot.Number, ballot.PropID, pbk.ClientProposals.GetUID())
 //	batch, attempted := manager.attemptedBatches[inst]
 //	if !attempted {
@@ -346,34 +343,34 @@ type ValueSelector interface {
 //	return len(manager.chosen[batch.GetUID()]) == 0 && manager.isAllAccountedFor(batch)
 //}
 //
-//func (manager *HedgedBetsBatchManager) valueChosen(pbk *proposalmanager.PBK, inst int32, whoseCmds int32, cmds []*state.Command) {
-//	if pbk.WhoseCmds == manager.id && pbk.ClientProposals == nil {
+//func (manager *HedgedBetsBatchManager) valueChosen(pbk *proposer.PBK, inst int32, whoseCmds int32, Cmds []*state.Command) {
+//	if pbk.WhoseCmds == manager.Id && pbk.ClientProposals == nil {
 //		panic("client values chosen but we won't recognise that")
 //	}
-//	dlog.AgentPrintfN(manager.id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
+//	dlog.AgentPrintfN(manager.Id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
 //	batchProposed := pbk.ClientProposals
-//	whatHappened := whatHappenedToClientProposals(pbk, whoseCmds, manager.id)
+//	whatHappened := whatHappenedToClientProposals(pbk, whoseCmds, manager.Id)
 //
 //	batch, attempted := manager.attemptedBatches[inst]
 //	if !attempted {
 //		return
 //	}
-//	uid := batch.GetUID()
+//	Uid := batch.GetUID()
 //	if whatHappened == NotProposed {
 //		manager.markedFailed(inst, batch)
 //	}
 //	if whatHappened == ProposedButNotChosen {
-//		dlog.AgentPrintfN(manager.id, "%d client value(s) proposed in instance %d not chosen", len(batchProposed.GetCmds()), inst)
+//		dlog.AgentPrintfN(manager.Id, "%d client value(s) proposed in instance %d not chosen", len(batchProposed.GetCmds()), inst)
 //		manager.markedFailed(inst, batch)
 //		pbk.ClientProposals = nil
 //	}
 //
 //	if whatHappened == ProposedAndChosen {
-//		dlog.AgentPrintfN(manager.id, "%d client value(s) chosen in instance %d", len(batchProposed.GetCmds()), inst)
-//		if _, e := manager.chosen[uid]; !e {
-//			manager.chosen[uid] = make(map[int32]struct{})
+//		dlog.AgentPrintfN(manager.Id, "%d client value(s) chosen in instance %d", len(batchProposed.GetCmds()), inst)
+//		if _, e := manager.chosen[Uid]; !e {
+//			manager.chosen[Uid] = make(map[int32]struct{})
 //		}
-//		manager.chosen[uid][inst] = struct{}{}
+//		manager.chosen[Uid][inst] = struct{}{}
 //	}
 //
 //	if manager.shouldRequeue(batch) {
@@ -401,7 +398,7 @@ type ValueSelector interface {
 //		//	r.TimeseriesStats.Update("Times Previous Value ProposedBatch", 1)
 //		//	r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, inst}, pbk.PropCurBal, len(pbk.Cmds))
 //		//}
-//		dlog.AgentPrintfN(manager.id, "Proposing previous value from ballot %d.%d with whose command %d in instance %d at ballot %d.%d",
+//		dlog.AgentPrintfN(manager.Id, "Proposing previous value from ballot %d.%d with whose command %d in instance %d at ballot %d.%d",
 //			pbk.ProposeValueBal.Number, pbk.ProposeValueBal.PropID, pbk.WhoseCmds, inst, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 //		return true
 //	}
