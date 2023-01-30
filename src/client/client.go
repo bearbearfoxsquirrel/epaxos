@@ -150,7 +150,7 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 		//written := false
 		//atmts := 5
 		//for !written {
-		fmt.Fprintln(latencyRecorder.outputFile, fmt.Sprintf("%s %d", time.Now().Format("2006/01/02 15:04:05"), latencyMicroseconds))
+		latencyRecorder.outputFile.WriteString(fmt.Sprintf("%s %d\n", time.Now().Format("2006/01/02 15:04:05"), latencyMicroseconds))
 		//_, err := latencyRecorder.outputFile.WriteString()
 		//if err != nil {
 		//	if atmts > 0 {
@@ -245,7 +245,7 @@ func (benchmarker *ClientBenchmarker) timeseriesStep() {
 		//written := false
 		//atmts := 5
 		//for !written {
-		fmt.Fprintln(benchmarker.timeseriesStats.file, fmt.Sprintf("%s %s", time.Now().Format("2006/01/02 15:04:05"), benchmarker.timeseriesStats.String()))
+		benchmarker.timeseriesStats.file.WriteString(fmt.Sprintf("%s %s\n", time.Now().Format("2006/01/02 15:04:05"), benchmarker.timeseriesStats.String()))
 		//	if err != nil {
 		//		if atmts > 0 {
 		//			atmts -= 1
