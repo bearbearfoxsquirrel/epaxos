@@ -147,20 +147,20 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 	}
 
 	if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
-		written := false
-		atmts := 5
-		for !written {
-			_, err := fmt.Fprintln(latencyRecorder.outputFile, fmt.Sprintf("%s %d", time.Now().Format("2006/01/02 15:04:05"), latencyMicroseconds))
-			//_, err := latencyRecorder.outputFile.WriteString()
-			if err != nil {
-				if atmts > 0 {
-					atmts -= 1
-					continue
-				}
-				panic("Error writing value")
-			}
-			written = true
-		}
+		//written := false
+		//atmts := 5
+		//for !written {
+		fmt.Fprintln(latencyRecorder.outputFile, fmt.Sprintf("%s %d", time.Now().Format("2006/01/02 15:04:05"), latencyMicroseconds))
+		//_, err := latencyRecorder.outputFile.WriteString()
+		//if err != nil {
+		//	if atmts > 0 {
+		//		atmts -= 1
+		//		continue
+		//	}
+		//	panic("Error writing value")
+		//}
+		//written = true
+		//}
 		latencyRecorder.numLatenciesLeft--
 
 	}
@@ -242,19 +242,19 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
 	if benchmarker.timeseriesStats.file != nil {
-		written := false
-		atmts := 5
-		for !written {
-			_, err := fmt.Fprintln(benchmarker.timeseriesStats.file, fmt.Sprintf("%s %s", time.Now().Format("2006/01/02 15:04:05"), benchmarker.timeseriesStats.String()))
-			if err != nil {
-				if atmts > 0 {
-					atmts -= 1
-					continue
-				}
-				panic("Error writing value")
-			}
-			written = true
-		}
+		//written := false
+		//atmts := 5
+		//for !written {
+		fmt.Fprintln(benchmarker.timeseriesStats.file, fmt.Sprintf("%s %s", time.Now().Format("2006/01/02 15:04:05"), benchmarker.timeseriesStats.String()))
+		//	if err != nil {
+		//		if atmts > 0 {
+		//			atmts -= 1
+		//			continue
+		//		}
+		//		panic("Error writing value")
+		//	}
+		//	written = true
+		//}
 	} else {
 		log.Println(benchmarker.timeseriesStats.String())
 	}
