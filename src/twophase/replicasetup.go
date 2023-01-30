@@ -29,8 +29,10 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	mappedProposers bool, dynamicMappedProposers bool, bcastAcceptance bool, mappedProposersNum int32,
 	instsToOpenPerBatch int32, doEager bool, sendFastestQrm bool, useGridQrms bool, minimalAcceptors bool,
 	minimalAcceptorNegatives bool, prewriteAcceptor bool, doPatientProposals bool, sendFastestAccQrm bool, forwardInduction bool,
-	forwardingInstances int32, q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool, disklessNOOP bool,
-	forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32, inductiveConfs bool) *Replica {
+	doChosenFWI bool, doValueFWI bool, doLatePropsFWI bool,
+	forwardingInstances int32, q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool,
+	disklessNOOP bool, forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32,
+	inductiveConfs bool) *Replica {
 
 	r := &Replica{
 		bcastAcceptDisklessNOOP:      bcastAcceptDisklessNoop,
@@ -279,7 +281,8 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 
 	ReplicaProposerSetup(r.Id, int32(r.F), int32(r.N), instancequormaliser, maxOpenInstances, minBackoff,
 		maxInitBackoff, maxBackoff, factor, softFac, constBackoff, minimalProposers, timeBasedBallots, mappedProposers,
-		dynamicMappedProposers, mappedProposersNum, pam, pamloc, doEager, forwardInduction, forwardingInstances,
+		dynamicMappedProposers, mappedProposersNum, pam, pamloc, doEager, forwardInduction,
+		doChosenFWI, doValueFWI, doLatePropsFWI, forwardingInstances,
 		eagerByExec, eagerByExecFac, r, batchSize, inductiveConfs)
 
 	r.Durable = durable
@@ -326,8 +329,9 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumaliser proposer.ProposerInstanceQuorumaliser,
 	maxOpenInstances int32, minBackoff int32, maxInitBackoff int32, maxBackoff int32, factor float64, softFac bool,
 	constBackoff bool, minimalProposers bool, timeBasedBallots bool, mappedProposers bool, dynamicMappedProposers bool,
-	mappedProposersNum int32, pam bool, pamloc string, doEager bool, doEagerFI bool, forwardingInstances int32,
-	eagerByExec bool, eagerByExecFac float32, replica *Replica, maxBatchSize int, inductiveConfs bool) {
+	mappedProposersNum int32, pam bool, pamloc string, doEager bool, doEagerFI bool, doChosenFWI bool, doValueFWI bool,
+	doLatePropFWI bool, forwardingInstances int32, eagerByExec bool, eagerByExecFac float32, replica *Replica,
+	maxBatchSize int, inductiveConfs bool) {
 
 	replica.ProposerInstanceQuorumaliser = proposerInstanceQuorumaliser
 	pids := make([]int32, n)
@@ -392,6 +396,9 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 			CrtInstance:           -1,
 			InducedUpTo:           -1,
 			Induced:               make(map[int32]map[int32]stdpaxosproto.Ballot),
+			DoChosenFWI:           doChosenFWI,
+			DoValueFWI:            doValueFWI,
+			DoLateProposalFWI:     doLatePropFWI,
 			Id:                    id,
 			N:                     n,
 			SingleInstanceManager: instanceManager,

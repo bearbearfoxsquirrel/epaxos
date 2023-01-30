@@ -2,7 +2,6 @@ package main
 
 import (
 	"epaxos/bindings"
-	"epaxos/dlog"
 	"epaxos/genericsmrproto"
 	"errors"
 	"flag"
@@ -102,6 +101,10 @@ func (stats *TimeseriesStats) reset() {
 }
 
 func (stats *TimeseriesStats) close() {
+	if stats.file == nil {
+		return
+	}
+	stats.file.Sync()
 	stats.file.Close()
 }
 
@@ -116,6 +119,10 @@ type LatencyRecorder struct {
 }
 
 func (latencyRecorder *LatencyRecorder) close() {
+	if latencyRecorder.outputFile == nil {
+		return
+	}
+	latencyRecorder.outputFile.Sync()
 	latencyRecorder.outputFile.Close()
 }
 
@@ -133,16 +140,26 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 		break
 	case <-latencyRecorder.stopRecording:
 		latencyRecorder.shouldRecord = false
+		//latencyRecorder.outputFile.Sync()
 		break
 	default:
 		break
 	}
 
 	if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
-		_, err := latencyRecorder.outputFile.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + fmt.Sprintf("%d\n", latencyMicroseconds))
-		if err != nil {
-			dlog.Println("Error writing value")
-			return
+		written := false
+		atmts := 5
+		for !written {
+			_, err := fmt.Fprintln(latencyRecorder.outputFile, fmt.Sprintf("%s %d", time.Now().Format("2006/01/02 15:04:05"), latencyMicroseconds))
+			//_, err := latencyRecorder.outputFile.WriteString()
+			if err != nil {
+				if atmts > 0 {
+					atmts -= 1
+					continue
+				}
+				panic("Error writing value")
+			}
+			written = true
 		}
 		latencyRecorder.numLatenciesLeft--
 
@@ -150,9 +167,6 @@ func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
 }
 
 func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToRecord int, timeLatenciesRecording time.Duration) LatencyRecorder {
-	//if numLatenciesToRecord <= 0 -1 && timeLatenciesRecording <= 0 {
-	//	return LatencyRecorder{}
-	//}
 	file, err := os.Create(outputFileLoc)
 	if err != nil {
 		panic("Cannot open latency recording output file at location")
@@ -192,7 +206,6 @@ func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, re
 		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord, timeLatenciesRecording),
 		clientID:             clientID,
 	}
-
 	return benchmarker
 }
 
@@ -211,7 +224,6 @@ func (benchmarker *ClientBenchmarker) register(value ClientValue) bool {
 		return false
 	}
 	benchmarker.valueSubmissionTimes[value.uid] = time.Now()
-
 	return true
 }
 
@@ -230,7 +242,19 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
 	if benchmarker.timeseriesStats.file != nil {
-		benchmarker.timeseriesStats.file.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + benchmarker.timeseriesStats.String() + "\n")
+		written := false
+		atmts := 5
+		for !written {
+			_, err := fmt.Fprintln(benchmarker.timeseriesStats.file, fmt.Sprintf("%s %s", time.Now().Format("2006/01/02 15:04:05"), benchmarker.timeseriesStats.String()))
+			if err != nil {
+				if atmts > 0 {
+					atmts -= 1
+					continue
+				}
+				panic("Error writing value")
+			}
+			written = true
+		}
 	} else {
 		log.Println(benchmarker.timeseriesStats.String())
 	}
@@ -333,6 +357,7 @@ func main() {
 	shutdown := false
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, os.Kill)
+
 	for !shutdown {
 		select {
 		case <-interrupt:

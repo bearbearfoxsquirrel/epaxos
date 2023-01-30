@@ -139,6 +139,9 @@ var disklessnoops = flag.Bool("disklessnoops", false, "Use diskless noops")
 var foceDisklessnoops = flag.Bool("fdisklessnoops", false, "Force diskless noops")
 
 var eagerFwInduction = flag.Bool("fwi", false, "Use forward induction for eager promise quorums")
+var doChosenFWI = flag.Bool("cfwi", false, "Do forward induction in response to chosen")
+var doValueFWI = flag.Bool("vfwi", false, "Do forward induction in response to value proposed")
+var doLatePropsFWI = flag.Bool("lfwi", false, "Do forward induction in response to late proposals")
 var forwardingInstances = flag.Int("fwinsts", 0, "How pipelined instances to induce forwards")
 var inductiveConfs = flag.Bool("ic", false, "Use inductive conflicts in baseline 2 phase algorithm")
 var doEager = flag.Bool("eager", false, "Use eager 2 phase paxos algorithm")
@@ -256,8 +259,9 @@ func main() {
 			*proactivepreempt, *batchingAcceptor, acceptorMaxBatchWait, *sendPreparesAllAcceptors, *minimalProposers,
 			*timeBasedBallots, *mappedProposers, *dynamicMappedProposers, *bcastAcceptance,
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *doEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
-			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, int32(*forwardingInstances), *q1, *bcastCommit, *nopreempt,
-			*pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops, *eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs)
+			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *doChosenFWI, *doValueFWI, *doLatePropsFWI,
+			int32(*forwardingInstances), *q1, *bcastCommit, *nopreempt, *pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops,
+			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs)
 		runnable = rep
 		rpc.Register(rep)
 		//}

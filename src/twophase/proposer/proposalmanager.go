@@ -213,8 +213,11 @@ func EagerManagerNew(manager InductiveConflictsManager, signal ExecOpenInstanceS
 type EagerFI struct {
 	CrtInstance int32
 
-	InducedUpTo int32
-	Induced     map[int32]map[int32]stdpaxosproto.Ballot // for each instance
+	InducedUpTo       int32
+	Induced           map[int32]map[int32]stdpaxosproto.Ballot // for each instance
+	DoChosenFWI       bool
+	DoValueFWI        bool
+	DoLateProposalFWI bool
 
 	Id int32
 	N  int32
@@ -333,9 +336,7 @@ func (manager *EagerFI) UpdateCurrentInstance(instsanceSpace *[]*PBK, inst int32
 		_, bot := manager.CheckAndHandleBackoff(i, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, lwcproto.ConfigBal{Config: -1, Ballot: stdpaxosproto.Ballot{Number: -1, PropID: -1}}, stdpaxosproto.PROMISE)
 		dlog.AgentPrintfN(manager.Id, "Backing off induced instance %d for %d microseconds", i, bot)
 	}
-
 	manager.CrtInstance = newcrt
-
 	dlog.AgentPrintfN(manager.Id, "Setting instance %d as current instance", manager.CrtInstance)
 }
 
@@ -402,27 +403,32 @@ func (manager *EagerFI) GetInducedInstances(instanceSpace *[]*PBK) int32 {
 
 // if closed and get new proposal then increment
 func (manager *EagerFI) UpdateChosenFI(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot) {
-	//if !manager.RelevantToCrtInstance(inst) {
-	//	return
-	//}
-	// only safe if using tcp?
-	//if manager.CrtInstance >= inst {
-	//	return
-	//}
-	//if pbk.Status == CLOSED {
-	//	return
-	//}
-	//pid := int32(ballot.PropID)
-	//if pid == manager.Id {
-	//	return
-	//}
-	//if _, e := manager.Induced[inst]; !e {
-	//	manager.Induced[inst] = make(map[int32]stdpaxosproto.Ballot)
-	//}
-	//if _, e := manager.Induced[inst][pid]; e {
-	//	return
-	//}
-	//manager.Induce(pid, inst, ballot, "it was chosen")
+	if !manager.DoChosenFWI {
+		return
+	}
+	if !manager.RelevantToNextStartingInstance(inst) {
+		return
+	}
+	if manager.CrtInstance >= inst {
+		return
+	}
+	if pbk.Status == CLOSED {
+		return
+	}
+	if pbk.Status == BACKING_OFF && !pbk.MaxKnownBal.IsZero() {
+		return // don't induce after signalling to start new instance
+	}
+	pid := int32(ballot.PropID)
+	if pid == manager.Id {
+		return
+	}
+	if _, e := manager.Induced[inst]; !e {
+		manager.Induced[inst] = make(map[int32]stdpaxosproto.Ballot)
+	}
+	if _, e := manager.Induced[inst][pid]; e {
+		return
+	}
+	manager.Induce(pid, inst, ballot, "it was chosen")
 }
 
 func (manager *EagerFI) Induce(pid int32, inst int32, ballot stdpaxosproto.Ballot, because string) {
@@ -436,30 +442,37 @@ func (manager *EagerFI) Induce(pid int32, inst int32, ballot stdpaxosproto.Ballo
 	dlog.AgentPrintfN(manager.Id, "Inducing forward proposer %d from instance %d at ballot %d.%d because %s", pid, inst, ballot.Number, ballot.PropID, because)
 }
 
-func (manager *EagerFI) RelevantToCrtInstance(inst int32) bool {
-	return manager.CrtInstance <= inst+manager.Forwarding
+func (manager *EagerFI) RelevantToNextStartingInstance(inst int32) bool {
+	return manager.CrtInstance+1 >= inst-(manager.Forwarding*manager.N)
 }
 
 func (manager *EagerFI) UpdateValueFI(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot) {
-	// only safe if using tcp?
-	//if !manager.RelevantToCrtInstance(inst) {
-	//	return
-	//}
-	//pid := int32(ballot.PropID)
-	//
-	//if pid == manager.Id {
-	//	return
-	//}
-	//if ballot.IsZero() {
-	//	return
-	//}
-	//if _, e := manager.Induced[inst]; !e {
-	//	manager.Induced[inst] = make(map[int32]stdpaxosproto.Ballot)
-	//}
-	//if _, e := manager.Induced[inst][pid]; e {
-	//	return
-	//}
-	//manager.Induce(pid, inst, ballot, "a value was proposed to it")
+	if !manager.DoValueFWI {
+		return
+	}
+	if !manager.RelevantToNextStartingInstance(inst) {
+		return
+	}
+	pid := int32(ballot.PropID)
+
+	if pid == manager.Id {
+		return
+	}
+	if ballot.IsZero() {
+		return
+	}
+
+	if pbk.Status == BACKING_OFF && !pbk.MaxKnownBal.IsZero() { //.GreaterThan(pbk.PropCurBal) {
+		return // don't induce after signalling to start new instance
+	}
+
+	if _, e := manager.Induced[inst]; !e {
+		manager.Induced[inst] = make(map[int32]stdpaxosproto.Ballot)
+	}
+	if _, e := manager.Induced[inst][pid]; e {
+		return
+	}
+	manager.Induce(pid, inst, ballot, "a value was proposed to it")
 	//dlog.AgentPrintfN(manager.Id, "Iduced cus of value")
 }
 
@@ -472,7 +485,7 @@ func (manager *EagerFI) GetPreempted(pbk *PBK, bal stdpaxosproto.Ballot) (int32,
 
 // (Inducing|Starting new|Received a (Prepare|Accept))
 func (manager *EagerFI) UpdateProposalFI(pbk *PBK, inst int32, ballot stdpaxosproto.Ballot) {
-	//if !manager.RelevantToCrtInstance(inst) {
+	//if !manager.RelevantToNextStartingInstance(inst) {
 	//	return
 	//}
 	if ballot.IsZero() || pbk.MaxKnownBal.Ballot.IsZero() {
@@ -485,22 +498,29 @@ func (manager *EagerFI) UpdateProposalFI(pbk *PBK, inst int32, ballot stdpaxospr
 		return
 	}
 
-	if pbk.Status == CLOSED {
-		//return
-		//only safe if tcp
-		//_, priorInduced := manager.Induced[inst][int32(ballot.PropID)]
-		//if priorInduced {
-		//	return
-		//}
-		//manager.Induce(int32(ballot.PropID), inst, ballot, "it is already chosen")
-		return
-	}
 	if pbk.Status == BACKING_OFF && pbk.MaxKnownBal.GreaterThan(pbk.PropCurBal) {
 		return // don't induce after signalling to start new instance
 	}
+
 	if _, e := manager.Induced[inst]; !e {
 		manager.Induced[inst] = make(map[int32]stdpaxosproto.Ballot)
 	}
+	if pbk.Status == CLOSED {
+		if !manager.DoLateProposalFWI {
+			return
+		}
+		//return
+		_, priorInduced := manager.Induced[inst][int32(ballot.PropID)]
+		if priorInduced {
+			return
+		}
+		manager.Induce(int32(ballot.PropID), inst, ballot, "it is already chosen")
+		return
+	}
+	//if pbk.Status == BACKING_OFF && pbk.MaxKnownBal.GreaterThan(pbk.PropCurBal) {
+	//	return // don't induce after signalling to start new instance
+	//}
+
 	preemptedPiD, bal := manager.GetPreempted(pbk, ballot)
 	if preemptedPiD == manager.Id {
 		return

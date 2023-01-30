@@ -87,18 +87,12 @@ type Replica struct {
 	proposer.Executor
 	learner.Learner
 
-	//proposer.CrtInstanceOracle
 	ProposeBatchOracle
-
-	//balloter *balloter2.Balloter
 
 	proposer.Proposer
 	proposer.ProposerInstanceQuorumaliser
 	proposer.LearnerQuorumaliser
 	proposer.AcceptorQrmInfo
-
-	//batchLearners []MyBatchLearner
-	//noopLearners  []proposer.NoopLearner
 
 	*genericsmr.Replica           // extends a generic Paxos replica
 	configChan                    chan fastrpc.Serializable
@@ -122,7 +116,7 @@ type Replica struct {
 	flush                         bool
 	maxBatchWait                  int
 	crtOpenedInstances            []int32
-	proposableInstances           chan struct{} //*time.Timer
+	proposableInstances           chan struct{}
 	noopWaitUs                    int32
 	RetryInstance                 chan proposer.RetryInfo
 	alwaysNoop                    bool
@@ -161,22 +155,18 @@ type Replica struct {
 	AcceptResponsesRPC
 	batchProposedObservers []ProposedObserver
 	proposedBatcheNumber   map[int32]int32
-	//doPatientProposals     bool
-	//patientProposals
-	//startInstanceSig   chan struct{}
-	//doEager            bool
-	promiseLeases      chan acceptor.PromiseLease
-	classesLeased      map[int32]stdpaxosproto.Ballot
-	iWriteAhead        int32
-	writeAheadAcceptor bool
-	tryInitPropose     chan proposer.RetryInfo
-	sendFastestQrm     bool
-	nudge              chan chan batching.ProposalBatch
-	bcastCommit        bool
-	nopreempt          bool
-	bcastAcceptance    bool
-	syncAcceptor       bool
-	disklessNOOP       bool
+	promiseLeases          chan acceptor.PromiseLease
+	classesLeased          map[int32]stdpaxosproto.Ballot
+	iWriteAhead            int32
+	writeAheadAcceptor     bool
+	tryInitPropose         chan proposer.RetryInfo
+	sendFastestQrm         bool
+	nudge                  chan chan batching.ProposalBatch
+	bcastCommit            bool
+	nopreempt              bool
+	bcastAcceptance        bool
+	syncAcceptor           bool
+	disklessNOOP           bool
 
 	disklessNOOPPromisesAwaiting map[int32]chan struct{}
 	disklessNOOPPromises         map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}
@@ -189,10 +179,9 @@ type Replica struct {
 	noops                       int
 	resetTo                     chan time.Duration
 	noopCancel                  chan struct{}
-	//execSig                     proposer.ExecOpenInstanceSignal
-	bcastAcceptDisklessNOOP bool
-	maxLearnt               int32
-	maxValueInst            int32
+	bcastAcceptDisklessNOOP     bool
+	maxLearnt                   int32
+	maxValueInst                int32
 }
 
 func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot) bool {
@@ -288,7 +277,6 @@ func (r *Replica) run() {
 	go r.WaitForClientConnections()
 
 	fastClockChan = make(chan bool, 1)
-
 	doner := make(chan struct{})
 	if r.Id == r.whoCrash {
 		go func() {
@@ -300,7 +288,6 @@ func (r *Replica) run() {
 
 	startGetEvent := time.Now()
 	doWhat := ""
-
 	startEvent := time.Now()
 	endEvent := time.Now()
 	startInstSig := r.Proposer.GetStartInstanceSignaller()
@@ -353,9 +340,9 @@ func (r *Replica) run() {
 		case clientRequest := <-r.ProposeChan:
 			startEvent = time.Now()
 			doWhat = "handle client request"
-
 			r.ClientBatcher.AddProposal(clientRequest, r.ProposeChan)
 			if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
+				dlog.AgentPrintfN(r.Id, "No instances to propose to propose batch to")
 				break
 			}
 			min := r.instanceProposeValueTimeout.getMinimumSleepingInstance()
@@ -458,7 +445,7 @@ func (man *InstanceProposeValueTimeout) getMinimumSleepingInstance() int32 {
 		min = inst
 	}
 	if min == int32(math.MaxInt32) {
-		panic("asldfjdslk")
+		panic("No sleeping batches found")
 	}
 	return min
 }
@@ -490,7 +477,6 @@ func (r *Replica) beginNextInstance() {
 			r.bcastPrepare(i)
 			break
 		case proposer.READY_TO_PROPOSE:
-
 			// todo move to single instance manager
 			//dlog.AgentPrintfN(r.Id, "Starting fast track instance %d", i)
 			r.ProposerInstanceQuorumaliser.StartPromiseQuorumOnCurBal(pbk, i)
@@ -835,8 +821,6 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 		setProposingValue(pbk, accept.WhoseCmd, accept.Ballot, accept.Command)
 	}
 
-	r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, accept.WhoseCmd)
-	// todo change with ballot value <- still safe rn cause accepted proposers do not affect safety but would be better interface design
 	if r.Proposer.LearnOfBallot(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, stdpaxosproto.ACCEPTANCE) {
 		pCurBal := r.instanceSpace[accept.Instance].PropCurBal
 		r.noLongerSleepingInstance(accept.Instance)
@@ -845,6 +829,8 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 				accept.PropID, accept.Instance, accept.Number, accept.PropID, pCurBal.Number, pCurBal.PropID)
 		}
 	}
+	r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, accept.WhoseCmd)
+	// todo change with ballot value <- still safe rn cause accepted proposers do not affect safety but would be better interface design
 
 	if accept.LeaderId == -2 {
 		dlog.AgentPrintfN(r.Id, "Not passing Accept for instance %d at ballot %d.%d to acceptor as we are passive observers", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID)
