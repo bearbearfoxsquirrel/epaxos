@@ -154,15 +154,15 @@ func acceptorHandleAcceptLocal(id int32, accptr acceptor.Acceptor, accept *stdpa
 			return
 			//	panic("Not got an acceptance back")
 		}
-		areply := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
-		if bcastAcceptance || accept.LeaderId == -3 {
-			dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
-			if replica.UDP {
-				bcastAcceptanceUDP(replica, areply, rpc.AcceptReply, id)
-			} else {
-				bcastAcceptanceTCP(replica, areply, rpc.AcceptReply, id)
-			}
-		}
+		//areply := msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
+		//if bcastAcceptance || accept.LeaderId == -3 {
+		//	dlog.AgentPrintfN(id, "Sending Acceptance of instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+		//	if replica.UDP {
+		//		bcastAcceptanceUDP(replica, areply, rpc.AcceptReply, id)
+		//	} else {
+		//		bcastAcceptanceTCP(replica, areply, rpc.AcceptReply, id)
+		//	}
+		//}
 		acceptanceChan <- msg.GetSerialisable().(*stdpaxosproto.AcceptReply)
 	}()
 }
@@ -201,16 +201,16 @@ func acceptorHandleAcceptResponse(responseC <-chan acceptor.Message, rpc AcceptR
 			continue
 		}
 
-		if bcastAcceptance || (accept.LeaderId == -3 && bcastAcceptDisklessNOOP) {
-			dlog.AgentPrintfN(id, "Sending Acceptance for instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
-			if replica.UDP {
-				bcastAcceptanceUDP(replica, areply, rpc.AcceptReply, id)
-			} else {
-				bcastAcceptanceTCP(replica, areply, rpc.AcceptReply, id)
-			}
-			acceptanceChan <- areply
-			continue
-		}
+		//if bcastAcceptance || (accept.LeaderId == -3 && bcastAcceptDisklessNOOP) {
+		//	dlog.AgentPrintfN(id, "Sending Acceptance for instance %d with current ballot %d.%d and whose commands %d to all replicas", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID, accept.WhoseCmd)
+		//	if replica.UDP {
+		//		bcastAcceptanceUDP(replica, areply, rpc.AcceptReply, id)
+		//	} else {
+		//		bcastAcceptanceTCP(replica, areply, rpc.AcceptReply, id)
+		//	}
+		//	acceptanceChan <- areply
+		//	continue
+		//}
 
 		if replica.UDP {
 			replica.SendUDPMsg(resp.ToWhom(), resp.GetType(), areply, true)
