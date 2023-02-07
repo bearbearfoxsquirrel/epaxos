@@ -199,6 +199,10 @@ type BcastFastLearning struct {
 	AcceptSelfSender
 }
 
+func NewBcastFastLearning(acceptRPC uint8, commitShortRPC uint8, id int32, n int32, aids []int32, acceptorQrmInfo proposer.AcceptorQrmInfo, sendQrmSize SendQrmSize, listSender ListSender, acceptSelfSender AcceptSelfSender) *BcastFastLearning {
+	return &BcastFastLearning{acceptRPC: acceptRPC, commitShortRPC: commitShortRPC, id: id, n: n, aids: aids, AcceptorQrmInfo: acceptorQrmInfo, SendQrmSize: sendQrmSize, ListSender: listSender, AcceptSelfSender: acceptSelfSender}
+}
+
 type SendQrmSize interface {
 	GetBcastNum() int
 }

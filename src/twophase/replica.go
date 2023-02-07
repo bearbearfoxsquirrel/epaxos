@@ -625,12 +625,9 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 		return
 	}
 
-	//if r.Learner.IsChosen(preply.Instance) && r.Learner.HasLearntValue(preply.Instance) {
-	//b, _, _ := r.Learner.GetChosen(preply.Instance)
-	//if preply.VBal.Equal(b) {
-	//	return
-	//}
-	// send commit
+	if learnerCheckChosen(r.Learner, preply.Instance, preply.Cur, "Prepare Reply", preply.AcceptorId, r.commitRPC, r.Replica, r.Id) {
+		return
+	}
 
 	if !preply.VBal.IsZero() {
 		r.UpdateMaxLearntInstance(preply.Instance)
@@ -868,6 +865,10 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	r.checkAndHandleNewlyReceivedInstance(areply.Instance, areply.Cur)
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveAcceptReplyFmt(areply))
 	pbk := r.instanceSpace[areply.Instance]
+
+	if learnerCheckChosen(r.Learner, areply.Instance, areply.Cur, "Accept Reply", areply.AcceptorId, r.commitRPC, r.Replica, r.Id) {
+		return
+	}
 
 	// PREEMPTED
 	if areply.Cur.GreaterThan(areply.Req) {
