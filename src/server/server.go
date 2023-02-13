@@ -151,6 +151,9 @@ var eagerByExecFac = flag.Float64("ebef", 1, "What factor to use for eager by ex
 
 var udp = flag.Bool("udp", false, "Use UDP (only available in two phase)")
 
+var proposeToCatchUp = flag.Bool("ptcu", false, "End noop wait early in 2p paxos to fill gaps in log faster")
+var openInstToCatchUp = flag.Bool("oitcp", false, "Open new instances to catch up with other proposers in mapped instances")
+
 func main() {
 
 	flag.Parse()
@@ -261,7 +264,7 @@ func main() {
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *doEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *doChosenFWI, *doValueFWI, *doLatePropsFWI,
 			int32(*forwardingInstances), *q1, *bcastCommit, *nopreempt, *pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops,
-			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs)
+			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs, *proposeToCatchUp, *openInstToCatchUp)
 		runnable = rep
 		rpc.Register(rep)
 		//}

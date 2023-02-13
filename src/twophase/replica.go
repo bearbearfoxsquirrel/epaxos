@@ -180,8 +180,9 @@ type Replica struct {
 	resetTo                     chan time.Duration
 	noopCancel                  chan struct{}
 	bcastAcceptDisklessNOOP     bool
-	maxLearnt                   int32
+	maxValueInstance            int32
 	maxValueInst                int32
+	proposeToCatchUp            bool
 }
 
 func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot) bool {
@@ -286,36 +287,29 @@ func (r *Replica) run() {
 		}()
 	}
 
-	startGetEvent := time.Now()
+	//startGetEvent := time.Now()
 	doWhat := ""
 	startEvent := time.Now()
 	endEvent := time.Now()
 	startInstSig := r.Proposer.GetStartInstanceSignaller()
 	for !r.Shutdown {
-		startGetEvent = time.Now()
+		//startGetEvent = time.Now()
 		select {
 		case <-r.proposableInstances:
 			startEvent = time.Now()
 			doWhat = "handle instance value proposing wait timeout"
 			dlog.AgentPrintfN(r.Id, "Value proposing wait for some instance(s) has timed out")
-			now := time.Now()
 			if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
 				break
 			}
-			instToProposeUpTo := int32(-1)
-			for i, t := range r.instanceProposeValueTimeout.sleepingInsts {
-				if instToProposeUpTo > i {
-					continue
-				}
-				if t.Add(r.noopWait).After(now) && r.maxLearnt < i {
-					// noop hasn't expired and there isn't any chosen values
-					continue
-				}
-				instToProposeUpTo = i
+			maxInstanceToProposeTo := r.maxSleepingInstanceWithNoopExpired()
+			if r.proposeToCatchUp && r.maxValueInstance > maxInstanceToProposeTo {
+				maxInstanceToProposeTo = r.maxValueInstance
 			}
+
 			//get point of where to go from then skip up to that
 			for i, _ := range r.instanceProposeValueTimeout.sleepingInsts {
-				if i > instToProposeUpTo {
+				if i > maxInstanceToProposeTo {
 					continue
 				}
 				pbk := r.instanceSpace[i]
@@ -325,7 +319,6 @@ func (r *Replica) run() {
 				dlog.AgentPrintfN(r.Id, "Rechecking whether to propose in instance %d", i)
 				r.noLongerSleepingInstance(i)
 				if pbk.Status != proposer.READY_TO_PROPOSE {
-					// remove
 					dlog.AgentPrintfN(r.Id, "Decided to not propose in instance %d as we are no longer on ballot %d.%d", i, pbk.PropCurBal.Number, pbk.PropCurBal.PropID)
 					continue
 				}
@@ -345,9 +338,14 @@ func (r *Replica) run() {
 				dlog.AgentPrintfN(r.Id, "No instances to propose to propose batch to")
 				break
 			}
-			min := r.instanceProposeValueTimeout.getMinimumSleepingInstance()
-			r.noLongerSleepingInstance(min)
-			r.tryPropose(min, 1)
+			for len(r.instanceProposeValueTimeout.sleepingInsts) > 0 {
+				min := r.instanceProposeValueTimeout.getMinimumSleepingInstance()
+				r.noLongerSleepingInstance(min)
+				if r.instanceSpace[min].Status != proposer.READY_TO_PROPOSE {
+					continue
+				}
+				r.tryPropose(min, 1)
+			}
 			break
 		case stateS := <-r.stateChan:
 			startEvent = time.Now()
@@ -431,9 +429,25 @@ func (r *Replica) run() {
 			break
 		}
 		endEvent = time.Now()
-		dlog.AgentPrintfN(r.Id, "It took %d µs to receive event %s", startEvent.Sub(startGetEvent).Microseconds(), doWhat)
+		//dlog.AgentPrintfN(r.Id, "It took %d µs to receive event %s", startEvent.Sub(startGetEvent).Microseconds(), doWhat)
 		dlog.AgentPrintfN(r.Id, "It took %d µs to %s", endEvent.Sub(startEvent).Microseconds(), doWhat)
 	}
+}
+
+func (r *Replica) maxSleepingInstanceWithNoopExpired() int32 {
+	maxInstanceToProposeTo := int32(-1)
+	now := time.Now()
+	for i, t := range r.instanceProposeValueTimeout.sleepingInsts {
+		if i < maxInstanceToProposeTo {
+			continue
+		}
+		noopNotTimedOut := t.Add(r.noopWait).After(now)
+		if noopNotTimedOut {
+			continue
+		}
+		maxInstanceToProposeTo = i
+	}
+	return maxInstanceToProposeTo
 }
 
 func (man *InstanceProposeValueTimeout) getMinimumSleepingInstance() int32 {
@@ -610,11 +624,14 @@ func (r *Replica) HandlePromise(preply *stdpaxosproto.PrepareReply) {
 //go func() {r.proposableInstances <- struct{}{}}()
 //}
 
-func (r *Replica) UpdateMaxLearntInstance(inst int32) {
-	if r.maxLearnt > inst {
+func (r *Replica) UpdateMaxValueInstance(inst int32) {
+	if r.maxValueInstance > inst {
 		return
 	}
-	r.maxLearnt = inst
+	r.maxValueInstance = inst
+	if !r.proposeToCatchUp {
+		return
+	}
 	go func() { r.proposableInstances <- struct{}{} }()
 }
 func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
@@ -630,7 +647,11 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	}
 
 	if !preply.VBal.IsZero() {
-		r.UpdateMaxLearntInstance(preply.Instance)
+		//if int32(preply.VBal.PropID) != r.Id {
+		//	r.UpdateMaxValueInstance(preply.Instance)
+		//}
+
+		r.UpdateMaxValueInstance(preply.Instance)
 		r.Learner.ProposalValue(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 		r.Learner.ProposalAccepted(preply.Instance, preply.VBal, preply.AcceptorId)
 		// todo make part of learn value
@@ -804,7 +825,7 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveAcceptFmt(accept))
 	//r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	r.Proposer.LearnOfBallot(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{-1, accept.Ballot}, stdpaxosproto.ACCEPTANCE)
-	r.UpdateMaxLearntInstance(accept.Instance)
+	r.UpdateMaxValueInstance(accept.Instance)
 	r.Learner.ProposalValue(accept.Instance, accept.Ballot, accept.Command, accept.WhoseCmd)
 	if r.Learner.IsChosen(accept.Instance) && r.Learner.HasLearntValue(accept.Instance) {
 		// tell proposer and acceptor of learnt
@@ -893,7 +914,7 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 
 func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
 	pbk := r.instanceSpace[inst]
-	r.UpdateMaxLearntInstance(inst)
+	r.UpdateMaxValueInstance(inst)
 	//r.UpdateValueMaxInstance(inst)
 	if pbk.Status == proposer.CLOSED {
 		return

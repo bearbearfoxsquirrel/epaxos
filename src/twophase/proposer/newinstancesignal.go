@@ -79,6 +79,7 @@ func (sig *SimpleSig) ballotShouldOpen(pbk *PBK, inst int32, ballot lwcproto.Con
 
 func (sig *SimpleSig) sigNextInst(inst int32) {
 	delete(sig.instsStarted, inst)
+	//dlog.AgentPrintfN(sig.id, "sigging %d", inst)
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
@@ -126,29 +127,29 @@ func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, 
 
 type EagerExecUpToSig struct {
 	EagerSig
-	n        float32
-	fac      float32
-	sigged   int32
-	crtInst  int32
-	execUpTo int32
+	n         float32
+	fac       float32
+	sigged    int32
+	myMaxInst int32
+	execUpTo  int32
 }
 
 func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32) *EagerExecUpToSig {
 	return &EagerExecUpToSig{
-		EagerSig: *eagerSig,
-		n:        n,
-		fac:      fac,
-		crtInst:  -1,
-		execUpTo: -1,
-		sigged:   eagerSig.MaxOpenInsts,
+		EagerSig:  *eagerSig,
+		n:         n,
+		fac:       fac,
+		myMaxInst: -1,
+		execUpTo:  -1,
+		sigged:    eagerSig.MaxOpenInsts,
 	}
 }
 
-func (sig *EagerExecUpToSig) updateCrtInst(inst int32) {
-	if sig.crtInst >= inst {
+func (sig *EagerExecUpToSig) updateMyMaxInst(inst int32) {
+	if sig.myMaxInst >= inst {
 		return
 	}
-	sig.crtInst = inst
+	sig.myMaxInst = inst
 }
 
 func (sig *EagerExecUpToSig) Opened(o []int32) {
@@ -156,7 +157,7 @@ func (sig *EagerExecUpToSig) Opened(o []int32) {
 		panic("No recorded signals to open")
 	}
 	for _, i := range o {
-		sig.updateCrtInst(i)
+		sig.updateMyMaxInst(i)
 	}
 	sig.SimpleSig.Opened(o)
 	sig.sigged -= int32(len(o))
@@ -170,89 +171,102 @@ func (sig *EagerExecUpToSig) sigNextInst(inst int32) {
 	sig.sigged += 1
 }
 
-func (manager *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-	manager.updateCrtInst(inst)
-	if !manager.ballotShouldOpen(pbk, inst, ballot, phase) {
-		return
-	}
-	manager.sigNextInst(inst)
+type ManualSignaller interface {
+	SignalNext()
 }
 
-func (manager *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-	manager.updateCrtInst(inst)
-	if !manager.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
+func (sig *EagerExecUpToSig) SignalNext() {
+	//sig.SimpleSig.sigNextInst(inst)
+	if sig.PipelineTooLong() {
 		return
 	}
-	manager.sigNextInst(inst)
+	sig.sigged += 1
+	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
-func (manager *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
-	manager.updateCrtInst(inst)
-	if _, e := manager.instsStarted[inst]; !e {
+func (sig *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+	//manager.updateMyMaxInst(inst)
+	if !sig.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
 	}
-	if int32(ballot.PropID) == manager.id {
-		if manager.PipelineTooLong() {
+	sig.sigNextInst(inst)
+}
+
+func (sig *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+	//manager.updateMyMaxInst(inst)
+	if !sig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
+		return
+	}
+	sig.sigNextInst(inst)
+}
+
+func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+	//manager.updateMyMaxInst(inst)
+	if _, e := sig.instsStarted[inst]; !e {
+		return
+	}
+	if int32(ballot.PropID) == sig.id {
+		if sig.PipelineTooLong() {
 			return
 		}
-		manager.sigNextInst(inst)
+		sig.sigNextInst(inst)
 		return
 	}
 
-	dlog.AgentPrintfN(manager.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
-	manager.sigNextInst(inst)
+	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
+	sig.sigNextInst(inst)
 }
 
-func (manager *EagerExecUpToSig) CheckExec(informer ExecInformer) {
-	if manager.execUpTo >= informer.GetExecutedUpTo() {
+func (sig *EagerExecUpToSig) CheckExec(informer ExecInformer) {
+	if sig.execUpTo >= informer.GetExecutedUpTo() {
 		return
 	}
-	manager.execUpTo = informer.GetExecutedUpTo()
-	dlog.AgentPrintfN(manager.id, "Checking whether to open up new instances")
-	if manager.PipelineTooLong() {
+	sig.execUpTo = informer.GetExecutedUpTo()
+	dlog.AgentPrintfN(sig.id, "Checking whether to open up new instances")
+	if sig.PipelineTooLong() {
 		return
 	}
 
-	if int32(len(manager.instsStarted)) > manager.MaxOpenInsts {
-		panic("too long")
-	}
+	//if int32(len(sig.instsStarted)) > sig.MaxOpenInsts {
+	//	panic("too long")
+	//}
 
-	for i, _ := range manager.instsStarted {
+	for i, _ := range sig.instsStarted {
 		if i > informer.GetExecutedUpTo() {
 			continue
 		}
-		delete(manager.instsStarted, i)
+		delete(sig.instsStarted, i)
 	}
-	toOpen := manager.MaxOpenInsts - (int32(len(manager.instsStarted)) + manager.sigged)
-	if toOpen+int32(len(manager.instsStarted))+manager.sigged > manager.MaxOpenInsts {
+	toOpen := sig.MaxOpenInsts - (int32(len(sig.instsStarted)) + sig.sigged)
+	if toOpen+int32(len(sig.instsStarted))+sig.sigged > sig.MaxOpenInsts {
 		panic("going to make a too long pipeline")
 	}
 	if toOpen <= 0 {
-		dlog.AgentPrintfN(manager.id, "Not opening up new instances as we have currently opened %d instances in the pipeline", len(manager.instsStarted))
+		dlog.AgentPrintfN(sig.id, "Not opening up new instances as we have currently opened %d instances in the pipeline", len(sig.instsStarted))
 		return
 	}
 
 	//manager.sigged += toOpen
 
-	dlog.AgentPrintfN(manager.id, "Signalling to open %d new instance(s) as executed instance has caught up with current", toOpen)
-	manager.sigged += toOpen
+	dlog.AgentPrintfN(sig.id, "Signalling to open %d new instance(s) as executed instance has caught up with current", toOpen)
+	sig.sigged += toOpen
 	go func(toOpen int32) {
 		for i := int32(0); i < toOpen; i++ {
-			manager.sigNewInst <- struct{}{}
+			sig.sigNewInst <- struct{}{}
 		}
 	}(toOpen)
 }
 
-func (manager *EagerExecUpToSig) PipelineTooLong() bool {
-	if manager.crtInst >= manager.GetMaxPipelineLen() {
-		dlog.AgentPrintfN(manager.id, "Not opening up new instances as executed instance %d hasn't caught up with current instance %d", manager.execUpTo, manager.crtInst)
+func (sig *EagerExecUpToSig) PipelineTooLong() bool {
+	if sig.myMaxInst >= sig.GetMaxPipelineLen() {
+		dlog.AgentPrintfN(sig.id, "Not opening up new instances as executed instance %d hasn't caught up with current instance %d", sig.execUpTo, sig.myMaxInst)
 		return true
 	}
 	return false
 }
 
-func (manager *EagerExecUpToSig) GetMaxPipelineLen() int32 {
-	return manager.execUpTo + int32(float32(manager.MaxOpenInsts)*manager.n*manager.fac)
+func (sig *EagerExecUpToSig) GetMaxPipelineLen() int32 {
+	return sig.execUpTo + int32(float32(sig.MaxOpenInsts)*sig.n*sig.fac)
 }
 
 type EagerSig struct {

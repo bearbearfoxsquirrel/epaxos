@@ -28,7 +28,8 @@ func AgentPrintfN(aid int32, format string, v ...interface{}) {
 	//	return
 	//}
 	str := strings.Builder{}
-	str.WriteString(fmt.Sprintf("%s, %d, Agent %d, ", time.Now().Format(".000"), time.Now().UnixNano(), aid))
+	str.WriteString(fmt.Sprintf("%s, %d, Agent %d, \"", time.Now().Format(".000"), time.Now().UnixNano(), aid))
 	str.WriteString(fmt.Sprintf(format, v...))
+	str.WriteString("\"")
 	log.Printf(str.String())
 }

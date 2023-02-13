@@ -32,7 +32,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	doChosenFWI bool, doValueFWI bool, doLatePropsFWI bool,
 	forwardingInstances int32, q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool,
 	disklessNOOP bool, forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32,
-	inductiveConfs bool) *Replica {
+	inductiveConfs bool, proposeToCatchUp bool, openInstToCatchUp bool) *Replica {
 
 	r := &Replica{
 		bcastAcceptDisklessNOOP:      bcastAcceptDisklessNoop,
@@ -283,7 +283,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		maxInitBackoff, maxBackoff, factor, softFac, constBackoff, minimalProposers, timeBasedBallots, mappedProposers,
 		dynamicMappedProposers, mappedProposersNum, pam, pamloc, doEager, forwardInduction,
 		doChosenFWI, doValueFWI, doLatePropsFWI, forwardingInstances,
-		eagerByExec, eagerByExecFac, r, batchSize, inductiveConfs)
+		eagerByExec, eagerByExecFac, r, batchSize, inductiveConfs, proposeToCatchUp, openInstToCatchUp)
 
 	r.Durable = durable
 
@@ -334,13 +334,15 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	constBackoff bool, minimalProposers bool, timeBasedBallots bool, mappedProposers bool, dynamicMappedProposers bool,
 	mappedProposersNum int32, pam bool, pamloc string, doEager bool, doEagerFI bool, doChosenFWI bool, doValueFWI bool,
 	doLatePropFWI bool, forwardingInstances int32, eagerByExec bool, eagerByExecFac float32, replica *Replica,
-	maxBatchSize int, inductiveConfs bool) {
+	maxBatchSize int, inductiveConfs bool, proposeToCatchUp bool, OpenInstToCatchUp bool) {
 
 	replica.ProposerInstanceQuorumaliser = proposerInstanceQuorumaliser
 	pids := make([]int32, n)
 	for i := range pids {
 		pids[i] = int32(i)
 	}
+
+	replica.proposeToCatchUp = proposeToCatchUp
 
 	retrySig := make(chan proposer.RetryInfo, maxOpenInstances*n)
 	replica.RetryInstance = retrySig
@@ -433,7 +435,7 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		ExecOpenInstanceSignal: eagerProposer.GetExecSignaller(),
 	}
 
-	if !pam || mappedProposers || dynamicMappedProposers {
+	if !pam && !mappedProposers && !dynamicMappedProposers {
 		replica.Proposer = eagerProposer
 		return
 	}
@@ -442,10 +444,6 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	//baselineProposer.BallotOpenInstanceSignal = ballotInstSig
 	//NewLoLProposer(BaselineProposerNew(r.Id, openInstSig, ballotInstSig, instanceManager, backoffManager, r.startInstanceSig), int32(r.N), r.startInstanceSig)
 
-	if !pam && !mappedProposers {
-		return
-	}
-
 	if doEagerFI {
 		panic("eager fi and pam not yet implemented")
 	}
@@ -453,7 +451,7 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	//PROPOSER QUORUMS
 	var agentMapper instanceagentmapper.InstanceAgentMapper
 	if mappedProposers {
-		agentMapper = &instanceagentmapper.DetRandInstanceSetMapper{
+		agentMapper = &instanceagentmapper.LoadBalancingSetMapper{
 			Ids: pids,
 			G:   mappedProposersNum,
 			N:   n,
@@ -463,11 +461,13 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		pamap := instanceagentmapper.ReadFromFile(pamloc)
 		pmap := instanceagentmapper.GetPMap(pamap)
 		agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: pmap}
+
+		//todo add subseting based on minimal mapped proposers to a fault group
 	} else {
 		panic("invalid options")
 	}
 
-	pamProposer := proposer.MappedProposersProposalManagerNew(openInstanceSig, eagerProposer.(*proposer.Eager), instanceManager, agentMapper)
+	pamProposer := proposer.MappedProposersProposalManagerNew(eESig, eagerProposer.(*proposer.Eager), instanceManager, agentMapper, OpenInstToCatchUp)
 	replica.Proposer = pamProposer
 
 	// todo add eager fi pam proposer

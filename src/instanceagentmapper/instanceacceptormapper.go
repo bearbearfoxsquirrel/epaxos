@@ -1,6 +1,7 @@
 package instanceagentmapper
 
 import (
+	"log"
 	"math/rand"
 )
 
@@ -32,6 +33,29 @@ type DetRandInstanceSetMapper struct {
 	Ids []int32
 	G   int32
 	N   int32
+}
+
+type LoadBalancingSetMapper struct {
+	Ids []int32
+	G   int32
+	N   int32
+}
+
+//func remove(slice []int32, s int) []int32 {
+//	return append(slice[:s], slice[s+1:]...)
+//}
+
+func (mapper *LoadBalancingSetMapper) GetGroup(inst int32) []int32 {
+	insti := int(inst)
+	c := make([]int32, len(mapper.Ids))
+	copy(c, mapper.Ids)
+	group := make([]int32, 0, mapper.G)
+	for i := 0; i < int(mapper.G); i++ {
+		group = append(group, c[insti%len(c)])
+		c = remove(c, int32(insti%len(c)))
+	}
+	log.Println("got group for instance", inst, "group is", group, "from ids", mapper.Ids)
+	return group
 }
 
 func (mapper *DetRandInstanceSetMapper) GetGroup(inst int32) []int32 {

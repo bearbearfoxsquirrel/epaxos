@@ -713,15 +713,19 @@ type StaticMappedProposalManager struct {
 	SingleInstanceManager
 	*Eager
 	instanceagentmapper.InstanceAgentMapper
-	newInstSig chan<- struct{}
+	ManualSignaller
+	openInstToCatchUp bool
+	//newInstSig chan<- struct{}
 }
 
-func MappedProposersProposalManagerNew(sig chan<- struct{}, eagerGlobalManag *Eager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper) *StaticMappedProposalManager {
+func MappedProposersProposalManagerNew(sig ManualSignaller, eagerGlobalManag *Eager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper, openInstToCatchUp bool) *StaticMappedProposalManager {
 	return &StaticMappedProposalManager{
-		newInstSig:            sig,
+		//newInstSig:            sig,
+		ManualSignaller:       sig,
 		Eager:                 eagerGlobalManag,
 		SingleInstanceManager: iMan,
 		InstanceAgentMapper:   agentMapper,
+		openInstToCatchUp:     openInstToCatchUp,
 	}
 }
 
@@ -738,7 +742,6 @@ func (manager *StaticMappedProposalManager) StartNextInstance(instanceSpace *[]*
 		if (*instanceSpace)[manager.CrtInstance].Status != NOT_BEGUN {
 			continue
 		}
-
 		mapped := manager.InstanceAgentMapper.GetGroup(manager.CrtInstance)
 		dlog.AgentPrintfN(manager.Id, "Proposer group for instance %d is %v", manager.CrtInstance, mapped)
 		inG := inGroup(mapped, manager.Id)
@@ -749,6 +752,7 @@ func (manager *StaticMappedProposalManager) StartNextInstance(instanceSpace *[]*
 		}
 		gotInstance = true
 		dlog.AgentPrintfN(manager.Id, "Starting instance %d as we are mapped to it", manager.CrtInstance)
+		manager.StartNextProposal((*instanceSpace)[manager.CrtInstance], manager.CrtInstance)
 	}
 	opened := []int32{manager.CrtInstance}
 	manager.OpenInstSignal.Opened(opened)
@@ -799,7 +803,11 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 				dlog.AgentPrintfN(manager.Id, "Backing off instance %d for %d microseconds as we are mapped to it", i, bot)
 			} else {
 				// open new instance
-				go func() { manager.newInstSig <- struct{}{} }()
+				//go func() { manager.newInstSig <- struct{}{} }()
+				if !manager.openInstToCatchUp {
+					continue
+				}
+				manager.ManualSignaller.SignalNext()
 			}
 		} else {
 			//don't need to consider instance as we aren't in it
@@ -873,8 +881,8 @@ type DynamicMappedGlobalManager struct {
 	// want to signal that we do not want to make proposals anymore
 }
 
-func DynamicMappedProposerManagerNew(sig chan<- struct{}, proposalManager *Eager, iMan SingleInstanceManager, aMapper DynamicAgentMapper, n int32, f int32) *DynamicMappedGlobalManager {
-	mappedDecider := MappedProposersProposalManagerNew(sig, proposalManager, iMan, aMapper)
+func DynamicMappedProposerManagerNew(sig ManualSignaller, proposalManager *Eager, iMan SingleInstanceManager, aMapper DynamicAgentMapper, n int32, f int32) *DynamicMappedGlobalManager {
+	mappedDecider := MappedProposersProposalManagerNew(sig, proposalManager, iMan, aMapper, false)
 	dMappedDecicider := &DynamicMappedGlobalManager{
 		StaticMappedProposalManager: mappedDecider,
 		DynamicAgentMapper:          aMapper,
