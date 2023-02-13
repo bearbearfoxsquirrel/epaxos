@@ -1,7 +1,6 @@
 package instanceagentmapper
 
 import (
-	"log"
 	"math/rand"
 )
 
@@ -54,7 +53,7 @@ func (mapper *LoadBalancingSetMapper) GetGroup(inst int32) []int32 {
 		group = append(group, c[insti%len(c)])
 		c = remove(c, int32(insti%len(c)))
 	}
-	log.Println("got group for instance", inst, "group is", group, "from ids", mapper.Ids)
+	//log.Println("got group for instance", inst, "group is", group, "from ids", mapper.Ids)
 	return group
 }
 
