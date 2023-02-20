@@ -720,7 +720,6 @@ type StaticMappedProposalManager struct {
 
 func MappedProposersProposalManagerNew(sig ManualSignaller, eagerGlobalManag *Eager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper, openInstToCatchUp bool) *StaticMappedProposalManager {
 	return &StaticMappedProposalManager{
-		//newInstSig:            sig,
 		ManualSignaller:       sig,
 		Eager:                 eagerGlobalManag,
 		SingleInstanceManager: iMan,
@@ -803,7 +802,6 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 				dlog.AgentPrintfN(manager.Id, "Backing off instance %d for %d microseconds as we are mapped to it", i, bot)
 			} else {
 				// open new instance
-				//go func() { manager.newInstSig <- struct{}{} }()
 				if !manager.openInstToCatchUp {
 					continue
 				}
@@ -826,6 +824,7 @@ func (manager *StaticMappedProposalManager) iInGroup(i int32) bool {
 	}
 	return false
 }
+
 func (manager *StaticMappedProposalManager) whoMapped(i int32, them int32) (weIn bool, themIn bool) {
 	g := manager.GetProposerInstanceMapper().GetGroup(i)
 	dlog.AgentPrintfN(manager.Id, "Proposer group for instance %d is %v", i, g)

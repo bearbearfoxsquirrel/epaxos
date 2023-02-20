@@ -33,11 +33,6 @@ type ClientBatchProposedHandler interface {
 	proposingBatch(pbk *PBK, inst int32, batch batching.ProposalBatch)
 }
 
-//
-//type SimpleExecutor interface {
-//	Learnt(inst int32, Cmds []*state.Command, whosecmds int32)
-//}
-
 // ProposedClientValuesManager handles information that could affect proposed values and uses it to inform future values to be
 // proposed
 type ProposedClientValuesManager interface {
@@ -72,20 +67,16 @@ func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lw
 	if pbk.Status == NOT_BEGUN || pbk.Status == CLOSED {
 		return
 	}
-	if pbk.Status == PROPOSING {
-		return
-	}
 	if pbk.PropCurBal.GreaterThan(ballot) || pbk.PropCurBal.Equal(ballot) {
 		return
 	}
-
 	if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; e {
 		return
 	}
-
 	dlog.AgentPrintfN(manager.id, RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
 	bm.PutBatch(pbk.ClientProposals)
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
+	//pbk.ClientProposals = nil
 }
 
 // is this after or before
@@ -106,16 +97,9 @@ func (manager *SimpleBatchManager) LearnOfBallotValue(pbk *PBK, inst int32, ball
 		return
 	}
 	dlog.AgentPrintfN(manager.id, RequeuingBatchAcceptedValue(inst, ballot.Ballot, whoseCmds, pbk.ClientProposals))
-	//todo log
 	bm.PutBatch(pbk.ClientProposals)
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
-	//pbk.Cmds = cmd
-	//pbk.WhoseCmds = whoseCmds
 }
-
-//func (manager *SimpleBatchManager) learnOfBallotValue(pbk *proposer.PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
-//
-//}
 
 func (manager *SimpleBatchManager) setRequeuedAt(inst int32, bal lwcproto.ConfigBal) {
 	if _, e := manager.requeuedAt[inst]; !e {
@@ -143,33 +127,22 @@ func whatHappenedToClientProposals(pbk *PBK, whoseCmds int32, myId int32) Client
 }
 
 func (manager *SimpleBatchManager) ValueChosen(pbk *PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager) {
-	//if pbk.Status == proposer.CLOSED {
-	//	return
-	//}
-	//if pbk.ClientProposals == nil {
-	//	return
-	//}
 	if pbk.WhoseCmds == manager.id && pbk.ClientProposals == nil {
 		panic("client values chosen but we won't recognise that")
 	}
-
-	//dlog.AgentPrintfN(manager.Id, "Instance %d learnt to be chosen with whose commands %d", inst, whoseCmds)
 	switch whatHappenedToClientProposals(pbk, whoseCmds, manager.id) {
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		//dlog.AgentPrintfN(manager.Id, "%d client value(s) proposed in instance %d not chosen", len(pbk.ClientProposals.GetCmds()), inst)
 		dlog.AgentPrintfN(manager.id, RequeuingBatchDifferentValueChosen(inst, whoseCmds, pbk.ClientProposals))
-		if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; !e {
+		if _, e := manager.requeuedAt[inst]; !e {
 			bm.PutBatch(pbk.ClientProposals)
 		}
 		break
 	case ProposedAndChosen:
-		//dlog.AgentPrintfN(manager.Id, "%d client value(s) chosen in instance %d", len(pbk.ClientProposals.GetCmds()), inst)
 		break
 	}
 	pbk.ClientProposals = nil
-	//pbk.Cmds = nil
 	delete(manager.requeuedAt, inst)
 }
 

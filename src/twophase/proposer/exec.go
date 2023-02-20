@@ -93,7 +93,6 @@ func (ex *SimpleExecutor) Learnt(inst int32, cmds []*state.Command, whose int32)
 
 func (ex *SimpleExecutor) exec() {
 	oldExecutedUpTo := ex.executedUpTo
-
 	for ex.learnt[ex.executedUpTo+1] {
 		crt := ex.executedUpTo + 1
 		ex.executedUpTo += 1
@@ -102,21 +101,18 @@ func (ex *SimpleExecutor) exec() {
 		} else {
 			dlog.AgentPrintfN(ex.meId, ExecutingBatchFmt(crt, ex.whose[crt], ex.clientBatches[crt]))
 		}
-		if ex.whose[crt] == -1 {
-			// is NOOP
+		if ex.whose[crt] == -1 { // is NOOP
 			continue
 		}
 		toExec := ex.cmds[crt]
 		length := len(toExec)
-
-		if ex.whose[crt] == -1 || ex.whose[crt] != ex.meId {
+		if ex.whose[crt] != ex.meId {
 			for j := 0; j < length; j++ {
 				dlog.Printf("Executing " + toExec[j].String())
 				toExec[j].Execute(ex.state)
 			}
 			continue
 		}
-
 		for j := 0; j < length; j++ {
 			dlog.Printf("Executing " + toExec[j].String())
 			val := toExec[j].Execute(ex.state)
@@ -126,7 +122,6 @@ func (ex *SimpleExecutor) exec() {
 			ex.replyToClientOfCmd(crt, j, val)
 		}
 	}
-
 	if ex.executedUpTo > oldExecutedUpTo {
 		ex.recordExecutedUpTo()
 	}

@@ -120,7 +120,6 @@ func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, 
 	if int32(ballot.PropID) == sig.id && (whoseCmd == sig.id || whoseCmd == -1) {
 		return false
 	}
-
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else or proposed someone else's value ", inst)
 	return true
 }
@@ -176,7 +175,6 @@ type ManualSignaller interface {
 }
 
 func (sig *EagerExecUpToSig) SignalNext() {
-	//sig.SimpleSig.sigNextInst(inst)
 	if sig.PipelineTooLong() {
 		return
 	}
@@ -185,23 +183,27 @@ func (sig *EagerExecUpToSig) SignalNext() {
 }
 
 func (sig *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-	//manager.updateMyMaxInst(inst)
 	if !sig.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
 	}
+	//if sig.PipelineTooLong() {
+	//	return
+	//}
+
 	sig.sigNextInst(inst)
 }
 
 func (sig *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-	//manager.updateMyMaxInst(inst)
 	if !sig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
 		return
 	}
+	//if sig.PipelineTooLong() {
+	//	return
+	//}
 	sig.sigNextInst(inst)
 }
 
 func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
-	//manager.updateMyMaxInst(inst)
 	if _, e := sig.instsStarted[inst]; !e {
 		return
 	}
@@ -212,7 +214,9 @@ func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.C
 		sig.sigNextInst(inst)
 		return
 	}
-
+	//if sig.PipelineTooLong() {
+	//	return
+	//}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
 	sig.sigNextInst(inst)
 }
@@ -226,11 +230,6 @@ func (sig *EagerExecUpToSig) CheckExec(informer ExecInformer) {
 	if sig.PipelineTooLong() {
 		return
 	}
-
-	//if int32(len(sig.instsStarted)) > sig.MaxOpenInsts {
-	//	panic("too long")
-	//}
-
 	for i, _ := range sig.instsStarted {
 		if i > informer.GetExecutedUpTo() {
 			continue
@@ -242,12 +241,9 @@ func (sig *EagerExecUpToSig) CheckExec(informer ExecInformer) {
 		panic("going to make a too long pipeline")
 	}
 	if toOpen <= 0 {
-		dlog.AgentPrintfN(sig.id, "Not opening up new instances as we have currently opened %d instances in the pipeline", len(sig.instsStarted))
+		dlog.AgentPrintfN(sig.id, "Not opening up new instances as we have currently opened %d instances in the pipeline and %d signalled to start", len(sig.instsStarted), sig.sigged)
 		return
 	}
-
-	//manager.sigged += toOpen
-
 	dlog.AgentPrintfN(sig.id, "Signalling to open %d new instance(s) as executed instance has caught up with current", toOpen)
 	sig.sigged += toOpen
 	go func(toOpen int32) {
@@ -258,14 +254,14 @@ func (sig *EagerExecUpToSig) CheckExec(informer ExecInformer) {
 }
 
 func (sig *EagerExecUpToSig) PipelineTooLong() bool {
-	if sig.myMaxInst >= sig.GetMaxPipelineLen() {
+	if sig.myMaxInst >= sig.GetMaxOpenableInstance() {
 		dlog.AgentPrintfN(sig.id, "Not opening up new instances as executed instance %d hasn't caught up with current instance %d", sig.execUpTo, sig.myMaxInst)
 		return true
 	}
 	return false
 }
 
-func (sig *EagerExecUpToSig) GetMaxPipelineLen() int32 {
+func (sig *EagerExecUpToSig) GetMaxOpenableInstance() int32 {
 	return sig.execUpTo + int32(float32(sig.MaxOpenInsts)*sig.n*sig.fac)
 }
 

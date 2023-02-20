@@ -647,15 +647,11 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	}
 
 	if !preply.VBal.IsZero() {
-		//if int32(preply.VBal.PropID) != r.Id {
-		//	r.UpdateMaxValueInstance(preply.Instance)
-		//}
-
 		r.UpdateMaxValueInstance(preply.Instance)
 		r.Learner.ProposalValue(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 		r.Learner.ProposalAccepted(preply.Instance, preply.VBal, preply.AcceptorId)
 		// todo make part of learn value
-		r.ProposerAddToQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
+		//r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
 		if r.Learner.IsChosen(preply.Instance) && r.Learner.HasLearntValue(preply.Instance) { // newly learnt
 			dlog.AgentPrintfN(r.Id, "From prepare replies %d", proposer.LearntInlineFmt(preply.Instance, preply.VBal, r.Proposer, preply.WhoseCmd))
 			r.proposerCloseCommit(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
@@ -699,7 +695,7 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	r.HandlePromise(preply)
 }
 
-func (r *Replica) ProposerAddToQuorum(inst int32, bal stdpaxosproto.Ballot, aid int32, pbk *proposer.PBK) {
+func (r *Replica) ProposerAddToAcceptanceQuorum(inst int32, bal stdpaxosproto.Ballot, aid int32, pbk *proposer.PBK) {
 	if pbk.Qrms[lwcproto.ConfigBal{-1, bal}] == nil {
 		r.LearnerQuorumaliser.TrackProposalAcceptance(pbk, inst, lwcproto.ConfigBal{-1, bal})
 	}
@@ -872,6 +868,7 @@ func (r *Replica) acceptorHandleAcceptRequest(accept *stdpaxosproto.Accept) {
 
 func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
 	r.Learner.ProposalAccepted(areply.Instance, areply.Cur, areply.AcceptorId)
+	r.ProposerAddToAcceptanceQuorum(areply.Instance, areply.Req, areply.AcceptorId, r.instanceSpace[areply.Instance])
 	//r.UpdateValueMaxInstance(areply.Instance)
 	dlog.AgentPrintfN(r.Id, "Acceptance recorded on proposal instance %d at ballot %d.%d from Replica %d with whose commands %d",
 		areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId, areply.WhoseCmd)
@@ -915,7 +912,6 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
 	pbk := r.instanceSpace[inst]
 	r.UpdateMaxValueInstance(inst)
-	//r.UpdateValueMaxInstance(inst)
 	if pbk.Status == proposer.CLOSED {
 		return
 	}

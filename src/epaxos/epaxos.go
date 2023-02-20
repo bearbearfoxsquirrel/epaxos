@@ -453,7 +453,6 @@ func (r *Replica) run() {
 	//}
 
 	go r.WaitForClientConnections()
-
 	go r.replicaLoop()
 }
 
@@ -500,7 +499,6 @@ func (r *Replica) executeCommands() {
 					executed = true
 					if inst == r.ExecedUpTo[q]+1 {
 						r.ExecedUpTo[q] = inst
-
 					}
 				}
 			}
