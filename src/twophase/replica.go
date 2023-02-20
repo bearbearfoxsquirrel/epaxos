@@ -650,10 +650,11 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 		r.UpdateMaxValueInstance(preply.Instance)
 		r.Learner.ProposalValue(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 		r.Learner.ProposalAccepted(preply.Instance, preply.VBal, preply.AcceptorId)
+		r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
 		// todo make part of learn value
-		//r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
+		r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
 		if r.Learner.IsChosen(preply.Instance) && r.Learner.HasLearntValue(preply.Instance) { // newly learnt
-			dlog.AgentPrintfN(r.Id, "From prepare replies %d", proposer.LearntInlineFmt(preply.Instance, preply.VBal, r.Proposer, preply.WhoseCmd))
+			dlog.AgentPrintfN(r.Id, "From prepare replies %s", proposer.LearntInlineFmt(preply.Instance, preply.VBal, r.Proposer, preply.WhoseCmd))
 			r.proposerCloseCommit(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 			r.bcastCommitToAll(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 			return
@@ -869,7 +870,7 @@ func (r *Replica) acceptorHandleAcceptRequest(accept *stdpaxosproto.Accept) {
 func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
 	r.Learner.ProposalAccepted(areply.Instance, areply.Cur, areply.AcceptorId)
 	r.ProposerAddToAcceptanceQuorum(areply.Instance, areply.Req, areply.AcceptorId, r.instanceSpace[areply.Instance])
-	//r.UpdateValueMaxInstance(areply.Instance)
+	r.instanceSpace[areply.Instance].Qrms[lwcproto.ConfigBal{-1, areply.Req}].AddToQuorum(areply.AcceptorId)
 	dlog.AgentPrintfN(r.Id, "Acceptance recorded on proposal instance %d at ballot %d.%d from Replica %d with whose commands %d",
 		areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId, areply.WhoseCmd)
 	if r.Learner.IsChosen(areply.Instance) && r.Learner.HasLearntValue(areply.Instance) {
