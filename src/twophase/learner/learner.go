@@ -14,6 +14,7 @@ type Learner interface {
 	IsChosen(int32) bool       // has chosen ballot
 	HasLearntValue(int32) bool // has learnt value
 	GetChosen(int32) (stdpaxosproto.Ballot, []*state.Command, int32)
+	HasAccepted(inst int32, bal stdpaxosproto.Ballot, aid int32) bool
 }
 
 type executor struct {
@@ -39,6 +40,18 @@ func GetDesignedLearner(qrmC AQConstructor) DesignatedLearner {
 		val:           make(map[int32]map[stdpaxosproto.Ballot]cmdProposed),
 		learnt:        make(map[int32]stdpaxosproto.Ballot),
 	}
+}
+
+func (l *DesignatedLearner) HasAccepted(inst int32, bal stdpaxosproto.Ballot, aid int32) bool {
+	iqrms := l.qrm[inst]
+	if iqrms == nil {
+		return false
+	}
+	bqrms := iqrms[bal]
+	if bqrms == nil {
+		return false
+	}
+	return bqrms.Acknowledged(aid)
 }
 
 // proposalChosen
@@ -267,4 +280,16 @@ func (l *BcastAcceptLearner) GetChosen(inst int32) (stdpaxosproto.Ballot, []*sta
 		break
 	}
 	return cB, l.learntV[inst].cmds, l.learntV[inst].whose
+}
+
+func (l *BcastAcceptLearner) HasAccepted(inst int32, bal stdpaxosproto.Ballot, aid int32) bool {
+	iqrms := l.qrm[inst]
+	if iqrms == nil {
+		return false
+	}
+	bqrms := iqrms[bal]
+	if bqrms == nil {
+		return false
+	}
+	return bqrms.Acknowledged(aid)
 }

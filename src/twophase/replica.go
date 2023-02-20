@@ -189,21 +189,23 @@ func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot)
 	//if instance > r.GetCrtInstance() {
 	//	panic("Being asked for an instance we haven't started yet")
 	//}
-	return r.instanceSpace[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(q)
+	return r.Learner.HasAccepted(instance, ballot, q)
+	//return r.instanceSpace[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(q)
 }
 
 func (r *Replica) GetAckersGroup(instance int32, ballot stdpaxosproto.Ballot) []int32 {
 	//if instance > r.GetCrtInstance() {
 	//	panic("Being asked for an instance we haven't started yet")
 	//}
-	consensusG := r.GetConsensusGroup(instance, ballot)
-	acked := make([]int32, 0, len(consensusG))
-	for _, aid := range consensusG {
-		if !r.instanceSpace[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(aid) {
-			acked = append(acked, aid)
-		}
-	}
-	return acked
+	//consensusG := r.GetConsensusGroup(instance, ballot)
+	//acked := make([]int32, 0, len(consensusG))
+	//for _, aid := range consensusG {
+	//	if !r.instanceSpace[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(aid) {
+	//		acked = append(acked, aid)
+	//	}
+	//}
+	//return acked
+	return nil
 }
 
 func (r *Replica) GetConsensusGroup(instance int32, ballot stdpaxosproto.Ballot) []int32 {
@@ -650,9 +652,7 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 		r.UpdateMaxValueInstance(preply.Instance)
 		r.Learner.ProposalValue(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 		r.Learner.ProposalAccepted(preply.Instance, preply.VBal, preply.AcceptorId)
-		r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
-		// todo make part of learn value
-		r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
+		//r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
 		if r.Learner.IsChosen(preply.Instance) && r.Learner.HasLearntValue(preply.Instance) { // newly learnt
 			dlog.AgentPrintfN(r.Id, "From prepare replies %s", proposer.LearntInlineFmt(preply.Instance, preply.VBal, r.Proposer, preply.WhoseCmd))
 			r.proposerCloseCommit(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
@@ -696,12 +696,12 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	r.HandlePromise(preply)
 }
 
-func (r *Replica) ProposerAddToAcceptanceQuorum(inst int32, bal stdpaxosproto.Ballot, aid int32, pbk *proposer.PBK) {
-	if pbk.Qrms[lwcproto.ConfigBal{-1, bal}] == nil {
-		r.LearnerQuorumaliser.TrackProposalAcceptance(pbk, inst, lwcproto.ConfigBal{-1, bal})
-	}
-	pbk.Qrms[lwcproto.ConfigBal{-1, bal}].AddToQuorum(aid)
-}
+//func (r *Replica) ProposerAddToAcceptanceQuorum(inst int32, bal stdpaxosproto.Ballot, aid int32, pbk *proposer.PBK) {
+//	if pbk.Qrms[lwcproto.ConfigBal{-1, bal}] == nil {
+//		r.LearnerQuorumaliser.TrackProposalAcceptance(pbk, inst, lwcproto.ConfigBal{-1, bal})
+//	}
+//	pbk.Qrms[lwcproto.ConfigBal{-1, bal}].AddToQuorum(aid)
+//}
 
 func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot) {
 	pbk := r.instanceSpace[inst]
@@ -869,8 +869,8 @@ func (r *Replica) acceptorHandleAcceptRequest(accept *stdpaxosproto.Accept) {
 
 func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
 	r.Learner.ProposalAccepted(areply.Instance, areply.Cur, areply.AcceptorId)
-	r.ProposerAddToAcceptanceQuorum(areply.Instance, areply.Req, areply.AcceptorId, r.instanceSpace[areply.Instance])
-	r.instanceSpace[areply.Instance].Qrms[lwcproto.ConfigBal{-1, areply.Req}].AddToQuorum(areply.AcceptorId)
+	//r.ProposerAddToAcceptanceQuorum(areply.Instance, areply.Req, areply.AcceptorId, r.instanceSpace[areply.Instance])
+	//r.instanceSpace[areply.Instance].Qrms[lwcproto.ConfigBal{-1, areply.Req}].AddToQuorum(areply.AcceptorId)
 	dlog.AgentPrintfN(r.Id, "Acceptance recorded on proposal instance %d at ballot %d.%d from Replica %d with whose commands %d",
 		areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId, areply.WhoseCmd)
 	if r.Learner.IsChosen(areply.Instance) && r.Learner.HasLearntValue(areply.Instance) {
