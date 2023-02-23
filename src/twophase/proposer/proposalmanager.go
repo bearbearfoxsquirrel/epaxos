@@ -715,7 +715,6 @@ type StaticMappedProposalManager struct {
 	instanceagentmapper.InstanceAgentMapper
 	ManualSignaller
 	openInstToCatchUp bool
-	//newInstSig chan<- struct{}
 }
 
 func MappedProposersProposalManagerNew(sig ManualSignaller, eagerGlobalManag *Eager, iMan SingleInstanceManager, agentMapper instanceagentmapper.InstanceAgentMapper, openInstToCatchUp bool) *StaticMappedProposalManager {
@@ -784,7 +783,6 @@ func (manager *StaticMappedProposalManager) checkAndSetNewInstance(instanceSpace
 	if manager.CrtInstance >= inst {
 		return
 	}
-
 	for i := manager.CrtInstance + 1; i <= inst; i++ {
 		if (*instanceSpace)[i] != nil {
 			continue
@@ -915,7 +913,6 @@ func (decider *DynamicMappedGlobalManager) LearnOfBallot(instanceSpace *[]*PBK, 
 
 		}
 	}
-
 	return decider.StaticMappedProposalManager.LearnOfBallot(instanceSpace, inst, ballot, phase)
 }
 
@@ -932,7 +929,6 @@ func (decider *DynamicMappedGlobalManager) DecideRetry(pbk *PBK, retry RetryInfo
 
 func (decider *DynamicMappedGlobalManager) updateGroupSize() {
 	newG := decider.curG
-
 	dlog.AgentPrintfN(decider.Id, "Current proposer group is of size %d (EWMA is %f)", decider.curG, decider.conflictEWMA)
 	if decider.conflictEWMA > 0.2 {
 		newG = mapper.Mapper(decider.conflictEWMA, 1, 0, decider.f+1, decider.curG)
@@ -942,11 +938,9 @@ func (decider *DynamicMappedGlobalManager) updateGroupSize() {
 		newG = mapper.Mapper(decider.conflictEWMA, 0, -1, decider.curG, decider.n)
 		decider.conflictEWMA = 0
 	}
-
 	if newG < 1 {
 		newG = 1
 	}
-
 	if newG > decider.n {
 		newG = decider.n
 	}

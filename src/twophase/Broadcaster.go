@@ -314,17 +314,11 @@ func NewBcastSlowLearning(acceptRPC uint8, commitShortRPC uint8, commitPRC uint8
 func (b *BcastSlowLearning) BcastAccept(instance int32, ballot stdpaxosproto.Ballot, whosecmds int32, cmds []*state.Command) {
 	pa := getActiveAccept(instance, ballot, cmds, whosecmds)
 	sendC := b.SendQrmSize.GetBcastNum()
-	//disklessNOOP := isProposingDisklessNOOP(instance)
-	//if disklessNOOP {
-	//	pa.LeaderId = -3
-	//}
 	if state.CommandsEqual(state.DisklessNOOPP(), cmds) {
 		pa.LeaderId = -3
 	}
-
 	sentTo := make([]int32, 0, b.n)
 	acceptorGroup := b.QuorumCounter.GetConsensusGroup(instance, ballot)
-	//acceptorGroup := AcceptorQrmInfo.GetGroup(instance)
 	rand.Shuffle(len(acceptorGroup), func(i, j int) {
 		tmp := acceptorGroup[i]
 		acceptorGroup[i] = acceptorGroup[j]

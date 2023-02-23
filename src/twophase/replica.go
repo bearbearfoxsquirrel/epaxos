@@ -289,13 +289,11 @@ func (r *Replica) run() {
 		}()
 	}
 
-	//startGetEvent := time.Now()
 	doWhat := ""
 	startEvent := time.Now()
 	endEvent := time.Now()
 	startInstSig := r.Proposer.GetStartInstanceSignaller()
 	for !r.Shutdown {
-		//startGetEvent = time.Now()
 		select {
 		case <-r.proposableInstances:
 			startEvent = time.Now()
@@ -308,7 +306,6 @@ func (r *Replica) run() {
 			if r.proposeToCatchUp && r.maxValueInstance > maxInstanceToProposeTo {
 				maxInstanceToProposeTo = r.maxValueInstance
 			}
-
 			//get point of where to go from then skip up to that
 			for i, _ := range r.instanceProposeValueTimeout.sleepingInsts {
 				if i > maxInstanceToProposeTo {
@@ -326,10 +323,6 @@ func (r *Replica) run() {
 				}
 				r.tryPropose(i, 2)
 			}
-			//for len(r.instanceProposeValueTimeout.sleepingInsts) > 0 {
-			//	min := r.instanceProposeValueTimeout.getMinimumSleepingInstance()
-			//
-			//}
 			r.updateNoopTimer()
 			break
 		case clientRequest := <-r.ProposeChan:
@@ -347,6 +340,7 @@ func (r *Replica) run() {
 					continue
 				}
 				r.tryPropose(min, 1)
+				break
 			}
 			break
 		case stateS := <-r.stateChan:
@@ -370,11 +364,6 @@ func (r *Replica) run() {
 			doWhat = "handle promise lease"
 			r.updateLeases(lease)
 			break
-		//case <-c:
-		//	startEvent = time.Now()
-		//	doWhat = "print timeseries stats"
-		//	r.TimeseriesStats.PrintAndReset()
-		//	break
 		case next := <-r.RetryInstance:
 			startEvent = time.Now()
 			doWhat = "handle new ballot request"
@@ -385,7 +374,6 @@ func (r *Replica) run() {
 			startEvent = time.Now()
 			doWhat = "handle prepare request"
 			prepare := prepareS.(*stdpaxosproto.Prepare)
-			//got a Prepare message
 			dlog.Printf("Received Prepare from replica %d, for instance %d\n", prepare.LeaderId, prepare.Instance)
 			r.handlePrepare(prepare)
 			break
@@ -393,7 +381,6 @@ func (r *Replica) run() {
 			startEvent = time.Now()
 			doWhat = "handle accept request"
 			accept := acceptS.(*stdpaxosproto.Accept)
-			//got an Accept message
 			dlog.Printf("Received Accept Request from replica %d, for instance %d\n", accept.LeaderId, accept.Instance)
 			r.handleAccept(accept)
 			break
@@ -401,7 +388,6 @@ func (r *Replica) run() {
 			startEvent = time.Now()
 			doWhat = "handle Commit"
 			commit := commitS.(*stdpaxosproto.Commit)
-			//got a Commit message
 			dlog.Printf("Received Commit from replica %d, for instance %d\n", commit.LeaderId, commit.Instance)
 			r.handleCommit(commit)
 			break
@@ -409,7 +395,6 @@ func (r *Replica) run() {
 			startEvent = time.Now()
 			doWhat = "handle Commit short"
 			commit := commitS.(*stdpaxosproto.CommitShort)
-			//got a Commit message
 			dlog.Printf("Received short Commit from replica %d, for instance %d\n", commit.LeaderId, commit.Instance)
 			r.handleCommitShort(commit)
 			break
@@ -417,7 +402,6 @@ func (r *Replica) run() {
 			startEvent = time.Now()
 			doWhat = "handle prepare reply"
 			prepareReply := prepareReplyS.(*stdpaxosproto.PrepareReply)
-			//got a Prepare reply
 			dlog.Printf("Received PrepareReply for instance %d\n", prepareReply.Instance)
 			r.HandlePrepareReply(prepareReply)
 			break
@@ -425,13 +409,11 @@ func (r *Replica) run() {
 			startEvent = time.Now()
 			doWhat = "handle accept reply"
 			acceptReply := acceptReplyS.(*stdpaxosproto.AcceptReply)
-			//got an Accept reply
 			dlog.Printf("Received AcceptReply for instance %d\n", acceptReply.Instance)
 			r.handleAcceptReply(acceptReply)
 			break
 		}
 		endEvent = time.Now()
-		//dlog.AgentPrintfN(r.Id, "It took %d µs to receive event %s", startEvent.Sub(startGetEvent).Microseconds(), doWhat)
 		dlog.AgentPrintfN(r.Id, "It took %d µs to %s", endEvent.Sub(startEvent).Microseconds(), doWhat)
 	}
 }
@@ -470,7 +452,6 @@ func (r *Replica) bcastPrepare(instance int32) {
 	r.PrepareBroadcaster.Bcast(instance, r.instanceSpace[instance].PropCurBal.Ballot)
 }
 
-// var pa stdpaxosproto.Accept
 func (r *Replica) bcastAccept(instance int32) {
 	pbk := r.instanceSpace[instance]
 	r.ValueBroadcaster.BcastAccept(instance, pbk.PropCurBal.Ballot, pbk.WhoseCmds, pbk.Cmds)
@@ -512,9 +493,6 @@ func getPrepareMessage(id int32, inst int32, curInst *proposer.PBK) *stdpaxospro
 	return prepMsg
 }
 
-// show at several scales th throughput latency graph
-// compare approaches on failure and restarting
-// compare the throughput latency difference
 func (r *Replica) tryNextAttempt(next proposer.RetryInfo) {
 	inst := r.instanceSpace[next.Inst]
 	if !r.Proposer.DecideRetry(inst, next) {
@@ -560,18 +538,13 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallot(r.instanceSpace[prepare.Instance], prepare.Instance, lwcproto.ConfigBal{Config: -1, Ballot: prepare.Ballot}, r.ClientBatcher)
 }
 
-// func (r *Replica) learn
 func (r *Replica) proposerWittnessAcceptedValue(inst int32, aid int32, accepted stdpaxosproto.Ballot, val []*state.Command, whoseCmds int32) bool {
 	if accepted.IsZero() {
 		return false
 	}
 	r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, inst, lwcproto.ConfigBal{Config: -1, Ballot: accepted}, whoseCmds)
 	pbk := r.instanceSpace[inst]
-	//if pbk.Status == proposer.CLOSED {
-	//	return false
-	//}
 	r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallotValue(pbk, inst, lwcproto.ConfigBal{Config: -1, Ballot: accepted}, val, whoseCmds, r.ClientBatcher)
-
 	newVal := false
 	if accepted.GreaterThan(pbk.ProposeValueBal.Ballot) {
 		setProposingValue(pbk, whoseCmds, accepted, val)
@@ -618,14 +591,6 @@ func (r *Replica) HandlePromise(preply *stdpaxosproto.PrepareReply) {
 	r.tryInitaliseForPropose(preply.Instance, preply.Req)
 }
 
-//func (r *Replica) UpdateValueMaxInstance(inst int32) {
-//if r.maxValueInst > inst {
-//	return
-//}
-//r.maxValueInst = inst
-//go func() {r.proposableInstances <- struct{}{}}()
-//}
-
 func (r *Replica) UpdateMaxValueInstance(inst int32) {
 	if r.maxValueInstance > inst {
 		return
@@ -637,7 +602,6 @@ func (r *Replica) UpdateMaxValueInstance(inst int32) {
 	go func() { r.proposableInstances <- struct{}{} }()
 }
 func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
-	// pbk should not be nil
 	pbk := r.instanceSpace[preply.Instance]
 	dlog.AgentPrintfN(r.Id, logfmt.ReceivePrepareReplyFmt(preply))
 	if pbk.Status == proposer.CLOSED {
@@ -652,7 +616,6 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 		r.UpdateMaxValueInstance(preply.Instance)
 		r.Learner.ProposalValue(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 		r.Learner.ProposalAccepted(preply.Instance, preply.VBal, preply.AcceptorId)
-		//r.ProposerAddToAcceptanceQuorum(preply.Instance, preply.VBal, preply.AcceptorId, pbk)
 		if r.Learner.IsChosen(preply.Instance) && r.Learner.HasLearntValue(preply.Instance) { // newly learnt
 			dlog.AgentPrintfN(r.Id, "From prepare replies %s", proposer.LearntInlineFmt(preply.Instance, preply.VBal, r.Proposer, preply.WhoseCmd))
 			r.proposerCloseCommit(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
@@ -696,19 +659,11 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 	r.HandlePromise(preply)
 }
 
-//func (r *Replica) ProposerAddToAcceptanceQuorum(inst int32, bal stdpaxosproto.Ballot, aid int32, pbk *proposer.PBK) {
-//	if pbk.Qrms[lwcproto.ConfigBal{-1, bal}] == nil {
-//		r.LearnerQuorumaliser.TrackProposalAcceptance(pbk, inst, lwcproto.ConfigBal{-1, bal})
-//	}
-//	pbk.Qrms[lwcproto.ConfigBal{-1, bal}].AddToQuorum(aid)
-//}
-
 func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot) {
 	pbk := r.instanceSpace[inst]
 	if !pbk.PropCurBal.Ballot.Equal(ballot) || pbk.Status != proposer.PREPARING {
 		return
 	}
-
 	qrm := pbk.Qrms[pbk.PropCurBal]
 	if (!qrm.HasAcknowledged(r.Id) && !r.writeAheadAcceptor) || (r.writeAheadAcceptor && !r.isLeased(inst, pbk.PropCurBal.Ballot)) {
 		dlog.AgentPrintfN(r.Id, "Not safe to send accept requests for instance %d, need to wait until a lease or promise from our acceptor is received", inst)
@@ -725,11 +680,9 @@ func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot
 		}()
 		return
 	}
-
 	if !pbk.ProposeValueBal.IsZero() && pbk.WhoseCmds != r.Id && pbk.ClientProposals != nil {
 		pbk.ClientProposals = nil // at this point, our client proposal will not be chosen
 	}
-
 	pbk.Status = proposer.READY_TO_PROPOSE
 	r.tryPropose(inst, 0)
 }
@@ -781,7 +734,6 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 	pbk.SetNowProposing()
 	b := r.Proposer.GetBalloter()
 	dlog.AgentPrintfN(r.Id, proposer.ProposingValue(r.Id, pbk, inst, int32(b.GetAttemptNumber(pbk.ProposeValueBal.Number)), r.isProposingDisklessNOOP(inst)))
-
 	r.Learner.ProposalValue(inst, pbk.PropCurBal.Ballot, pbk.Cmds, pbk.WhoseCmds)
 	if pbk.ClientProposals != nil {
 		r.Executor.ProposedBatch(inst, pbk.ClientProposals)
@@ -820,7 +772,6 @@ func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32, ballot std
 
 func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveAcceptFmt(accept))
-	//r.checkAndHandleNewlyReceivedInstance(accept.Instance)
 	r.Proposer.LearnOfBallot(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{-1, accept.Ballot}, stdpaxosproto.ACCEPTANCE)
 	r.UpdateMaxValueInstance(accept.Instance)
 	r.Learner.ProposalValue(accept.Instance, accept.Ballot, accept.Command, accept.WhoseCmd)
@@ -855,7 +806,6 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 		dlog.AgentPrintfN(r.Id, "Not passing Accept for instance %d at ballot %d.%d to acceptor as we cannot form an acceptance quorum", accept.Instance, accept.Ballot.Number, accept.Ballot.PropID)
 		return
 	}
-
 	r.acceptorHandleAcceptRequest(accept)
 }
 
@@ -869,8 +819,6 @@ func (r *Replica) acceptorHandleAcceptRequest(accept *stdpaxosproto.Accept) {
 
 func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
 	r.Learner.ProposalAccepted(areply.Instance, areply.Cur, areply.AcceptorId)
-	//r.ProposerAddToAcceptanceQuorum(areply.Instance, areply.Req, areply.AcceptorId, r.instanceSpace[areply.Instance])
-	//r.instanceSpace[areply.Instance].Qrms[lwcproto.ConfigBal{-1, areply.Req}].AddToQuorum(areply.AcceptorId)
 	dlog.AgentPrintfN(r.Id, "Acceptance recorded on proposal instance %d at ballot %d.%d from Replica %d with whose commands %d",
 		areply.Instance, areply.Cur.Number, areply.Cur.PropID, areply.AcceptorId, areply.WhoseCmd)
 	if r.Learner.IsChosen(areply.Instance) && r.Learner.HasLearntValue(areply.Instance) {
@@ -880,7 +828,6 @@ func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
 }
 
 func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
-	//r.Proposer.LearnOfBallot(&r.instanceSpace, areply.Instance, lwcproto.ConfigBal{-1, areply.Cur}, areply.CurPhase)
 	r.checkAndHandleNewlyReceivedInstance(areply.Instance, areply.Cur)
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveAcceptReplyFmt(areply))
 	pbk := r.instanceSpace[areply.Instance]
@@ -931,7 +878,6 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 		dlog.AgentPrintfN(r.Id, proposer.LearntFmt(inst, chosenAt, r.Proposer, whoseCmd))
 	}
 	r.instanceProposeValueTimeout.ProposedClientValuesManager.ValueChosen(pbk, inst, whoseCmd, chosenVal, r.ClientBatcher)
-
 	r.noLongerSleepingInstance(inst)
 	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
 	r.Executor.Learnt(inst, chosenVal, whoseCmd)
@@ -941,7 +887,6 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 func (r *Replica) handleCommit(commit *stdpaxosproto.Commit) {
 	r.checkAndHandleNewlyReceivedInstance(commit.Instance, commit.Ballot)
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveCommitFmt(commit))
-
 	if r.Learner.IsChosen(commit.Instance) && r.Learner.HasLearntValue(commit.Instance) {
 		dlog.AgentPrintfN(r.Id, "Ignoring Commit for instance %d as it is already learnt", commit.Instance)
 		return
