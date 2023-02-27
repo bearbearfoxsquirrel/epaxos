@@ -410,26 +410,26 @@ func (r *Replica) run() {
 
 func (r *Replica) handleClientRequest(clientRequest *genericsmr.Propose) {
 	r.ClientBatcher.AddProposal(clientRequest, r.ProposeChan)
-	for i := 0; i < r.ClientBatcher.GetNumBatchesMade(); i++ {
-		if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
-			dlog.AgentPrintfN(r.Id, "No instances to propose to propose batch to")
-			if r.ManualSignaller == nil {
-				return
-			}
-			if r.IsInstancesPreparing() {
-				return
-			}
-			if r.s == 1 {
-				return
-			}
-			if !r.signalIfNoInstStarted {
-				return
-			}
-			dlog.AgentPrintfN(r.Id, "Signalling new instance as there are none opened to propose batch to")
-			r.ManualSignaller.SignalNext()
-			r.s = 1
+	if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
+		dlog.AgentPrintfN(r.Id, "No instances to propose to propose batch to")
+		if r.ManualSignaller == nil {
 			return
 		}
+		if r.IsInstancesPreparing() {
+			return
+		}
+		if r.s == 1 {
+			return
+		}
+		if !r.signalIfNoInstStarted {
+			return
+		}
+		dlog.AgentPrintfN(r.Id, "Signalling new instance as there are none opened to propose batch to")
+		r.ManualSignaller.SignalNext()
+		r.s = 1
+		return
+	}
+	for i := 0; i < r.ClientBatcher.GetNumBatchesMade(); i++ {
 		for len(r.instanceProposeValueTimeout.sleepingInsts) > 0 {
 			min := r.instanceProposeValueTimeout.getMinimumSleepingInstance()
 			r.noLongerSleepingInstance(min)
