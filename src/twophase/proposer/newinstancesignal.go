@@ -66,6 +66,9 @@ func (sig *SimpleSig) ballotShouldOpen(pbk *PBK, inst int32, ballot lwcproto.Con
 	if pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot) {
 		return false
 	}
+	//if ballot.Number > 20000 {
+	//	return false
+	//}
 	//if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
 	//	return
 	//}
@@ -100,6 +103,9 @@ func (sig *SimpleSig) acceptedShouldSignal(pbk *PBK, inst int32, ballot lwcproto
 	if pbk.Status == PROPOSING && pbk.PropCurBal.GreaterThan(ballot) { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
 		return false
 	}
+	if ballot.Number > 20000 {
+		return false
+	}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as there is an accepted ballot")
 	return true
 }
@@ -126,21 +132,23 @@ func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, 
 
 type EagerExecUpToSig struct {
 	EagerSig
-	n         float32
-	fac       float32
-	sigged    int32
-	myMaxInst int32
-	execUpTo  int32
+	n                    float32
+	fac                  float32
+	sigged               int32
+	myMaxInst            int32
+	execUpTo             int32
+	limPipelineOnPreempt bool
 }
 
-func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32) *EagerExecUpToSig {
+func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32, limPipelineOnPreempt bool) *EagerExecUpToSig {
 	return &EagerExecUpToSig{
-		EagerSig:  *eagerSig,
-		n:         n,
-		fac:       fac,
-		myMaxInst: -1,
-		execUpTo:  -1,
-		sigged:    eagerSig.MaxOpenInsts,
+		EagerSig:             *eagerSig,
+		n:                    n,
+		fac:                  fac,
+		myMaxInst:            -1,
+		execUpTo:             -1,
+		sigged:               eagerSig.MaxOpenInsts,
+		limPipelineOnPreempt: limPipelineOnPreempt,
 	}
 }
 
@@ -166,6 +174,10 @@ func (sig *EagerExecUpToSig) sigNextInst(inst int32) {
 	if _, e := sig.instsStarted[inst]; !e {
 		panic("signalling for instance not started")
 	}
+	//toDel := make([]int32, 0, len(sig.instsStarted))
+	//for i := range sig.instsStarted {
+	//	sig.chosen
+	//}
 	sig.SimpleSig.sigNextInst(inst)
 	sig.sigged += 1
 }
@@ -182,13 +194,23 @@ func (sig *EagerExecUpToSig) SignalNext() {
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
+//func (sig *EagerExecUpToSig) isFailure(ballot lwcproto.ConfigBal) bool {
+//
+//}
+
 func (sig *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if !sig.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
 	}
-	//if sig.PipelineTooLong() {
-	//	return
-	//}
+
+	if len(sig.instsStarted) > int(sig.MaxOpenInsts) {
+		delete(sig.instsStarted, inst)
+		return
+	}
+
+	if sig.PipelineTooLong() && sig.limPipelineOnPreempt {
+		return
+	}
 
 	sig.sigNextInst(inst)
 }
@@ -197,14 +219,23 @@ func (sig *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lw
 	if !sig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
 		return
 	}
-	//if sig.PipelineTooLong() {
-	//	return
-	//}
+	if len(sig.instsStarted) > int(sig.MaxOpenInsts) {
+		delete(sig.instsStarted, inst)
+		return
+	}
+	if sig.PipelineTooLong() && sig.limPipelineOnPreempt {
+		return
+	}
 	sig.sigNextInst(inst)
 }
 
 func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 	if _, e := sig.instsStarted[inst]; !e {
+		return
+	}
+
+	if len(sig.instsStarted) > int(sig.MaxOpenInsts) {
+		delete(sig.instsStarted, inst)
 		return
 	}
 	if int32(ballot.PropID) == sig.id {
@@ -214,9 +245,9 @@ func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.C
 		sig.sigNextInst(inst)
 		return
 	}
-	//if sig.PipelineTooLong() {
-	//	return
-	//}
+	if sig.PipelineTooLong() && sig.limPipelineOnPreempt {
+		return
+	}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
 	sig.sigNextInst(inst)
 }
@@ -282,10 +313,6 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 	}()
 	return e
 }
-
-//func (Sig *EagerSig) Opened(o []int32) {
-//	Sig.SimpleSig.Opened(o)
-//}
 
 func (manager *EagerSig) Close(inst int32) {
 	delete(manager.instsStarted, inst)

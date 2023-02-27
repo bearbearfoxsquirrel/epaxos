@@ -1069,7 +1069,6 @@ func (r *Replica) ReplyProposeTS(reply *genericsmrproto.ProposeReplyTS, w *bufio
 	r.Mutex.Lock()
 	defer r.Mutex.Unlock()
 	reply.Marshal(w)
-
 	w.Flush()
 }
 

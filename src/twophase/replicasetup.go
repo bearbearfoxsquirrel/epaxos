@@ -32,7 +32,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	doChosenFWI bool, doValueFWI bool, doLatePropsFWI bool,
 	forwardingInstances int32, q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool,
 	disklessNOOP bool, forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32,
-	inductiveConfs bool, proposeToCatchUp bool, openInstToCatchUp bool) *Replica {
+	inductiveConfs bool, proposeToCatchUp bool, openInstToCatchUp bool, signalIfNoInstStarted bool, limPipelineOnPreempt bool) *Replica {
 
 	r := &Replica{
 		bcastAcceptDisklessNOOP:      bcastAcceptDisklessNoop,
@@ -283,7 +283,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		maxInitBackoff, maxBackoff, factor, softFac, constBackoff, minimalProposers, timeBasedBallots, mappedProposers,
 		dynamicMappedProposers, mappedProposersNum, pam, pamloc, doEager, forwardInduction,
 		doChosenFWI, doValueFWI, doLatePropsFWI, forwardingInstances,
-		eagerByExec, eagerByExecFac, r, batchSize, inductiveConfs, proposeToCatchUp, openInstToCatchUp)
+		eagerByExec, eagerByExecFac, r, batchSize, inductiveConfs, proposeToCatchUp, openInstToCatchUp, signalIfNoInstStarted, limPipelineOnPreempt)
 
 	r.Durable = durable
 
@@ -334,8 +334,9 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	constBackoff bool, minimalProposers bool, timeBasedBallots bool, mappedProposers bool, dynamicMappedProposers bool,
 	mappedProposersNum int32, pam bool, pamloc string, doEager bool, doEagerFI bool, doChosenFWI bool, doValueFWI bool,
 	doLatePropFWI bool, forwardingInstances int32, eagerByExec bool, eagerByExecFac float32, replica *Replica,
-	maxBatchSize int, inductiveConfs bool, proposeToCatchUp bool, OpenInstToCatchUp bool) {
+	maxBatchSize int, inductiveConfs bool, proposeToCatchUp bool, OpenInstToCatchUp bool, signalIfNoInstStarted bool, limPipelineOnPreempt bool) {
 
+	replica.signalIfNoInstStarted = signalIfNoInstStarted
 	replica.ProposerInstanceQuorumaliser = proposerInstanceQuorumaliser
 	pids := make([]int32, n)
 	for i := range pids {
@@ -391,8 +392,9 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 
 	// setup eager sig
 	eSig := proposer.EagerSigNew(sig, maxOpenInstances)
-	eESig := proposer.EagerExecUpToSigNew(eSig, float32(n), eagerByExecFac)
+	eESig := proposer.EagerExecUpToSigNew(eSig, float32(n), eagerByExecFac, limPipelineOnPreempt)
 	baselineProposer = proposer.BaselineProposerNew(id, eESig, eESig, instanceManager, backoffManager, balloter)
+	replica.ManualSignaller = eESig
 
 	// decide between eager and eager fi
 	var eagerProposer proposer.EagerByExecProposer = nil
