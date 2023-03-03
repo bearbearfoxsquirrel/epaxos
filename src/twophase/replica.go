@@ -620,6 +620,9 @@ func (r *Replica) UpdateMaxValueInstance(inst int32) {
 	if !r.proposeToCatchUp {
 		return
 	}
+	if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
+		return
+	}
 	go func() { r.proposableInstances <- struct{}{} }()
 }
 func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {

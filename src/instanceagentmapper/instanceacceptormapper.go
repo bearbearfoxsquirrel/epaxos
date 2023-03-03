@@ -8,6 +8,16 @@ type InstanceAgentMapper interface {
 	GetGroup(inst int32) []int32
 }
 
+//type FixedButLoadBalacingSetMapper struct {
+//	//FixedInstanceAgentMapping
+//	Groups []LoadBalancingSetMapper
+//}
+//
+//func (mapper *FixedButLoadBalacingSetMapper) GetGroup(inst int32) []int32 {
+//	bucket := int(inst)%len(mapper.Groups)
+//	return mapper.Groups[bucket].GetGroup(int(inst) / bucket))
+//}
+
 type FixedInstanceAgentMapping struct {
 	Groups [][]int32
 }

@@ -155,6 +155,7 @@ var proposeToCatchUp = flag.Bool("ptcu", false, "End noop wait early in 2p paxos
 var openInstToCatchUp = flag.Bool("oitcp", false, "Open new instances to catch up with other proposers in mapped instances")
 var signalIfNoInstanceStarted = flag.Bool("sinis", false, "Open new instance if not preparing but a batch is received")
 var limPipelineOnPreempt = flag.Bool("lpop", false, "Limit the pipeline so that proposers cannot open up more instances than max length if there is too much of a gap between current instance and executed instance")
+var eagerByMaxOutstandingChosen = flag.Bool("ebmoc", false, "Do eager with pipeline limited by max outstanding chosen but not yet executed")
 
 func main() {
 
@@ -266,7 +267,7 @@ func main() {
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *doEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *doChosenFWI, *doValueFWI, *doLatePropsFWI,
 			int32(*forwardingInstances), *q1, *bcastCommit, *nopreempt, *pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops,
-			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs, *proposeToCatchUp, *openInstToCatchUp, *signalIfNoInstanceStarted, *limPipelineOnPreempt)
+			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs, *proposeToCatchUp, *openInstToCatchUp, *signalIfNoInstanceStarted, *limPipelineOnPreempt, *eagerByMaxOutstandingChosen)
 		runnable = rep
 		rpc.Register(rep)
 		//}

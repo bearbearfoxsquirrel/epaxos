@@ -66,16 +66,12 @@ func (sig *SimpleSig) ballotShouldOpen(pbk *PBK, inst int32, ballot lwcproto.Con
 	if pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot) {
 		return false
 	}
-	//if ballot.Number > 20000 {
-	//	return false
-	//}
 	//if pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE { // we are already proopsing our own value
 	//	return
 	//}
 	//if  pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
 	//	return false
 	//}
-
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
 	return true
 }
@@ -103,9 +99,9 @@ func (sig *SimpleSig) acceptedShouldSignal(pbk *PBK, inst int32, ballot lwcproto
 	if pbk.Status == PROPOSING && pbk.PropCurBal.GreaterThan(ballot) { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
 		return false
 	}
-	if ballot.Number > 20000 {
-		return false
-	}
+	//if ballot.Number > 20000 {
+	//	return false
+	//}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as there is an accepted ballot")
 	return true
 }
@@ -128,6 +124,132 @@ func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, 
 	}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else or proposed someone else's value ", inst)
 	return true
+}
+
+type EagerMaxOutstandingSig struct {
+	EagerSig
+	myOutstandingChosenInsts map[int32]struct{}
+	//n                        float32
+	maxExecuted int32
+	fac         int
+	sigged      int32
+}
+
+func EagerMaxOutstandingSigNew(eagerSig *EagerSig, fac int) *EagerMaxOutstandingSig {
+	return &EagerMaxOutstandingSig{
+		EagerSig:                 *eagerSig,
+		myOutstandingChosenInsts: make(map[int32]struct{}),
+		fac:                      fac,
+		maxExecuted:              -1,
+		sigged:                   eagerSig.MaxOpenInsts,
+	}
+}
+
+func (sig *EagerMaxOutstandingSig) Opened(o []int32) {
+	if sig.sigged <= 0 {
+		panic("No recorded signals to open")
+	}
+	sig.SimpleSig.Opened(o)
+	sig.sigged -= int32(len(o))
+}
+
+func (sig *EagerMaxOutstandingSig) sigNextInst(inst int32) {
+	//if _, e := sig.instsStarted[inst]; !e {
+	//	panic("signalling for instance not started")
+	//}
+	sig.SimpleSig.sigNextInst(inst)
+	sig.sigged += 1
+}
+
+func (sig *EagerMaxOutstandingSig) SignalNext() {
+	sig.sigged += 1
+	go func() { sig.sigNewInst <- struct{}{} }()
+}
+
+func (sig *EagerMaxOutstandingSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+	if !sig.EagerSig.ballotShouldOpen(pbk, inst, ballot, phase) {
+		return
+	}
+	delete(sig.instsStarted, inst)
+	if sig.willOpeningExceedMaxOutstandingInsts() {
+		//delete(sig.instsStarted, inst)
+		return
+	}
+	if sig.tooManyOutstandingChosenInsts() {
+		return
+	}
+	sig.sigNextInst(inst)
+}
+
+func (sig *EagerMaxOutstandingSig) willOpeningExceedMaxOutstandingInsts() bool {
+	return len(sig.instsStarted)+int(sig.sigged) >= int(sig.MaxOpenInsts)
+}
+
+func (sig *EagerMaxOutstandingSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+	if !sig.EagerSig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
+		return
+	}
+	delete(sig.instsStarted, inst)
+	if sig.willOpeningExceedMaxOutstandingInsts() {
+		return
+	}
+	if sig.tooManyOutstandingChosenInsts() {
+		return
+	}
+	sig.sigNextInst(inst)
+}
+
+func (sig *EagerMaxOutstandingSig) tooManyOutstandingChosenInsts() bool {
+	if len(sig.myOutstandingChosenInsts) >= int(sig.MaxOpenInsts)*sig.fac {
+		return true
+	}
+	return false
+}
+
+func (sig *EagerMaxOutstandingSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+	if sig.id == int32(ballot.PropID) {
+		sig.myOutstandingChosenInsts[inst] = struct{}{}
+	}
+	if _, e := sig.instsStarted[inst]; !e {
+		return
+	}
+	delete(sig.instsStarted, inst)
+	if sig.willOpeningExceedMaxOutstandingInsts() {
+		return
+	}
+	if sig.tooManyOutstandingChosenInsts() {
+		return
+	}
+	sig.sigNextInst(inst)
+}
+
+func (sig *EagerMaxOutstandingSig) CheckExec(informer ExecInformer) {
+	if sig.maxExecuted >= informer.GetMaxExecuted() {
+		return
+	}
+	sig.maxExecuted = informer.GetMaxExecuted()
+	for i, _ := range sig.myOutstandingChosenInsts {
+		if i > sig.maxExecuted {
+			continue
+		}
+		delete(sig.myOutstandingChosenInsts, i)
+	}
+	dlog.AgentPrintfN(sig.id, "Checking whether to open up new instances")
+	toOpen := sig.MaxOpenInsts - (int32(len(sig.myOutstandingChosenInsts)) + sig.sigged + int32(len(sig.instsStarted)))
+	if toOpen+sig.sigged > sig.MaxOpenInsts {
+		panic("going to make a too long pipeline")
+	}
+	if toOpen <= 0 {
+		dlog.AgentPrintfN(sig.id, "Not opening up new instances as we have currently opened %d instances in the pipeline and %d signalled to start", len(sig.instsStarted), sig.sigged)
+		return
+	}
+	dlog.AgentPrintfN(sig.id, "Signalling to open %d new instance(s) as executed instance has caught up with current", toOpen)
+	sig.sigged += toOpen
+	go func(toOpen int32) {
+		for i := int32(0); i < toOpen; i++ {
+			sig.sigNewInst <- struct{}{}
+		}
+	}(toOpen)
 }
 
 type EagerExecUpToSig struct {
@@ -198,12 +320,16 @@ func (sig *EagerExecUpToSig) SignalNext() {
 //
 //}
 
+func (sig *EagerExecUpToSig) maxOutstandingInstancesExceeded() bool {
+	return len(sig.instsStarted)+int(sig.sigged) > int(sig.MaxOpenInsts)
+}
+
 func (sig *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if !sig.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
 	}
 
-	if len(sig.instsStarted) > int(sig.MaxOpenInsts) {
+	if sig.maxOutstandingInstancesExceeded() {
 		delete(sig.instsStarted, inst)
 		return
 	}
@@ -219,7 +345,7 @@ func (sig *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lw
 	if !sig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
 		return
 	}
-	if len(sig.instsStarted) > int(sig.MaxOpenInsts) {
+	if sig.maxOutstandingInstancesExceeded() {
 		delete(sig.instsStarted, inst)
 		return
 	}
@@ -234,7 +360,7 @@ func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.C
 		return
 	}
 
-	if len(sig.instsStarted) > int(sig.MaxOpenInsts) {
+	if sig.maxOutstandingInstancesExceeded() {
 		delete(sig.instsStarted, inst)
 		return
 	}
@@ -253,16 +379,16 @@ func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.C
 }
 
 func (sig *EagerExecUpToSig) CheckExec(informer ExecInformer) {
-	if sig.execUpTo >= informer.GetExecutedUpTo() {
+	if sig.execUpTo >= informer.GetMaxExecuted() {
 		return
 	}
-	sig.execUpTo = informer.GetExecutedUpTo()
+	sig.execUpTo = informer.GetMaxExecuted()
 	dlog.AgentPrintfN(sig.id, "Checking whether to open up new instances")
 	if sig.PipelineTooLong() {
 		return
 	}
 	for i, _ := range sig.instsStarted {
-		if i > informer.GetExecutedUpTo() {
+		if i > informer.GetMaxExecuted() {
 			continue
 		}
 		delete(sig.instsStarted, i)

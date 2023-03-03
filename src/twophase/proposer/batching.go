@@ -38,13 +38,12 @@ type CurBatch struct {
 	Uid        int32
 }
 
-func (b *SimpleBatcher) PutBatch(batch batching.ProposalBatch) {
+func (b *SimpleBatcher) PutBatch(batch batching.ProposalBatch) bool {
 	if _, e := b.chosenBatches[batch.GetUID()]; e {
-		return
+		return false
 	}
 	b.constructedAwaitingBatches = append(b.constructedAwaitingBatches, batch)
-	// put back in
-	// not if batch is chosen
+	return true
 }
 
 func remove(s []batching.ProposalBatch, i int) []batching.ProposalBatch {

@@ -12,7 +12,7 @@ import (
 type BatchManager interface {
 	AddProposal(clientRequest *genericsmr.Propose, othersAwaiting <-chan *genericsmr.Propose) bool
 	GetBatchToPropose() batching.ProposalBatch
-	PutBatch(batch batching.ProposalBatch)
+	PutBatch(batch batching.ProposalBatch) bool
 	CurrentBatchLen() int
 	GetNumBatchesMade() int
 }
@@ -73,8 +73,9 @@ func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lw
 	if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; e {
 		return
 	}
-	dlog.AgentPrintfN(manager.id, RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
-	bm.PutBatch(pbk.ClientProposals)
+	if bm.PutBatch(pbk.ClientProposals) {
+		dlog.AgentPrintfN(manager.id, RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
+	}
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
 	//pbk.ClientProposals = nil
 }
@@ -96,8 +97,9 @@ func (manager *SimpleBatchManager) LearnOfBallotValue(pbk *PBK, inst int32, ball
 	if _, e := manager.requeuedAt[inst][pbk.PropCurBal]; e {
 		return
 	}
-	dlog.AgentPrintfN(manager.id, RequeuingBatchAcceptedValue(inst, ballot.Ballot, whoseCmds, pbk.ClientProposals))
-	bm.PutBatch(pbk.ClientProposals)
+	if bm.PutBatch(pbk.ClientProposals) {
+		dlog.AgentPrintfN(manager.id, RequeuingBatchAcceptedValue(inst, ballot.Ballot, whoseCmds, pbk.ClientProposals))
+	}
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
 }
 
@@ -134,9 +136,10 @@ func (manager *SimpleBatchManager) ValueChosen(pbk *PBK, inst int32, whoseCmds i
 	case NotProposed:
 		break
 	case ProposedButNotChosen:
-		dlog.AgentPrintfN(manager.id, RequeuingBatchDifferentValueChosen(inst, whoseCmds, pbk.ClientProposals))
 		if _, e := manager.requeuedAt[inst]; !e {
-			bm.PutBatch(pbk.ClientProposals)
+			if bm.PutBatch(pbk.ClientProposals) {
+				dlog.AgentPrintfN(manager.id, RequeuingBatchDifferentValueChosen(inst, whoseCmds, pbk.ClientProposals))
+			}
 		}
 		break
 	case ProposedAndChosen:

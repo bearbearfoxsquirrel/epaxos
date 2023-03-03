@@ -27,7 +27,7 @@ func (e *EagerByExecExecutor) Learnt(inst int32, cmds []*state.Command, whose in
 }
 
 type SimpleExecutor struct {
-	executedUpTo  int32
+	maxExecuted   int32
 	clientBatches []batching.ProposalBatch
 	cmds          [][]*state.Command
 	learnt        []bool
@@ -40,16 +40,16 @@ type SimpleExecutor struct {
 }
 
 type ExecInformer interface {
-	GetExecutedUpTo() int32
+	GetMaxExecuted() int32
 }
 
-func (e *SimpleExecutor) GetExecutedUpTo() int32 {
-	return e.executedUpTo
+func (e *SimpleExecutor) GetMaxExecuted() int32 {
+	return e.maxExecuted
 }
 
 func GetNewExecutor(id int32, r *genericsmr.Replica, store stablestore.StableStore, dreply bool) SimpleExecutor {
 	return SimpleExecutor{
-		executedUpTo:  -1,
+		maxExecuted:   -1,
 		clientBatches: make([]batching.ProposalBatch, _const.ISpaceLen),
 		cmds:          make([][]*state.Command, _const.ISpaceLen),
 		learnt:        make([]bool, _const.ISpaceLen),
@@ -92,10 +92,10 @@ func (ex *SimpleExecutor) Learnt(inst int32, cmds []*state.Command, whose int32)
 }
 
 func (ex *SimpleExecutor) exec() {
-	oldExecutedUpTo := ex.executedUpTo
-	for ex.learnt[ex.executedUpTo+1] {
-		crt := ex.executedUpTo + 1
-		ex.executedUpTo += 1
+	oldExecutedUpTo := ex.maxExecuted
+	for ex.learnt[ex.maxExecuted+1] {
+		crt := ex.maxExecuted + 1
+		ex.maxExecuted += 1
 		if ex.whose[crt] != ex.meId {
 			dlog.AgentPrintfN(ex.meId, ExecutingFmt(crt, ex.whose[crt]))
 		} else {
@@ -122,7 +122,7 @@ func (ex *SimpleExecutor) exec() {
 			ex.replyToClientOfCmd(crt, j, val)
 		}
 	}
-	if ex.executedUpTo > oldExecutedUpTo {
+	if ex.maxExecuted > oldExecutedUpTo {
 		ex.recordExecutedUpTo()
 	}
 }
@@ -139,7 +139,7 @@ func (ex *SimpleExecutor) replyToClientOfCmd(inst int32, i int, value state.Valu
 
 func (ex *SimpleExecutor) recordExecutedUpTo() {
 	var b [4]byte
-	binary.LittleEndian.PutUint32(b[0:4], uint32(ex.executedUpTo))
+	binary.LittleEndian.PutUint32(b[0:4], uint32(ex.maxExecuted))
 	ex.StableStore.WriteAt(b[:], 4)
 }
 

@@ -226,7 +226,9 @@ type EagerFI struct {
 	*BackoffManager
 	Windy map[int32][]int32
 
-	*EagerExecUpToSig
+	OpenInstSignal
+	BallotOpenInstanceSignal
+	ExecOpenInstanceSignal
 	*balloter.Balloter
 
 	Forwarding int32
@@ -235,7 +237,7 @@ type EagerFI struct {
 }
 
 func (manager *EagerFI) GetStartInstanceSignaller() <-chan struct{} {
-	return manager.EagerExecUpToSig.GetSignaller()
+	return manager.OpenInstSignal.GetSignaller()
 }
 
 func (manager *EagerFI) GetCrtInstance() int32 {
@@ -251,11 +253,11 @@ func (manager *EagerFI) GetBalloter() *balloter.Balloter {
 }
 
 func (manager *EagerFI) GetStartInstanceChan() <-chan struct{} {
-	return manager.sigNewInst
+	return manager.OpenInstSignal.GetSignaller()
 }
 
 func (manager *EagerFI) GetExecSignaller() ExecOpenInstanceSignal {
-	return manager.EagerExecUpToSig
+	return manager.ExecOpenInstanceSignal
 }
 
 func (manager *EagerFI) addToWindy(index int, inst int32, pid int32) {
@@ -373,7 +375,7 @@ func (manager *EagerFI) StartNextInstance(instanceSpace *[]*PBK) []int32 {
 	(*instanceSpace)[manager.CrtInstance] = manager.SingleInstanceManager.InitInstance(manager.CrtInstance)
 	pbk := (*instanceSpace)[manager.CrtInstance]
 	opened := []int32{manager.CrtInstance}
-	manager.EagerExecUpToSig.Opened(opened)
+	manager.OpenInstSignal.Opened(opened)
 	manager.StartNextProposal(pbk, manager.CrtInstance)
 	return opened
 }
@@ -537,7 +539,7 @@ func (manager *EagerFI) LearnOfBallot(instanceSpace *[]*PBK, inst int32, ballot 
 	manager.UpdateCurrentInstance(instanceSpace, inst, int32(ballot.PropID))
 	pbk := (*instanceSpace)[inst]
 	manager.UpdateProposalFI(pbk, inst, ballot.Ballot)
-	manager.EagerExecUpToSig.CheckOngoingBallot(pbk, inst, ballot, phase)
+	manager.BallotOpenInstanceSignal.CheckOngoingBallot(pbk, inst, ballot, phase)
 	return manager.SingleInstanceManager.HandleReceivedBallot(pbk, inst, ballot, phase)
 }
 
@@ -545,15 +547,14 @@ func (manager *EagerFI) LearnOfBallotAccepted(instanceSpace *[]*PBK, inst int32,
 	manager.UpdateCurrentInstance(instanceSpace, inst, int32(ballot.PropID))
 	pbk := (*instanceSpace)[inst]
 	manager.UpdateValueFI(pbk, inst, ballot.Ballot)
-	manager.EagerExecUpToSig.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
-	return
+	manager.BallotOpenInstanceSignal.CheckAcceptedBallot(pbk, inst, ballot, whosecmds)
 }
 
 func (manager *EagerFI) LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
 	manager.UpdateCurrentInstance(instanceSpace, inst, int32(ballot.PropID))
 	pbk := (*instanceSpace)[inst]
 	manager.UpdateChosenFI(pbk, inst, ballot.Ballot)
-	manager.EagerExecUpToSig.CheckChosen(pbk, inst, ballot, whoseCmds)
+	manager.BallotOpenInstanceSignal.CheckChosen(pbk, inst, ballot, whoseCmds)
 	manager.SingleInstanceManager.HandleProposalChosen(pbk, inst, ballot)
 }
 
