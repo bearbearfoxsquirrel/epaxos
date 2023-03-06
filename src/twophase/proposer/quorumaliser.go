@@ -160,7 +160,7 @@ func (qrmliser *Minimal) GetGroup(inst int32) []int32 {
 }
 
 type StaticMapped struct {
-	AcceptorMapper instanceagentmapper.FixedInstanceAgentMapping
+	AcceptorMapper instanceagentmapper.InstanceAgentMapper
 	//MapperCache    map[int32][]int32
 	quorumsystem.SynodQuorumSystemConstructor
 	MyID int32

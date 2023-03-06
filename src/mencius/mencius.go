@@ -231,7 +231,6 @@ func (r *Replica) run() {
 	for !r.Shutdown {
 
 		select {
-
 		case skipS := <-r.skipChan:
 			skip := skipS.(*menciusproto.Skip)
 			//got a Skip from another replica
@@ -701,9 +700,11 @@ func (r *Replica) handleCommit(commit *menciusproto.Commit) {
 		inst.nbInstSkipped = int(commit.NbInstancesToSkip)
 		if inst.lb != nil && inst.lb.clientProposal != nil {
 			// try command in the next available instance
-			for i := 0; i < len(inst.lb.clientProposal); i++ {
-				r.ProposeChan <- inst.lb.clientProposal[i]
-			}
+			go func(proposals []*genericsmr.Propose) {
+				for i := 0; i < len(proposals); i++ {
+					r.ProposeChan <- proposals[i]
+				}
+			}(inst.lb.clientProposal)
 			inst.lb.clientProposal = nil
 		}
 	}
@@ -858,8 +859,8 @@ func (r *Replica) updateBlocking(instance int32) {
 						r.ReplyProposeTS(propreply, inst.lb.clientProposal[i].Reply, inst.lb.clientProposal[i].Mutex)
 					}
 
-					//		r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal.CommandId, state.NIL(), inst.lb.clientProposal.Timestamp},
-					//		inst.lb.clientProposal.Reply, inst.lb.clientProposal.Mutex)
+					//r.ReplyProposeTS(&genericsmrproto.ProposeReplyTS{TRUE, inst.lb.clientProposal.CommandId, state.NIL(), inst.lb.clientProposal.Timestamp},
+					//inst.lb.clientProposal.Reply, inst.lb.clientProposal.Mutex)
 				}
 				skip := FALSE
 				if inst.skipped {

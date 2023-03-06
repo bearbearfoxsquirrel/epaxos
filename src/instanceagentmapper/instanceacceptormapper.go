@@ -8,15 +8,25 @@ type InstanceAgentMapper interface {
 	GetGroup(inst int32) []int32
 }
 
-//type FixedButLoadBalacingSetMapper struct {
-//	//FixedInstanceAgentMapping
-//	Groups []LoadBalancingSetMapper
-//}
-//
-//func (mapper *FixedButLoadBalacingSetMapper) GetGroup(inst int32) []int32 {
-//	bucket := int(inst)%len(mapper.Groups)
-//	return mapper.Groups[bucket].GetGroup(int(inst) / bucket))
-//}
+type FixedButLoadBalacingSetMapper struct {
+	Groups []LoadBalancingSetMapper
+}
+
+func NewFixedButLoadBalacingSetMapper(groups [][]int32, f int32) *FixedButLoadBalacingSetMapper {
+	lpams := make([]LoadBalancingSetMapper, len(groups))
+	for i := 0; i < len(groups); i++ {
+		lpams[i] = LoadBalancingSetMapper{
+			Ids: groups[i],
+			G:   f + 1,
+		}
+	}
+	return &FixedButLoadBalacingSetMapper{Groups: lpams}
+}
+
+func (mapper *FixedButLoadBalacingSetMapper) GetGroup(inst int32) []int32 {
+	bucket := inst % int32(len(mapper.Groups))
+	return mapper.Groups[bucket].GetGroup(inst / bucket)
+}
 
 type FixedInstanceAgentMapping struct {
 	Groups [][]int32
@@ -47,7 +57,7 @@ type DetRandInstanceSetMapper struct {
 type LoadBalancingSetMapper struct {
 	Ids []int32
 	G   int32
-	N   int32
+	//N   int32
 }
 
 //func remove(slice []int32, s int) []int32 {

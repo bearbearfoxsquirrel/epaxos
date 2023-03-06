@@ -166,7 +166,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isle
 		//pmapping := instanceagentmapper.GetPMap(pamapping)
 		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
 		instancequormaliser = &proposer.StaticMapped{
-			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
+			AcceptorMapper:               &instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
 			SynodQuorumSystemConstructor: qrm,
 			MyID:                         r.Id,
 		}

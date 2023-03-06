@@ -255,7 +255,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		//pmapping := instanceagentmapper.GetPMap(pamapping)
 		learner.GetStaticDefinedAQConstructor(amapping, qrm.(quorumsystem.SynodQuorumSystemConstructor))
 		instancequormaliser = &proposer.StaticMapped{
-			AcceptorMapper:               instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
+			AcceptorMapper:               &instanceagentmapper.FixedInstanceAgentMapping{Groups: amapping},
 			SynodQuorumSystemConstructor: qrm,
 			MyID:                         r.Id,
 		}
@@ -398,10 +398,16 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	var es proposer.ExecOpenInstanceSignal
 	if eagerByExec {
 		eESig := proposer.EagerExecUpToSigNew(eSig, float32(n), eagerByExecFac, limPipelineOnPreempt)
+		os = eESig
 		s = eESig
+		sm = eESig
+		es = eESig
 	} else if eagerMaxOutstanding {
 		eESig := proposer.EagerMaxOutstandingSigNew(eSig, int(eagerByExecFac))
+		os = eESig
 		s = eESig
+		sm = eESig
+		es = eESig
 	}
 	baselineProposer = proposer.BaselineProposerNew(id, os, s, instanceManager, backoffManager, balloter)
 	replica.ManualSignaller = sm
@@ -426,9 +432,8 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 			ExecOpenInstanceSignal:   es,
 			Balloter:                 balloter,
 			Forwarding:               forwardingInstances,
-			//Forwarding:            (maxOpenInstances - 2) * n,
-			MaxStarted: -1,
-			MaxAt:      make(map[int32]int32),
+			MaxStarted:               -1,
+			MaxAt:                    make(map[int32]int32),
 		}
 
 		for _, pid := range pids {
@@ -469,12 +474,18 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		agentMapper = &instanceagentmapper.LoadBalancingSetMapper{
 			Ids: pids,
 			G:   mappedProposersNum,
-			N:   n,
+			//N:   n,
 		}
 	} else if pam {
 		pamap := instanceagentmapper.ReadFromFile(pamloc)
 		proposerMappings := instanceagentmapper.GetPMap(pamap)
-		agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{Groups: proposerMappings}
+		if mappedProposers {
+			agentMapper = instanceagentmapper.NewFixedButLoadBalacingSetMapper(proposerMappings, mappedProposersNum)
+		} else {
+			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{
+				Groups: proposerMappings,
+			}
+		}
 		// todo add subseting based on minimal mapped proposers to a fault group
 	} else {
 		panic("invalid options")
