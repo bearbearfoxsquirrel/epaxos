@@ -52,6 +52,7 @@ type Replica struct {
 	batchWait                int
 	skipwait_ms              int
 	max_skips_awaiting       int
+	maxBatchSize             int
 }
 
 func (r *Replica) CloseUp() {
@@ -89,7 +90,7 @@ type LeaderBookkeeping struct {
 	nacks          int
 }
 
-func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int, batch bool) *Replica {
+func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, durable bool, failures int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration, deadTime int32, batchwait int, skipwaitMs int, maxSkipsAwaiting int, batch bool, maxBatchSize int) *Replica {
 	skippedTo := make([]int32, len(peerAddrList))
 	for i := 0; i < len(skippedTo); i++ {
 		skippedTo[i] = -1
@@ -120,6 +121,7 @@ func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, thri
 		batchwait,
 		skipwaitMs,
 		maxSkipsAwaiting,
+		maxBatchSize,
 	}
 
 	r.Durable = durable
@@ -492,6 +494,9 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	r.crtInstance += int32(r.N)
 
 	batchSize := len(r.ProposeChan) + 1
+	if batchSize > r.maxBatchSize {
+		batchSize = r.maxBatchSize
+	}
 
 	cmds := make([]state.Command, batchSize)
 	proposals := make([]*genericsmr.Propose, batchSize)

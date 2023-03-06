@@ -123,7 +123,7 @@ func (b *SimpleBatcher) AddProposal(clientRequest *genericsmr.Propose, othersAwa
 	b.addToBatch(clientRequest)
 	b.tryFillRestOfBatch(othersAwaiting)
 
-	if len(b.nextBatch.Cmds) != b.nextBatch.MaxLength {
+	if len(b.nextBatch.Cmds) < b.nextBatch.MaxLength {
 		return false
 	}
 	batch := b.addBatchToQueue()
