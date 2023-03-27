@@ -128,33 +128,33 @@ func (latencyRecorder *LatencyRecorder) close() {
 }
 
 func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
-	select {
-	case <-latencyRecorder.beginRecording:
-		latencyRecorder.shouldRecord = true
-		if latencyRecorder.timeLatenciesRecording > 0 {
-			go func() {
-				timer := time.NewTimer(latencyRecorder.timeLatenciesRecording)
-				<-timer.C
-				latencyRecorder.stopRecording <- struct{}{}
-			}()
-		}
-		break
-	case <-latencyRecorder.stopRecording:
-		latencyRecorder.shouldRecord = false
-		break
-	default:
-		break
-	}
+	//select {
+	//case <-latencyRecorder.beginRecording:
+	//	latencyRecorder.shouldRecord = true
+	//	if latencyRecorder.timeLatenciesRecording > 0 {
+	//		go func() {
+	//			timer := time.NewTimer(latencyRecorder.timeLatenciesRecording)
+	//			<-timer.C
+	//			latencyRecorder.stopRecording <- struct{}{}
+	//		}()
+	//	}
+	//	break
+	//case <-latencyRecorder.stopRecording:
+	//	latencyRecorder.shouldRecord = false
+	//	break
+	//default:
+	//	break
+	//}
 
-	if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
-		_, err := latencyRecorder.outputFile.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + fmt.Sprintf("%d\n", latencyMicroseconds))
-		if err != nil {
-			dlog.Println("Error writing value")
-			return
-		}
-		latencyRecorder.numLatenciesLeft--
-
+	//if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
+	_, err := latencyRecorder.outputFile.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + fmt.Sprintf("%d\n", latencyMicroseconds))
+	if err != nil {
+		dlog.Println("Error writing value")
+		return
 	}
+	//latencyRecorder.numLatenciesLeft--
+
+	//}
 }
 
 func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToRecord int, timeLatenciesRecording time.Duration) LatencyRecorder {
