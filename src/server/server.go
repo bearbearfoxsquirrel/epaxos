@@ -158,9 +158,7 @@ var limPipelineOnPreempt = flag.Bool("lpop", false, "Limit the pipeline so that 
 var eagerByMaxOutstandingChosen = flag.Bool("ebmoc", false, "Do eager with pipeline limited by max outstanding chosen but not yet executed")
 
 func main() {
-
 	flag.Parse()
-
 	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
 
 	if *maxInitBackoff == 0 {

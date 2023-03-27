@@ -298,7 +298,7 @@ func main() {
 
 	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput, time.Second*time.Duration(*timeLatenciesRecording), *outputTimeseriesToFile, *timeseriesFile)
 
-	valueDone := make(chan ClientValue, *outstanding)
+	valueDone := make(chan ClientValue, *outstanding*2)
 
 	go func() {
 		proxyMutex.Lock()
@@ -308,7 +308,6 @@ func main() {
 			rep := new(genericsmrproto.ProposeReplyTS)
 			if err := rep.Unmarshal(replicaReader); err == nil {
 				if rep.OK == uint8(1) {
-
 					valueDone <- ClientValue{
 						uid:   rep.CommandId,
 						key:   int64(rep.CommandId),
@@ -347,6 +346,7 @@ func main() {
 			statsTimer = time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
 			break
 		case value := <-valueDone:
+			// todo don't send just handle in here
 			done := benchmarker.close(value)
 			if !done {
 				//	panic("returned value already done or never started")
