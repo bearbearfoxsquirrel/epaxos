@@ -33,13 +33,10 @@ var verbose *bool = flag.Bool("v", false, "verbose mode. ")
 var scan *bool = flag.Bool("s", false, "replace read with short scan (100 elements)")
 var connectReplica *int = flag.Int("connectreplica", -1, "Must state which replica to send requests to")
 var latencyOutput = flag.String("lato", "", "Must state where resultant latencies will be written")
-var settleInTime = flag.Int("settletime", 0, "Number of seconds to allow before recording latency")
-var numLatenciesRecording = flag.Int("numlatencies", -1, "Number of latencies to record")
-var timeLatenciesRecording = flag.Int("timerecordlatsecs", -1, "How long to record latencies for")
 var sampleRateMs = flag.Int("samerate", 1000, "how often to sample timeseries data (ms)")
-
 var outputTimeseriesToFile *bool = flag.Bool("timeseriestofile", false, "output the timeseries benchmark to a file")
 var timeseriesFile *string = flag.String("timeseriesfile", "", "where to store timeseries file")
+var forceFlush *bool = flag.Bool("ff", false, "Force flush log file output")
 
 type ClientValue struct {
 	uid   int32 //not great but its only for testing. Only need uid for local client
@@ -54,9 +51,10 @@ type TimeseriesStats struct {
 	deliveredRequests int64
 	deliveredBytes    int64
 	file              *os.File
+	forceFlush        bool
 }
 
-func NewTimeseriesStates(storeToFile bool, loc string) TimeseriesStats {
+func NewTimeseriesStates(storeToFile bool, loc string, forceFlush bool) TimeseriesStats {
 	timeseriesStat := TimeseriesStats{
 		minLatency:        math.MaxInt64,
 		maxLatency:        0,
@@ -66,6 +64,7 @@ func NewTimeseriesStates(storeToFile bool, loc string) TimeseriesStats {
 	}
 	if storeToFile {
 		timeseriesStat.file, _ = os.Create(loc)
+		timeseriesStat.forceFlush = forceFlush
 	}
 	return timeseriesStat
 }
@@ -110,13 +109,9 @@ func (stats *TimeseriesStats) close() {
 }
 
 type LatencyRecorder struct {
-	outputFile             *os.File
-	totalLatenciesToRecord int
-	beginRecording         chan bool
-	shouldRecord           bool
-	numLatenciesLeft       int
-	timeLatenciesRecording time.Duration
-	stopRecording          chan struct{}
+	outputFile    *os.File
+	stopRecording chan struct{}
+	forceFlush    bool
 }
 
 func (latencyRecorder *LatencyRecorder) close() {
@@ -128,57 +123,26 @@ func (latencyRecorder *LatencyRecorder) close() {
 }
 
 func (latencyRecorder *LatencyRecorder) record(latencyMicroseconds int64) {
-	//select {
-	//case <-latencyRecorder.beginRecording:
-	//	latencyRecorder.shouldRecord = true
-	//	if latencyRecorder.timeLatenciesRecording > 0 {
-	//		go func() {
-	//			timer := time.NewTimer(latencyRecorder.timeLatenciesRecording)
-	//			<-timer.C
-	//			latencyRecorder.stopRecording <- struct{}{}
-	//		}()
-	//	}
-	//	break
-	//case <-latencyRecorder.stopRecording:
-	//	latencyRecorder.shouldRecord = false
-	//	break
-	//default:
-	//	break
-	//}
-
-	//if latencyRecorder.shouldRecord && (latencyRecorder.numLatenciesLeft > 0 || latencyRecorder.totalLatenciesToRecord == -1) {
 	_, err := latencyRecorder.outputFile.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + fmt.Sprintf("%d\n", latencyMicroseconds))
 	if err != nil {
 		dlog.Println("Error writing value")
 		return
 	}
-	//latencyRecorder.numLatenciesLeft--
-
-	//}
+	if latencyRecorder.forceFlush {
+		latencyRecorder.outputFile.Sync()
+	}
 }
 
-func NewLatencyRecorder(outputFileLoc string, settleTime int, numLatenciesToRecord int, timeLatenciesRecording time.Duration) LatencyRecorder {
+func NewLatencyRecorder(outputFileLoc string, forceFlush bool) LatencyRecorder {
 	file, err := os.Create(outputFileLoc)
 	if err != nil {
 		panic("Cannot open latency recording output file at location")
 	}
-
 	recorder := LatencyRecorder{
-		outputFile:             file,
-		totalLatenciesToRecord: numLatenciesToRecord,
-		numLatenciesLeft:       numLatenciesToRecord,
-		timeLatenciesRecording: timeLatenciesRecording,
-		shouldRecord:           false,
-		beginRecording:         make(chan bool),
-		stopRecording:          make(chan struct{}),
+		outputFile:    file,
+		stopRecording: make(chan struct{}),
+		forceFlush:    forceFlush,
 	}
-
-	timer := time.NewTimer(time.Duration(settleTime) * time.Second)
-
-	go func() {
-		<-timer.C
-		recorder.beginRecording <- true
-	}()
 
 	return recorder
 }
@@ -190,11 +154,11 @@ type ClientBenchmarker struct {
 	clientID             int64
 }
 
-func newBenchmarker(clientID int64, numLatenciesToRecord int, settleTime int, recordedLatenciesPath string, timeLatenciesRecording time.Duration, storeTimeseriesToFile bool, timeSeriesFileLoc string) ClientBenchmarker {
+func newBenchmarker(clientID int64, recordedLatenciesPath string, storeTimeseriesToFile bool, timeSeriesFileLoc string, forceFlush bool) ClientBenchmarker {
 	benchmarker := ClientBenchmarker{
-		timeseriesStats:      NewTimeseriesStates(storeTimeseriesToFile, timeSeriesFileLoc),
+		timeseriesStats:      NewTimeseriesStates(storeTimeseriesToFile, timeSeriesFileLoc, forceFlush),
 		valueSubmissionTimes: make(map[int32]time.Time),
-		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, settleTime, numLatenciesToRecord, timeLatenciesRecording),
+		latencyRecorder:      NewLatencyRecorder(recordedLatenciesPath, forceFlush),
 		clientID:             clientID,
 	}
 	return benchmarker
@@ -234,13 +198,16 @@ func (benchmarker *ClientBenchmarker) close(value ClientValue) bool {
 func (benchmarker *ClientBenchmarker) timeseriesStep() {
 	if benchmarker.timeseriesStats.file != nil {
 		benchmarker.timeseriesStats.file.WriteString(time.Now().Format("2006/01/02 15:04:05") + " " + benchmarker.timeseriesStats.String() + "\n")
+		if benchmarker.timeseriesStats.forceFlush {
+			benchmarker.timeseriesStats.file.Sync()
+		}
 	} else {
 		log.Println(benchmarker.timeseriesStats.String())
 	}
 	benchmarker.timeseriesStats.reset()
 }
 
-func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize int, maxOutstanding int) ClientValue {
+func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize int, maxOutstanding int, lastUID int32) ClientValue {
 	if len(benchmarker.valueSubmissionTimes) == maxOutstanding {
 		panic("too many added to client outstadning values")
 	}
@@ -261,7 +228,8 @@ func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize in
 		//key = int64(rand.Int31() % int32(*conflicts+1))
 	}
 	val := ClientValue{
-		uid:   rand.Int31(),
+		uid: lastUID + 1,
+		//uid:   rand.Int31(),
 		key:   key,
 		value: wValue,
 	}
@@ -272,11 +240,10 @@ func generateAndBeginBenchmarkingValue(benchmarker ClientBenchmarker, valSize in
 }
 
 func benchmarkValue(proxy *bindings.Parameters, value ClientValue) {
-	proxy.Write(int32(value.uid), value.key, value.value)
+	proxy.Write(value.uid, value.key, value.value)
 }
 
 func main() {
-
 	flag.Parse()
 	runtime.GOMAXPROCS(*procs)
 	rand.Seed(time.Now().UnixNano() * int64(os.Getpid()))
@@ -296,10 +263,10 @@ func main() {
 		proxy.Disconnect()
 	}
 
-	benchmarker := newBenchmarker(clientId, *numLatenciesRecording, *settleInTime, *latencyOutput, time.Second*time.Duration(*timeLatenciesRecording), *outputTimeseriesToFile, *timeseriesFile)
+	benchmarker := newBenchmarker(clientId, *latencyOutput, *outputTimeseriesToFile, *timeseriesFile, *forceFlush)
+	valueDone := make(chan ClientValue, *outstanding)
 
-	valueDone := make(chan ClientValue, *outstanding*2)
-
+	// unmarshall loop
 	go func() {
 		proxyMutex.Lock()
 		replicaReader := proxy.GetListener()
@@ -316,26 +283,22 @@ func main() {
 				}
 			} else {
 				err = errors.New("Failed to receive a response.")
-				proxyMutex.Lock()
-				proxy.Connect()
-				replicaReader = proxy.GetListener()
-				benchmarker.reset()
-				beginBenchmarkingValues(benchmarker, proxy, *outstanding)
-				proxyMutex.Unlock()
+				os.Exit(1)
+				//todo move to main loop
+				//proxyMutex.Lock()
+				//proxy.Connect()
+				//replicaReader = proxy.GetListener()
+				//benchmarker.reset()
+				//beginBenchmarkingValues(benchmarker, proxy, *outstanding, lastUID)
+				//proxyMutex.Unlock()
 			}
 		}
 	}()
-
-	beginBenchmarkingValues(benchmarker, proxy, *outstanding)
-
+	lastUID := beginBenchmarkingValues(benchmarker, proxy, *outstanding, -1)
 	statsTimer := time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
-
-	// set up listener chan
-
 	shutdown := false
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, os.Kill)
-
 	for !shutdown {
 		select {
 		case <-interrupt:
@@ -351,7 +314,8 @@ func main() {
 			if !done {
 				//	panic("returned value already done or never started")
 			} else {
-				newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding)
+				newValue := generateAndBeginBenchmarkingValue(benchmarker, *psize, *outstanding, lastUID)
+				lastUID = newValue.uid
 				proxyMutex.Lock()
 				benchmarkValue(proxy, newValue)
 				proxyMutex.Unlock()
@@ -359,12 +323,13 @@ func main() {
 			break
 		}
 	}
-
 }
 
-func beginBenchmarkingValues(benchmarker ClientBenchmarker, proxy *bindings.Parameters, outstanding int) {
+func beginBenchmarkingValues(benchmarker ClientBenchmarker, proxy *bindings.Parameters, outstanding int, fromUID int32) int32 {
 	for i := 0; i < outstanding; i++ {
-		value := generateAndBeginBenchmarkingValue(benchmarker, *psize, outstanding)
+		value := generateAndBeginBenchmarkingValue(benchmarker, *psize, outstanding, fromUID)
 		proxy.Write(value.uid, value.key, value.value)
+		fromUID = value.uid
 	}
+	return fromUID
 }
