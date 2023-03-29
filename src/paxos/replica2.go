@@ -689,7 +689,7 @@ package paxos
 //	return s[:len(s)-1]
 //}
 //
-//func (man *ClientRequestBatcher) GetBatchToPropose() batching.ProposalBatch {
+//func (man *ClientRequestBatcher) GetFullBatchToPropose() batching.ProposalBatch {
 //	var bat batching.ProposalBatch = nil
 //	batID := int32(math.MaxInt32)
 //	selI := -1
@@ -1673,7 +1673,7 @@ package paxos
 //			r.ProposalStats.RecordPreviousValueProposed(stats.InstanceID{0, inst}, pbk.PropCurBal, len(pbk.Cmds))
 //		}
 //	} else {
-//		b := r.clientRequestManager.GetBatchToPropose()
+//		b := r.clientRequestManager.GetFullBatchToPropose()
 //		if b != nil {
 //			pbk.ClientProposals = b
 //			setProposingValue(pbk, r.Id, pbk.PropCurBal.Ballot, pbk.ClientProposals.GetCmds())

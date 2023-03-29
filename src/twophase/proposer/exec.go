@@ -77,6 +77,16 @@ func (ex *SimpleExecutor) Learnt(inst int32, cmds []*state.Command, whose int32)
 		return
 	}
 
+	//if whose == ex.meId {
+	//	if _, e := r.instanceProposeValueTimeout.chosenBatches[pbk.ClientProposals.GetUID()]; e {
+	//		dlog.AgentPrintfN(r.Id, proposer.LearntBatchAgainFmt(inst, chosenAt, r.Proposer, whoseCmd, pbk.ClientProposals))
+	//	} else {
+	//		dlog.AgentPrintfN(r.Id, proposer.LearntBatchFmt(inst, chosenAt, r.Proposer, whoseCmd, pbk.ClientProposals))
+	//	}
+	//r.instanceProposeValueTimeout.chosenBatches[pbk.ClientProposals.GetUID()] = struct{}{}
+	//} else {
+	//	dlog.AgentPrintfN(r.Id, proposer.LearntFmt(inst, chosenAt, r.Proposer, whoseCmd))
+	//}
 	ex.learnt[inst] = true
 	ex.whose[inst] = whose
 	ex.cmds[inst] = cmds

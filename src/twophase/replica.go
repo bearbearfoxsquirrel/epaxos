@@ -247,10 +247,9 @@ func (r *Replica) BatchingEnabled() bool {
 
 type InstanceProposeValueTimeout struct {
 	proposer.ProposedClientValuesManager
-	nextBatch                  proposer.CurBatch
 	sleepingInsts              map[int32]time.Time
 	constructedAwaitingBatches []batching.ProposalBatch
-	chosenBatches              map[int32]struct{}
+	//chosenBatches              map[int32]struct{}
 }
 
 // noop timers reordering seems to cause long delays if there are lots of sleeping instances
@@ -721,8 +720,9 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 	qrm := pbk.Qrms[pbk.PropCurBal]
 	qrm.StartAcceptanceQuorum()
 
+	// FIXME BBNG
 	if pbk.ProposeValueBal.IsZero() {
-		b := r.ClientBatcher.GetBatchToPropose()
+		b := r.ClientBatcher.GetFullBatchToPropose()
 		if b != nil {
 			pbk.ClientProposals = b
 			setProposingValue(pbk, r.Id, pbk.PropCurBal.Ballot, pbk.ClientProposals.GetCmds())
@@ -731,17 +731,9 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 				r.BeginWaitingForClientProposals(inst, pbk)
 				return
 			}
-			man := r.instanceProposeValueTimeout
-			if len(man.nextBatch.Cmds) > 0 {
-				b = &batching.Batch{
-					Proposals: man.nextBatch.ClientVals,
-					Cmds:      man.nextBatch.Cmds,
-					Uid:       man.nextBatch.Uid,
-				}
+			b = r.ClientBatcher.GetAnyBatchToPropose()
+			if b != nil {
 				dlog.AgentPrintfN(r.Id, "Assembled partial batch with UID %d (length %d values)", b.GetUID(), len(b.GetCmds()))
-				man.nextBatch.Cmds = make([]*state.Command, 0, man.nextBatch.MaxLength)
-				man.nextBatch.ClientVals = make([]*genericsmr.Propose, 0, man.nextBatch.MaxLength)
-				man.nextBatch.Uid += 1
 				pbk.ClientProposals = b
 				setProposingValue(pbk, r.Id, pbk.PropCurBal.Ballot, pbk.ClientProposals.GetCmds())
 			} else {
@@ -895,12 +887,12 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 	}
 	r.Proposer.LearnBallotChosen(&r.instanceSpace, inst, lwcproto.ConfigBal{Config: -1, Ballot: chosenAt}, whoseCmd) // todo add client value chosen log
 	if whoseCmd == r.Id {
-		if _, e := r.instanceProposeValueTimeout.chosenBatches[pbk.ClientProposals.GetUID()]; e {
+		if r.ClientBatcher.IsBatchChosen(pbk.ClientProposals) {
 			dlog.AgentPrintfN(r.Id, proposer.LearntBatchAgainFmt(inst, chosenAt, r.Proposer, whoseCmd, pbk.ClientProposals))
 		} else {
 			dlog.AgentPrintfN(r.Id, proposer.LearntBatchFmt(inst, chosenAt, r.Proposer, whoseCmd, pbk.ClientProposals))
 		}
-		r.instanceProposeValueTimeout.chosenBatches[pbk.ClientProposals.GetUID()] = struct{}{}
+		r.ClientBatcher.BatchChosen(pbk.ClientProposals)
 	} else {
 		dlog.AgentPrintfN(r.Id, proposer.LearntFmt(inst, chosenAt, r.Proposer, whoseCmd))
 	}

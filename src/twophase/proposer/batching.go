@@ -6,7 +6,6 @@ import (
 	"epaxos/genericsmr"
 	"epaxos/state"
 	"math"
-	"time"
 )
 
 type StartProposalBatcher struct {
@@ -26,7 +25,6 @@ type SimpleBatcher struct {
 	ProposedClientValuesManager
 	id                         int32
 	nextBatch                  CurBatch
-	sleepingInsts              map[int32]time.Time
 	constructedAwaitingBatches []batching.ProposalBatch
 	chosenBatches              map[int32]struct{}
 }
@@ -51,7 +49,7 @@ func remove(s []batching.ProposalBatch, i int) []batching.ProposalBatch {
 	return s[:len(s)-1]
 }
 
-func (b *SimpleBatcher) GetBatchToPropose() batching.ProposalBatch {
+func (b *SimpleBatcher) GetFullBatchToPropose() batching.ProposalBatch {
 	var batch batching.ProposalBatch = nil
 	batID := int32(math.MaxInt32)
 	selI := -1
@@ -59,7 +57,7 @@ func (b *SimpleBatcher) GetBatchToPropose() batching.ProposalBatch {
 		if _, e := b.chosenBatches[bat.GetUID()]; e {
 			continue
 		}
-		if bat.GetUID() > batID {
+		if bat.GetUID() > batID { // also prioritise min batch
 			continue
 		}
 		batch = bat
@@ -73,6 +71,25 @@ func (b *SimpleBatcher) GetBatchToPropose() batching.ProposalBatch {
 	return batch
 }
 
+func (b *SimpleBatcher) GetAnyBatchToPropose() batching.ProposalBatch {
+	batch := b.GetFullBatchToPropose()
+	if batch != nil {
+		return batch
+	}
+	// if no batch found, try current batching under construction
+	if b.CurrentBatchLen() == 0 {
+		return batch
+	}
+	batch = &batching.Batch{
+		Proposals: b.nextBatch.ClientVals,
+		Cmds:      b.nextBatch.Cmds,
+		Uid:       b.nextBatch.Uid,
+	}
+	b.startNextBatch()
+	return batch
+
+}
+
 func GetBatcher(id int32, maxBatchSize int) SimpleBatcher {
 	b := SimpleBatcher{
 		ProposedClientValuesManager: nil,
@@ -82,7 +99,6 @@ func GetBatcher(id int32, maxBatchSize int) SimpleBatcher {
 			ClientVals: make([]*genericsmr.Propose, 0, maxBatchSize),
 			Uid:        0,
 		},
-		sleepingInsts:              make(map[int32]time.Time),
 		constructedAwaitingBatches: make([]batching.ProposalBatch, 0, 100),
 		chosenBatches:              make(map[int32]struct{}),
 		id:                         id,
@@ -144,4 +160,12 @@ func (b *SimpleBatcher) CurrentBatchLen() int {
 func (b *SimpleBatcher) GetNumBatchesMade() int {
 	// if next batch len > 0 add 1
 	return len(b.constructedAwaitingBatches)
+}
+
+func (b *SimpleBatcher) BatchChosen(bat batching.ProposalBatch) {
+	b.chosenBatches[bat.GetUID()] = struct{}{}
+}
+func (b *SimpleBatcher) IsBatchChosen(bat batching.ProposalBatch) bool {
+	_, e := b.chosenBatches[bat.GetUID()]
+	return e
 }
