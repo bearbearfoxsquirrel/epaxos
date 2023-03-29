@@ -92,15 +92,15 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		sendPreparesToAllAcceptors:   sendPreparesToAllAcceptors,
 		instanceProposeValueTimeout: &InstanceProposeValueTimeout{
 			ProposedClientValuesManager: proposer.ProposedClientValuesManagerNew(int32(id)), //todo move to proposer
-			nextBatch: proposer.CurBatch{
-				MaxLength:  0,
-				Cmds:       nil,
-				ClientVals: nil,
-				Uid:        0,
-			},
+			//nextBatch: proposer.CurBatch{
+			//	MaxLength:  0,
+			//	Cmds:       nil,
+			//	ClientVals: nil,
+			//	Uid:        0,
+			//},
 			sleepingInsts:              make(map[int32]time.Time),
 			constructedAwaitingBatches: make([]batching.ProposalBatch, 100),
-			chosenBatches:              make(map[int32]struct{}),
+			//chosenBatches:              make(map[int32]struct{}),
 		},
 	}
 
