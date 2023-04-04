@@ -10,7 +10,7 @@ import (
 	"epaxos/proposerstate"
 	"epaxos/stablestore"
 	"epaxos/state"
-	"epaxos/stats"
+	//"epaxos/stats"
 	"epaxos/stdpaxosproto"
 	"epaxos/twophase/learner"
 	"epaxos/twophase/logfmt"
@@ -27,25 +27,19 @@ type ConcurrentFile struct {
 }
 
 func (f *ConcurrentFile) Sync() error {
-	dlog.AgentPrintfN(1, "acq sync lock")
 	f.Mutex.Lock()
-	dlog.AgentPrintfN(1, "release sync lock")
 	defer f.Mutex.Unlock()
 	return f.File.Sync()
 }
 
 func (f *ConcurrentFile) Write(b []byte) (int, error) {
-	dlog.AgentPrintfN(1, "acq write lock")
 	f.Mutex.Lock()
-	dlog.AgentPrintfN(1, "release write lock")
 	defer f.Mutex.Unlock()
 	return f.File.Write(b)
 }
 
 func (f *ConcurrentFile) WriteAt(b []byte, off int64) (int, error) {
-	dlog.AgentPrintfN(1, "acq write 2 lock")
 	f.Mutex.Lock()
-	dlog.AgentPrintfN(1, "release write 2 lock")
 	defer f.Mutex.Unlock()
 	return f.File.WriteAt(b, off)
 }
@@ -94,32 +88,33 @@ type Replica struct {
 	proposer.LearnerQuorumaliser
 	proposer.AcceptorQrmInfo
 
-	*genericsmr.Replica           // extends a generic Paxos replica
-	configChan                    chan fastrpc.Serializable
-	prepareChan                   chan fastrpc.Serializable
-	acceptChan                    chan fastrpc.Serializable
-	commitChan                    chan fastrpc.Serializable
-	commitShortChan               chan fastrpc.Serializable
-	prepareReplyChan              chan fastrpc.Serializable
-	acceptReplyChan               chan fastrpc.Serializable
-	stateChan                     chan fastrpc.Serializable
-	stateChanRPC                  uint8
-	prepareRPC                    uint8
-	acceptRPC                     uint8
-	commitRPC                     uint8
-	commitShortRPC                uint8
-	prepareReplyRPC               uint8
-	acceptReplyRPC                uint8
-	instanceSpace                 []*proposer.PBK // the space of all instances (used and not yet used)
-	Shutdown                      bool
-	counter                       int
-	flush                         bool
-	maxBatchWait                  int
-	crtOpenedInstances            []int32
-	proposableInstances           chan struct{}
-	noopWaitUs                    int32
-	RetryInstance                 chan proposer.RetryInfo
-	alwaysNoop                    bool
+	*genericsmr.Replica // extends a generic Paxos replica
+	configChan          chan fastrpc.Serializable
+	prepareChan         chan fastrpc.Serializable
+	acceptChan          chan fastrpc.Serializable
+	commitChan          chan fastrpc.Serializable
+	commitShortChan     chan fastrpc.Serializable
+	prepareReplyChan    chan fastrpc.Serializable
+	acceptReplyChan     chan fastrpc.Serializable
+	stateChan           chan fastrpc.Serializable
+	promiseLeases       chan acceptor.PromiseLease
+	stateChanRPC        uint8
+	prepareRPC          uint8
+	acceptRPC           uint8
+	commitRPC           uint8
+	commitShortRPC      uint8
+	prepareReplyRPC     uint8
+	acceptReplyRPC      uint8
+	instanceSpace       []*proposer.PBK // the space of all instances (used and not yet used)
+	Shutdown            bool
+	counter             int
+	flush               bool
+	maxBatchWait        int
+	proposableInstances chan struct{}
+	noopWaitUs          int32
+	RetryInstance       chan proposer.RetryInfo
+	tryInitPropose      chan proposer.RetryInfo
+	//alwaysNoop                    bool
 	lastTimeClientChosen          time.Time
 	lastOpenProposalTime          time.Time
 	timeSinceLastProposedInstance time.Time
@@ -138,35 +133,33 @@ type Replica struct {
 	recoveringFrom                int32
 	commitCatchUp                 bool
 	maxBatchSize                  int
-	TimeseriesStats               *stats.TimeseriesStats
-	InstanceStats                 *stats.InstanceStats
-	ProposalStats                 *stats.ProposalStats
-	sendProposerState             bool
-	proposerState                 proposerstate.State
+	//TimeseriesStats               *stats.TimeseriesStats
+	//InstanceStats                 *stats.InstanceStats
+	//ProposalStats                 *stats.ProposalStats
+	//sendProposerState             bool
+	//proposerState                 proposerstate.State
 	acceptor.Acceptor
 	stablestore.StableStore
 	proactivelyPrepareOnPreempt bool
 	noopWait                    time.Duration
-	messageFilterIn             chan *messageFilterComm
-	isAccMsgFilter              bool
-	expectedBatchedRequests     int32
-	sendPreparesToAllAcceptors  bool
+	//messageFilterIn             chan *messageFilterComm
+	//isAccMsgFilter              bool
+	//expectedBatchedRequests    int32
+	//sendPreparesToAllAcceptors bool
 	PrepareResponsesRPC
 	AcceptResponsesRPC
-	batchProposedObservers []ProposedObserver
-	proposedBatcheNumber   map[int32]int32
-	promiseLeases          chan acceptor.PromiseLease
-	classesLeased          map[int32]stdpaxosproto.Ballot
-	iWriteAhead            int32
-	writeAheadAcceptor     bool
-	tryInitPropose         chan proposer.RetryInfo
-	sendFastestQrm         bool
-	nudge                  chan chan batching.ProposalBatch
-	bcastCommit            bool
-	nopreempt              bool
-	bcastAcceptance        bool
-	syncAcceptor           bool
-	disklessNOOP           bool
+	//batchProposedObservers []ProposedObserver
+	//proposedBatcheNumber   map[int32]int32
+	classesLeased      map[int32]stdpaxosproto.Ballot
+	iWriteAhead        int32
+	writeAheadAcceptor bool
+	//sendFastestQrm         bool
+	//nudge                  chan chan batching.ProposalBatch
+	bcastCommit     bool
+	nopreempt       bool
+	bcastAcceptance bool
+	syncAcceptor    bool
+	disklessNOOP    bool
 
 	disklessNOOPPromisesAwaiting map[int32]chan struct{}
 	disklessNOOPPromises         map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}
@@ -174,18 +167,18 @@ type Replica struct {
 
 	ClientBatcher               proposer.BatchManager
 	instanceProposeValueTimeout *InstanceProposeValueTimeout
-	nextNoopEnd                 time.Time
-	nextNoop                    *time.Timer
-	noops                       int
-	resetTo                     chan time.Duration
-	noopCancel                  chan struct{}
-	bcastAcceptDisklessNOOP     bool
-	maxValueInstance            int32
-	maxValueInst                int32
-	proposeToCatchUp            bool
-	proposer.ManualSignaller
-	s                     int
-	signalIfNoInstStarted bool
+	//nextNoopEnd                 time.Time
+	//nextNoop                    *time.Timer
+	//noops                       int
+	//resetTo                     chan time.Duration
+	//noopCancel                  chan struct{}
+	bcastAcceptDisklessNOOP bool
+	maxValueInstance        int32
+	//maxValueInst            int32
+	proposeToCatchUp bool
+	//proposer.ManualSignaller
+	//s                     int
+	//signalIfNoInstStarted bool
 }
 
 func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot) bool {
@@ -222,10 +215,6 @@ type MyBatchLearner interface {
 	Learn(bat batching.ProposalBatch)
 }
 
-const MAXPROPOSABLEINST = 1000
-
-//const CHAN_BUFFER_SIZE = 200000
-
 func (r *Replica) CloseUp() {
 
 }
@@ -249,11 +238,9 @@ type InstanceProposeValueTimeout struct {
 	proposer.ProposedClientValuesManager
 	sleepingInsts              map[int32]time.Time
 	constructedAwaitingBatches []batching.ProposalBatch
-	//chosenBatches              map[int32]struct{}
 }
 
 // noop timers reordering seems to cause long delays if there are lots of sleeping instances
-
 func (r *Replica) updateNoopTimer() {
 	if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
 		dlog.AgentPrintfN(r.Id, "No more instances to noop so clearing noop timer")
@@ -409,23 +396,10 @@ func (r *Replica) run() {
 
 func (r *Replica) handleClientRequest(clientRequest *genericsmr.Propose) {
 	r.ClientBatcher.AddProposal(clientRequest, r.ProposeChan)
+	//r.RequestNotifer.GotRequest(clientRequest)
 	if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
 		dlog.AgentPrintfN(r.Id, "No instances to propose to propose batch to")
-		if r.ManualSignaller == nil {
-			return
-		}
-		if r.IsInstancesPreparing() {
-			return
-		}
-		if r.s == 1 {
-			return
-		}
-		if !r.signalIfNoInstStarted {
-			return
-		}
-		dlog.AgentPrintfN(r.Id, "Signalling new instance as there are none opened to propose batch to")
-		r.ManualSignaller.SignalNext()
-		r.s = 1
+		//dlog.AgentPrintfN(r.Id, "Signalling new instance as there are none opened to propose batch to")
 		return
 	}
 	for i := 0; i < r.ClientBatcher.GetNumBatchesMade(); i++ {
@@ -439,15 +413,6 @@ func (r *Replica) handleClientRequest(clientRequest *genericsmr.Propose) {
 			break
 		}
 	}
-}
-
-func (r *Replica) IsInstancesPreparing() bool {
-	for _, i := range r.crtOpenedInstances {
-		if r.instanceSpace[i].Status == proposer.PREPARING {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Replica) maxSleepingInstanceWithNoopExpired() int32 {
@@ -495,9 +460,6 @@ func (r *Replica) bcastCommitToAll(instance int32, ballot stdpaxosproto.Ballot, 
 
 func (r *Replica) beginNextInstance() {
 	// if in accept phase try propose, else try prepare?
-	if r.s == 1 {
-		r.s = 0
-	}
 	opened := r.Proposer.StartNextInstance(&r.instanceSpace)
 	for _, i := range opened {
 		pbk := r.instanceSpace[i]
@@ -556,9 +518,9 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 	if r.AcceptorQrmInfo.IsInGroup(prepare.Instance, r.Id) {
 		dlog.AgentPrintfN(r.Id, "Giving Prepare for instance %d at ballot %d.%d to acceptor as it can form a quorum", prepare.Instance, prepare.Number, prepare.PropID)
 		if r.syncAcceptor {
-			acceptorSyncHandlePrepare(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.nopreempt)
+			acceptorSyncHandlePrepare(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.Replica, r.nopreempt)
 		} else {
-			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.nopreempt)
+			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.Replica, r.nopreempt)
 		}
 	}
 
@@ -675,7 +637,7 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 				Instance: preply.Instance,
 				Ballot:   preply.Cur,
 			}
-			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, newPrep, r.PrepareResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.nopreempt)
+			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, newPrep, r.PrepareResponsesRPC, r.Replica, r.nopreempt)
 		}
 		return
 	}
@@ -719,7 +681,8 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 	dlog.AgentPrintfN(r.Id, "Attempting to propose value in instance %d", inst)
 	qrm := pbk.Qrms[pbk.PropCurBal]
 	qrm.StartAcceptanceQuorum()
-
+	b := r.Proposer.GetBalloter()
+	dlog.AgentPrintfN(r.Id, proposer.ProposingValue(r.Id, pbk, inst, int32(b.GetAttemptNumber(pbk.ProposeValueBal.Number)), r.isProposingDisklessNOOP(inst)))
 	// FIXME BBNG
 	if pbk.ProposeValueBal.IsZero() {
 		b := r.ClientBatcher.GetFullBatchToPropose()
@@ -749,8 +712,6 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 		panic("there must be something to propose")
 	}
 	pbk.SetNowProposing()
-	b := r.Proposer.GetBalloter()
-	dlog.AgentPrintfN(r.Id, proposer.ProposingValue(r.Id, pbk, inst, int32(b.GetAttemptNumber(pbk.ProposeValueBal.Number)), r.isProposingDisklessNOOP(inst)))
 	r.Learner.ProposalValue(inst, pbk.PropCurBal.Ballot, pbk.Cmds, pbk.WhoseCmds)
 	if pbk.ClientProposals != nil {
 		r.Executor.ProposedBatch(inst, pbk.ClientProposals)
@@ -833,7 +794,7 @@ func (r *Replica) acceptorHandleAcceptRequest(accept *stdpaxosproto.Accept) {
 		acceptorHandleAcceptLocal(r.Id, r.Acceptor, accept, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance, r.acceptReplyChan)
 		return
 	}
-	acceptorHandleAccept(r.Id, r.Learner, r.Acceptor, accept, r.AcceptResponsesRPC, r.isAccMsgFilter, r.messageFilterIn, r.Replica, r.bcastAcceptance, r.acceptReplyChan, r.nopreempt, r.bcastAcceptDisklessNOOP)
+	acceptorHandleAccept(r.Id, r.Learner, r.Acceptor, accept, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance, r.acceptReplyChan, r.nopreempt, r.bcastAcceptDisklessNOOP)
 }
 
 func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {

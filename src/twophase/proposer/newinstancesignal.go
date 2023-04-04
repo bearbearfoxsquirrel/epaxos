@@ -10,6 +10,7 @@ import (
 type OpenInstSignal interface {
 	Opened(opened []int32)
 	GetSignaller() <-chan struct{}
+	GetOpenedInstances() []int32
 }
 
 type BallotOpenInstanceSignal interface {
@@ -26,6 +27,48 @@ type SimpleSig struct {
 	instsStarted map[int32]struct{}
 	sigNewInst   chan struct{}
 	id           int32
+	//sigged bool
+}
+
+//
+//func (sig *SimpleSig) RequestReceieved(instanceSpace *[]*PBK) {
+//	//if sig.sigged {
+//	//	return
+//	//}
+//	startNewInst := true
+//	for inst := range sig.instsStarted {
+//		if (*instanceSpace)[inst].Status > READY_TO_PROPOSE {
+//			continue
+//		}
+//		startNewInst = false
+//	}
+//	if !startNewInst {
+//		return
+//	}
+//	go func() { sig.sigNewInst <- struct{}{} }()
+//}
+
+//type RequestReceivedSignaller interface {
+//	//RequestReceieved(instanceSpace *[]PBK)
+//}
+
+//type SignalIfNoInstanceStartedOnClientRequest struct {
+//	sigged bool
+//	instSpace []*PBK
+//}
+//
+//func (s *SignalIfNoInstanceStartedOnClientRequest) ReceiveClientRequest(req *genericsmr.Propose) {
+//	for _, inst := range s.instsStarted {
+//
+//	}
+//}
+
+func (sig *SimpleSig) GetOpenedInstances() []int32 {
+	keys := make([]int32, 0, len(sig.instsStarted))
+	for k := range sig.instsStarted {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func SimpleSigNew(newInstSig chan struct{}, id int32) *SimpleSig {
@@ -243,7 +286,7 @@ func (sig *EagerMaxOutstandingSig) CheckExec(informer ExecInformer) {
 		dlog.AgentPrintfN(sig.id, "Not opening up new instances as we have currently opened %d instances in the pipeline and %d signalled to start", len(sig.instsStarted), sig.sigged)
 		return
 	}
-	dlog.AgentPrintfN(sig.id, "Signalling to open %d new instance(s) as executed instance has caught up with current", toOpen)
+	dlog.AgentPrintfN(sig.id, "Signalling to open %d new instance(s) as executed instance %d has caught up with current instance", toOpen, sig.maxExecuted)
 	sig.sigged += toOpen
 	go func(toOpen int32) {
 		for i := int32(0); i < toOpen; i++ {
@@ -481,94 +524,94 @@ func (sig *EagerSig) DoSig() {
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
-type HedgedSig struct {
-	sigNewInst    chan struct{}
-	id            int32
-	currentHedges map[int32]*hedge
-}
-
-func HedgedSigNew(id int32, newInstSig chan struct{}) *HedgedSig {
-	return &HedgedSig{
-		sigNewInst:    newInstSig,
-		id:            id,
-		currentHedges: make(map[int32]*hedge),
-	}
-}
-
-func (sig *HedgedSig) Opened(opened []int32) {
-	for _, inst := range opened {
-		sig.currentHedges[inst] = &hedge{
-			relatedHedges: opened,
-			preempted:     false,
-		}
-	}
-}
-
-func (sig *HedgedSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
-	curHedge, e := sig.currentHedges[inst]
-	if !e {
-		return
-	}
-
-	// we have the most recent ballot preparing
-	if phase == stdpaxosproto.PROMISE && (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) || int32(ballot.PropID) == sig.id {
-		return
-	}
-
-	//if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == Sig.Id) {
-	//	return
-	//}
-
-	curHedge.preempted = true
-	dlog.AgentPrintfN(sig.id, "Noting that instance %d has failed", inst)
-	sig.checkNeedsSig(pbk, inst)
-}
-
-func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
-	//if pbk.Status == CLOSED {
-	//	return
-	//}
-	//Sig.checkInstFailed(pbk, inst, ballot)
-	curHedge, e := sig.currentHedges[inst]
-	if !e {
-		return
-	}
-
-	if !ballot.Equal(pbk.PropCurBal) {
-		curHedge.preempted = true
-		dlog.AgentPrintfN(sig.id, "Noting that instance %d has failed", inst)
-		sig.checkNeedsSig(pbk, inst)
-		return
-	}
-
-	dlog.AgentPrintfN(sig.id, "Noting that instance %d has succeeded. Cleaning all related hedges", inst)
-	for _, i := range curHedge.relatedHedges {
-		delete(sig.currentHedges, i)
-	}
-
-}
-
-func (sig *HedgedSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
-
-}
-
-func (sig *HedgedSig) checkNeedsSig(pbk *PBK, inst int32) {
-	curHedge, e := sig.currentHedges[inst]
-	if !e || pbk.Status == CLOSED {
-		return
-	}
-
-	// if all related hedged failed
-	for _, i := range curHedge.relatedHedges {
-		if !sig.currentHedges[i].preempted {
-			dlog.AgentPrintfN(sig.id, "Not signalling to open new instance %d as not all hedges preempted", inst)
-			return
-		}
-	}
-	for _, i := range curHedge.relatedHedges {
-		delete(sig.currentHedges, i)
-	}
-	delete(sig.currentHedges, inst)
-	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as all hedged attempts related to %d failed", inst)
-	go func() { sig.sigNewInst <- struct{}{} }()
-}
+//type HedgedSig struct {
+//	sigNewInst    chan struct{}
+//	id            int32
+//	currentHedges map[int32]*hedge
+//}
+//
+//func HedgedSigNew(id int32, newInstSig chan struct{}) *HedgedSig {
+//	return &HedgedSig{
+//		sigNewInst:    newInstSig,
+//		id:            id,
+//		currentHedges: make(map[int32]*hedge),
+//	}
+//}
+//
+//func (sig *HedgedSig) Opened(opened []int32) {
+//	for _, inst := range opened {
+//		sig.currentHedges[inst] = &hedge{
+//			relatedHedges: opened,
+//			preempted:     false,
+//		}
+//	}
+//}
+//
+//func (sig *HedgedSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
+//	curHedge, e := sig.currentHedges[inst]
+//	if !e {
+//		return
+//	}
+//
+//	// we have the most recent ballot preparing
+//	if phase == stdpaxosproto.PROMISE && (pbk.PropCurBal.Equal(ballot) || pbk.PropCurBal.GreaterThan(ballot)) || int32(ballot.PropID) == sig.id {
+//		return
+//	}
+//
+//	//if phase == stdpaxosproto.ACCEPTANCE && (pbk.Status == PROPOSING || int32(ballot.PropID) == Sig.Id) {
+//	//	return
+//	//}
+//
+//	curHedge.preempted = true
+//	dlog.AgentPrintfN(sig.id, "Noting that instance %d has failed", inst)
+//	sig.checkNeedsSig(pbk, inst)
+//}
+//
+//func (sig *HedgedSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
+//	//if pbk.Status == CLOSED {
+//	//	return
+//	//}
+//	//Sig.checkInstFailed(pbk, inst, ballot)
+//	curHedge, e := sig.currentHedges[inst]
+//	if !e {
+//		return
+//	}
+//
+//	if !ballot.Equal(pbk.PropCurBal) {
+//		curHedge.preempted = true
+//		dlog.AgentPrintfN(sig.id, "Noting that instance %d has failed", inst)
+//		sig.checkNeedsSig(pbk, inst)
+//		return
+//	}
+//
+//	dlog.AgentPrintfN(sig.id, "Noting that instance %d has succeeded. Cleaning all related hedges", inst)
+//	for _, i := range curHedge.relatedHedges {
+//		delete(sig.currentHedges, i)
+//	}
+//
+//}
+//
+//func (sig *HedgedSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
+//
+//}
+//
+//func (sig *HedgedSig) checkNeedsSig(pbk *PBK, inst int32) {
+//	curHedge, e := sig.currentHedges[inst]
+//	if !e || pbk.Status == CLOSED {
+//		return
+//	}
+//
+//	// if all related hedged failed
+//	for _, i := range curHedge.relatedHedges {
+//		if !sig.currentHedges[i].preempted {
+//			dlog.AgentPrintfN(sig.id, "Not signalling to open new instance %d as not all hedges preempted", inst)
+//			return
+//		}
+//	}
+//	for _, i := range curHedge.relatedHedges {
+//		delete(sig.currentHedges, i)
+//	}
+//	delete(sig.currentHedges, inst)
+//	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as all hedged attempts related to %d failed", inst)
+//	go func() { sig.sigNewInst <- struct{}{} }()
+//}

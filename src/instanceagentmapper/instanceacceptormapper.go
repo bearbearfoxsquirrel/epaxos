@@ -24,8 +24,9 @@ func NewFixedButLoadBalacingSetMapper(groups [][]int32, f int32) *FixedButLoadBa
 }
 
 func (mapper *FixedButLoadBalacingSetMapper) GetGroup(inst int32) []int32 {
-	bucket := inst % int32(len(mapper.Groups))
-	return mapper.Groups[bucket].GetGroup(inst / bucket)
+	numGs := int32(len(mapper.Groups))
+	bucket := inst % numGs
+	return mapper.Groups[bucket].GetGroup(inst / numGs)
 }
 
 type FixedInstanceAgentMapping struct {
@@ -59,10 +60,6 @@ type LoadBalancingSetMapper struct {
 	G   int32
 	//N   int32
 }
-
-//func remove(slice []int32, s int) []int32 {
-//	return append(slice[:s], slice[s+1:]...)
-//}
 
 func (mapper *LoadBalancingSetMapper) GetGroup(inst int32) []int32 {
 	insti := int(inst)
@@ -138,9 +135,8 @@ type InstanceAcceptorGridMapper struct {
 	N         int32
 }
 
-func remove(s []int32, i int32) []int32 {
-	s[i] = s[len(s)-1]
-	return s[:len(s)-1]
+func remove(slice []int32, s int32) []int32 {
+	return append(slice[:s], slice[s+1:]...)
 }
 
 func (mapper *InstanceAcceptorGridMapper) GetGroup(inst int32) []int32 {

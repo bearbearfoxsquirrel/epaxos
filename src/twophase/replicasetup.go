@@ -9,7 +9,6 @@ import (
 	"epaxos/proposerstate"
 	"epaxos/quorumsystem"
 	"epaxos/stdpaxosproto"
-	"epaxos/twophase/aceptormessagefilter"
 	"epaxos/twophase/balloter"
 	_const "epaxos/twophase/const"
 	"epaxos/twophase/learner"
@@ -44,10 +43,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		syncAcceptor:                 syncaceptor,
 		nopreempt:                    nopreempt,
 		bcastCommit:                  bcastCommit,
-		nudge:                        make(chan chan batching.ProposalBatch, maxOpenInstances*int32(replica.N)),
-		sendFastestQrm:               sendFastestAccQrm,
 		Replica:                      replica,
-		proposedBatcheNumber:         make(map[int32]int32),
 		bcastAcceptance:              bcastAcceptance,
 		stateChan:                    make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		configChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -69,10 +65,8 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		counter:                      0,
 		flush:                        true,
 		maxBatchWait:                 batchWait,
-		crtOpenedInstances:           make([]int32, maxOpenInstances),
-		proposableInstances:          make(chan struct{}, MAXPROPOSABLEINST*replica.N),
+		proposableInstances:          make(chan struct{}, 1000*replica.N),
 		noopWaitUs:                   noopwait,
-		alwaysNoop:                   alwaysNoop,
 		fastLearn:                    false,
 		whoCrash:                     whoCrash,
 		whenCrash:                    whenCrash,
@@ -85,22 +79,12 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		flushCommit:                  flushCommit,
 		commitCatchUp:                commitCatchup,
 		maxBatchSize:                 batchSize,
-		sendProposerState:            sendProposerState,
 		noopWait:                     time.Duration(noopwait) * time.Microsecond,
 		proactivelyPrepareOnPreempt:  proactivePreemptOnNewB,
-		expectedBatchedRequests:      200,
-		sendPreparesToAllAcceptors:   sendPreparesToAllAcceptors,
 		instanceProposeValueTimeout: &InstanceProposeValueTimeout{
 			ProposedClientValuesManager: proposer.ProposedClientValuesManagerNew(int32(id)), //todo move to proposer
-			//nextBatch: proposer.CurBatch{
-			//	MaxLength:  0,
-			//	Cmds:       nil,
-			//	ClientVals: nil,
-			//	Uid:        0,
-			//},
-			sleepingInsts:              make(map[int32]time.Time),
-			constructedAwaitingBatches: make([]batching.ProposalBatch, 100),
-			//chosenBatches:              make(map[int32]struct{}),
+			sleepingInsts:               make(map[int32]time.Time),
+			constructedAwaitingBatches:  make([]batching.ProposalBatch, 100),
 		},
 	}
 
@@ -109,28 +93,6 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	for i := range pids {
 		pids[i] = int32(i)
 		ids[i] = i
-	}
-
-	var amf aceptormessagefilter.AcceptorMessageFilter = nil
-	r.isAccMsgFilter = minimalAcceptorNegatives
-	if minimalAcceptorNegatives {
-		if useGridQrms {
-			panic("incompatible options")
-		}
-		amf = aceptormessagefilter.MinimalAcceptorFilterNew(&instanceagentmapper.InstanceNegativeAcceptorSetMapper{
-			Acceptors: pids,
-			F:         int32(r.F),
-			N:         int32(r.N),
-		})
-	}
-	if amf != nil {
-		messageFilter := messageFilterRoutine{
-			AcceptorMessageFilter: amf,
-			aid:                   r.Id,
-			messageFilterIn:       make(chan *messageFilterComm, 1000),
-		}
-		r.messageFilterIn = messageFilter.messageFilterIn
-		go messageFilter.startFilter()
 	}
 
 	if r.UDP {
@@ -311,7 +273,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	var prepareSender ListSender = &tcpSender
 	var valueSender ListSender = &tcpSender
 	if r.UDP {
-		if !r.sendPreparesToAllAcceptors {
+		if !sendPreparesToAllAcceptors {
 			panic("Not implemented yet")
 		}
 		prepareSender = &UnreliableUDPListSender{Replica: r.Replica}
@@ -335,7 +297,7 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	maxBatchSize int, inductiveConfs bool, proposeToCatchUp bool, OpenInstToCatchUp bool, signalIfNoInstStarted bool,
 	limPipelineOnPreempt bool, eagerMaxOutstanding bool) {
 
-	replica.signalIfNoInstStarted = signalIfNoInstStarted
+	//replica.signalIfNoInstStarted = signalIfNoInstStarted
 	replica.ProposerInstanceQuorumaliser = proposerInstanceQuorumaliser
 	pids := make([]int32, n)
 	for i := range pids {
@@ -410,7 +372,6 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		es = eESig
 	}
 	baselineProposer = proposer.BaselineProposerNew(id, os, s, instanceManager, backoffManager, balloter)
-	replica.ManualSignaller = sm
 
 	// decide between eager and eager fi
 	var eagerProposer proposer.EagerByExecProposer = nil
@@ -474,19 +435,18 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		agentMapper = &instanceagentmapper.LoadBalancingSetMapper{
 			Ids: pids,
 			G:   mappedProposersNum,
-			//N:   n,
 		}
-	} else if pam {
+	}
+	if pam {
 		pamap := instanceagentmapper.ReadFromFile(pamloc)
 		proposerMappings := instanceagentmapper.GetPMap(pamap)
 		if mappedProposers {
-			agentMapper = instanceagentmapper.NewFixedButLoadBalacingSetMapper(proposerMappings, mappedProposersNum)
+			agentMapper = instanceagentmapper.NewFixedButLoadBalacingSetMapper(proposerMappings, f)
 		} else {
 			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{
 				Groups: proposerMappings,
 			}
 		}
-		// todo add subseting based on minimal mapped proposers to a fault group
 	} else {
 		panic("invalid options")
 	}

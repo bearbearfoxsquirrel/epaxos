@@ -9,6 +9,25 @@ import (
 	"epaxos/stdpaxosproto"
 )
 
+//type RequestNotifier interface {
+//	RegisterInterest(func(request *genericsmr.Propose))
+//	ReadAllAboutIt(request *genericsmr.Propose)
+//}
+//
+//type requestNotifer struct {
+//	registered []func(request *genericsmr.Propose)
+//}
+//
+//func (r requestNotifer) RegisterInterest(f func(request *genericsmr.Propose)) {
+//	r.registered = append(r.registered, f)
+//}
+//
+//func (r requestNotifer) ReadAllAboutIt(request *genericsmr.Propose) {
+//	for _, f := range r.registered {
+//		f(request)
+//	}
+//}
+
 type BatchManager interface {
 	AddProposal(clientRequest *genericsmr.Propose, othersAwaiting <-chan *genericsmr.Propose) bool
 	GetFullBatchToPropose() batching.ProposalBatch

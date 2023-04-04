@@ -20,6 +20,10 @@ type ProposalManager interface {
 	//LearntOfBallotValue(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32)
 	LearnBallotChosen(instanceSpace *[]*PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32)
 	DecideRetry(pbk *PBK, retry RetryInfo) bool
+
+	// todo change interface to have promise, preempted promise, acceptance, and preempted acceptance here
+
+	//ReceivedClientValue()
 }
 
 type CrtInstanceOracle interface {
@@ -53,6 +57,18 @@ type BaselineManager struct {
 	OpenInstSignal
 	*balloter.Balloter
 }
+
+//
+//func (manager *BaselineManager) ReceivedClientValue(*[]*PBK instanceSpace) {
+//	for _, i := range manager.OpenInstSignal.GetOpenedInstances() {
+//		if (*ins)[i] == PREPARING {
+//			return true
+//		}
+//	}
+//	return false
+////if manager.OpenInstSignal.GetSignaller()
+////if manager.open
+//}
 
 func (manager *BaselineManager) GetStartInstanceSignaller() <-chan struct{} {
 	return manager.OpenInstSignal.GetSignaller()

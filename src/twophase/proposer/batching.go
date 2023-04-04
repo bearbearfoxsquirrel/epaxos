@@ -44,15 +44,19 @@ func (b *SimpleBatcher) PutBatch(batch batching.ProposalBatch) bool {
 	return true
 }
 
+//func remove(s []batching.ProposalBatch, i int) []batching.ProposalBatch {
+//	s[i] = s[len(s)-1]
+//	return s[:len(s)-1]
+//}
+
 func remove(s []batching.ProposalBatch, i int) []batching.ProposalBatch {
-	s[i] = s[len(s)-1]
-	return s[:len(s)-1]
+	return append(s[:i], s[i+1:]...)
 }
 
 func (b *SimpleBatcher) GetFullBatchToPropose() batching.ProposalBatch {
 	var batch batching.ProposalBatch = nil
 	batID := int32(math.MaxInt32)
-	selI := -1
+	selectedBatch := -1
 	for i, bat := range b.constructedAwaitingBatches {
 		if _, e := b.chosenBatches[bat.GetUID()]; e {
 			continue
@@ -62,11 +66,11 @@ func (b *SimpleBatcher) GetFullBatchToPropose() batching.ProposalBatch {
 		}
 		batch = bat
 		batID = bat.GetUID()
-		selI = i
+		selectedBatch = i
 	}
 
-	if selI != -1 {
-		b.constructedAwaitingBatches = remove(b.constructedAwaitingBatches, selI)
+	if selectedBatch != -1 {
+		b.constructedAwaitingBatches = remove(b.constructedAwaitingBatches, selectedBatch)
 	}
 	return batch
 }
