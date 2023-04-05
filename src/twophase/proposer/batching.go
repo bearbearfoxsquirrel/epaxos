@@ -44,11 +44,6 @@ func (b *SimpleBatcher) PutBatch(batch batching.ProposalBatch) bool {
 	return true
 }
 
-//func remove(s []batching.ProposalBatch, i int) []batching.ProposalBatch {
-//	s[i] = s[len(s)-1]
-//	return s[:len(s)-1]
-//}
-
 func remove(s []batching.ProposalBatch, i int) []batching.ProposalBatch {
 	return append(s[:i], s[i+1:]...)
 }
