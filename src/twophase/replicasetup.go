@@ -441,7 +441,7 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		pamap := instanceagentmapper.ReadFromFile(pamloc)
 		proposerMappings := instanceagentmapper.GetPMap(pamap)
 		if mappedProposers {
-			agentMapper = instanceagentmapper.NewFixedButLoadBalacingSetMapper(proposerMappings, f)
+			agentMapper = instanceagentmapper.NewFixedButLoadBalacingSetMapper(proposerMappings, mappedProposersNum)
 		} else {
 			agentMapper = &instanceagentmapper.FixedInstanceAgentMapping{
 				Groups: proposerMappings,

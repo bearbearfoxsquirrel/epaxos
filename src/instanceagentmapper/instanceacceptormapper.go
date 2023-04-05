@@ -12,12 +12,12 @@ type FixedButLoadBalacingSetMapper struct {
 	Groups []LoadBalancingSetMapper
 }
 
-func NewFixedButLoadBalacingSetMapper(groups [][]int32, f int32) *FixedButLoadBalacingSetMapper {
+func NewFixedButLoadBalacingSetMapper(groups [][]int32, g int32) *FixedButLoadBalacingSetMapper {
 	lpams := make([]LoadBalancingSetMapper, len(groups))
 	for i := 0; i < len(groups); i++ {
 		lpams[i] = LoadBalancingSetMapper{
 			Ids: groups[i],
-			G:   f + 1,
+			G:   g,
 		}
 	}
 	return &FixedButLoadBalacingSetMapper{Groups: lpams}
