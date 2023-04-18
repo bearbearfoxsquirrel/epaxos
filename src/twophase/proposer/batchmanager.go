@@ -3,10 +3,10 @@ package proposer
 import (
 	"epaxos/batching"
 	"epaxos/dlog"
-	"epaxos/genericsmr"
 	"epaxos/lwcproto"
 	"epaxos/state"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/balloter"
 )
 
 //type RequestNotifier interface {
@@ -14,41 +14,35 @@ import (
 //	ReadAllAboutIt(request *genericsmr.Propose)
 //}
 //
-//type requestNotifer struct {
+//type requestNotifier struct {
 //	registered []func(request *genericsmr.Propose)
 //}
 //
-//func (r requestNotifer) RegisterInterest(f func(request *genericsmr.Propose)) {
+//func (r requestNotifier) RegisterInterest(f func(request *genericsmr.Propose)) {
 //	r.registered = append(r.registered, f)
 //}
 //
-//func (r requestNotifer) ReadAllAboutIt(request *genericsmr.Propose) {
+//func (r requestNotifier) ReadAllAboutIt(request *genericsmr.Propose) {
 //	for _, f := range r.registered {
 //		f(request)
 //	}
 //}
 
-type BatchManager interface {
-	AddProposal(clientRequest *genericsmr.Propose, othersAwaiting <-chan *genericsmr.Propose) bool
-	GetFullBatchToPropose() batching.ProposalBatch
-	GetAnyBatchToPropose() batching.ProposalBatch
-	PutBatch(batch batching.ProposalBatch) bool
-	CurrentBatchLen() int
-	GetNumBatchesMade() int
-	BatchChosen(batch batching.ProposalBatch)
-	IsBatchChosen(batch batching.ProposalBatch) bool
-}
+//type ProposerValueManager interface {
+//Batching
+//ProposedClientValuesManager
+//}
 
 type ValuePreemptedHandler interface {
-	LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm BatchManager)
+	LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm Batching)
 }
 
 type AcceptedValueHandler interface {
-	LearnOfBallotValue(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32, bm BatchManager)
+	LearnOfBallotValue(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32, bm Batching)
 }
 
 type ValueChosenHandler interface {
-	ValueChosen(pbk *PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager)
+	ValueChosen(pbk *PBK, inst int32, whoseCmds int32, bm Batching, balloter *balloter.Balloter)
 }
 
 type ClientBatchProposedHandler interface {
@@ -81,7 +75,7 @@ func (manager *SimpleBatchManager) proposingBatch(pbk *PBK, inst int32, batch ba
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm BatchManager) {
+func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm Batching) {
 	//todo log
 	if pbk.ClientProposals == nil {
 		return
@@ -103,7 +97,7 @@ func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lw
 }
 
 // is this after or before
-func (manager *SimpleBatchManager) LearnOfBallotValue(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, cmd []*state.Command, whoseCmds int32, bm BatchManager) {
+func (manager *SimpleBatchManager) LearnOfBallotValue(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32, bm Batching) {
 	if pbk.ClientProposals == nil {
 		return
 	}
@@ -150,10 +144,34 @@ func whatHappenedToClientProposals(pbk *PBK, whoseCmds int32, myId int32) Client
 	return ProposedAndChosen
 }
 
-func (manager *SimpleBatchManager) ValueChosen(pbk *PBK, inst int32, whoseCmds int32, cmds []*state.Command, bm BatchManager) {
+func compareValuesChosenWithMine(id int32, inst int32, ballot lwcproto.ConfigBal, balloter *balloter.Balloter, whoseCmds int32, batcher Batching, myBatch batching.ProposalBatch) {
+	if whoseCmds == id {
+		if batcher.IsBatchChosen(myBatch) {
+			dlog.AgentPrintfN(id, LearntBatchAgainFmt(inst, ballot.Ballot, balloter, whoseCmds, myBatch))
+		} else {
+			dlog.AgentPrintfN(id, LearntBatchFmt(inst, ballot.Ballot, balloter, whoseCmds, myBatch))
+		}
+		batcher.BatchChosen(myBatch)
+	} else {
+		dlog.AgentPrintfN(id, LearntFmt(inst, ballot.Ballot, balloter, whoseCmds))
+	}
+}
+
+func (manager *SimpleBatchManager) ValueChosen(pbk *PBK, inst int32, whoseCmds int32, bm Batching, balloter *balloter.Balloter) {
 	if pbk.WhoseCmds == manager.id && pbk.ClientProposals == nil {
 		panic("client values chosen but we won't recognise that")
 	}
+
+	if whoseCmds == manager.id {
+		if bm.IsBatchChosen(pbk.ClientProposals) {
+			dlog.AgentPrintfN(manager.id, LearntBatchAgainFmt(inst, pbk.PropCurBal.Ballot, balloter, whoseCmds, pbk.ClientProposals))
+		} else {
+			dlog.AgentPrintfN(manager.id, LearntBatchFmt(inst, pbk.PropCurBal.Ballot, balloter, whoseCmds, pbk.ClientProposals))
+		}
+	} else {
+		dlog.AgentPrintfN(manager.id, LearntFmt(inst, pbk.ProposeValueBal.Ballot, balloter, whoseCmds))
+	}
+
 	switch whatHappenedToClientProposals(pbk, whoseCmds, manager.id) {
 	case NotProposed:
 		break
@@ -165,6 +183,7 @@ func (manager *SimpleBatchManager) ValueChosen(pbk *PBK, inst int32, whoseCmds i
 		}
 		break
 	case ProposedAndChosen:
+		bm.BatchChosen(pbk.ClientProposals)
 		break
 	}
 	pbk.ClientProposals = nil

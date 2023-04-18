@@ -9,8 +9,13 @@ import (
 
 type OpenInstSignal interface {
 	Opened(opened []int32)
-	GetSignaller() <-chan struct{}
+	GetSignals() <-chan struct{}
 	GetOpenedInstances() []int32
+	SignalNewInstance()
+}
+
+type RequestRecivedSignaller interface {
+	ReceivedClientRequest(instanceSpace []*PBK)
 }
 
 type BallotOpenInstanceSignal interface {
@@ -23,45 +28,24 @@ type ExecOpenInstanceSignal interface {
 	CheckExec(informer ExecInformer)
 }
 
-type SimpleSig struct {
-	instsStarted map[int32]struct{}
-	sigNewInst   chan struct{}
-	id           int32
-	//sigged bool
+type ManualSignaller interface {
+	SignalNext()
 }
 
-//
-//func (sig *SimpleSig) RequestReceieved(instanceSpace *[]*PBK) {
-//	//if sig.sigged {
-//	//	return
-//	//}
-//	startNewInst := true
-//	for inst := range sig.instsStarted {
-//		if (*instanceSpace)[inst].Status > READY_TO_PROPOSE {
-//			continue
-//		}
-//		startNewInst = false
-//	}
-//	if !startNewInst {
-//		return
-//	}
-//	go func() { sig.sigNewInst <- struct{}{} }()
-//}
+type SimpleSig struct {
+	instsStarted        map[int32]struct{}
+	sigNewInst          chan struct{}
+	id                  int32
+	sigged              int32
+	signalIfNoneStarted bool
+}
 
-//type RequestReceivedSignaller interface {
-//	//RequestReceieved(instanceSpace *[]PBK)
-//}
-
-//type SignalIfNoInstanceStartedOnClientRequest struct {
-//	sigged bool
-//	instSpace []*PBK
-//}
-//
-//func (s *SignalIfNoInstanceStartedOnClientRequest) ReceiveClientRequest(req *genericsmr.Propose) {
-//	for _, inst := range s.instsStarted {
-//
-//	}
-//}
+func (sig *SimpleSig) SignalNewInstance() {
+	sig.sigged += 1
+	go func() {
+		sig.sigNewInst <- struct{}{}
+	}()
+}
 
 func (sig *SimpleSig) GetOpenedInstances() []int32 {
 	keys := make([]int32, 0, len(sig.instsStarted))
@@ -71,15 +55,17 @@ func (sig *SimpleSig) GetOpenedInstances() []int32 {
 	return keys
 }
 
-func SimpleSigNew(newInstSig chan struct{}, id int32) *SimpleSig {
+func SimpleSigNew(newInstSig chan struct{}, id int32, sins bool) *SimpleSig {
 	return &SimpleSig{
-		instsStarted: make(map[int32]struct{}),
-		sigNewInst:   newInstSig,
-		id:           id,
+		instsStarted:        make(map[int32]struct{}),
+		sigNewInst:          newInstSig,
+		id:                  id,
+		sigged:              0,
+		signalIfNoneStarted: sins,
 	}
 }
 
-func (sig *SimpleSig) GetSignaller() <-chan struct{} {
+func (sig *SimpleSig) GetSignals() <-chan struct{} {
 	return sig.sigNewInst
 }
 
@@ -87,16 +73,28 @@ func (sig *SimpleSig) Opened(opened []int32) {
 	if len(opened) == 0 {
 		panic("asjdlfjasldf")
 	}
+	if sig.sigged <= 0 {
+		panic("No recorded signals to open")
+	}
 	for _, i := range opened {
 		sig.instsStarted[i] = struct{}{}
 	}
+	sig.sigged -= int32(len(opened))
+}
+
+func (sig *SimpleSig) signalForNewInst(inst int32) {
+	delete(sig.instsStarted, inst)
+	//dlog.AgentPrintfN(sig.id, "sigging %d", inst)
+	sig.sigged += 1
+
+	go func() { sig.sigNewInst <- struct{}{} }()
 }
 
 func (sig *SimpleSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if !sig.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *SimpleSig) ballotShouldOpen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) bool {
@@ -114,22 +112,23 @@ func (sig *SimpleSig) ballotShouldOpen(pbk *PBK, inst int32, ballot lwcproto.Con
 	//}
 	//if  pbk.Status == PROPOSING && phase == stdpaxosproto.ACCEPTANCE {
 	//	return false
-	//}
+
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as it is preempted")
 	return true
 }
 
-func (sig *SimpleSig) sigNextInst(inst int32) {
-	delete(sig.instsStarted, inst)
-	//dlog.AgentPrintfN(sig.id, "sigging %d", inst)
-	go func() { sig.sigNewInst <- struct{}{} }()
-}
+//func (sig *SimpleSig) ig(inst int32) {
+//	delete(sig.instsStarted, inst)
+//dlog.AgentPrintfN(sig.id, "sigging %d", inst)
+//sig.sigged += 1
+//go func() { sig.sigNewInst <- struct{}{} }()
+//}
 
 func (sig *SimpleSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
 	if !sig.acceptedShouldSignal(pbk, inst, ballot, whosecmds) {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *SimpleSig) acceptedShouldSignal(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) bool {
@@ -154,7 +153,7 @@ func (sig *SimpleSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBa
 	if !sig.chosenShouldSignal(inst, ballot, whoseCmds) {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, whoseCmd int32) bool {
@@ -169,45 +168,67 @@ func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, 
 	return true
 }
 
+func (sig *SimpleSig) ReceivedClientRequest(instanceSpace []*PBK) {
+	if sig.signalIfNoneStarted {
+		return
+	}
+	startNewInst := true
+	for inst := range sig.instsStarted {
+		if instanceSpace[inst].Status > READY_TO_PROPOSE || instanceSpace[inst].Status < PREPARING {
+			continue
+		}
+		startNewInst = false
+	}
+	if !startNewInst {
+		dlog.AgentPrintfN(sig.id, "Already started instance to propose in")
+		return
+	}
+	if sig.sigged > 0 {
+		dlog.AgentPrintfN(sig.id, "Already signalled new instance")
+		return
+	}
+	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as received client request with no open instance to propose in")
+	sig.sigged += 1
+	go func() { sig.sigNewInst <- struct{}{} }()
+}
+
 type EagerMaxOutstandingSig struct {
-	EagerSig
+	*EagerSig
 	myOutstandingChosenInsts map[int32]struct{}
-	//n                        float32
-	maxExecuted int32
-	fac         int
-	sigged      int32
+	maxExecuted              int32
+	fac                      int
 }
 
 func EagerMaxOutstandingSigNew(eagerSig *EagerSig, fac int) *EagerMaxOutstandingSig {
 	return &EagerMaxOutstandingSig{
-		EagerSig:                 *eagerSig,
+		EagerSig:                 eagerSig,
 		myOutstandingChosenInsts: make(map[int32]struct{}),
 		fac:                      fac,
 		maxExecuted:              -1,
-		sigged:                   eagerSig.MaxOpenInsts,
 	}
 }
 
-func (sig *EagerMaxOutstandingSig) Opened(o []int32) {
-	if sig.sigged <= 0 {
-		panic("No recorded signals to open")
-	}
-	sig.SimpleSig.Opened(o)
-	sig.sigged -= int32(len(o))
-}
-
-func (sig *EagerMaxOutstandingSig) sigNextInst(inst int32) {
-	//if _, e := sig.instsStarted[inst]; !e {
-	//	panic("signalling for instance not started")
-	//}
-	sig.SimpleSig.sigNextInst(inst)
-	sig.sigged += 1
-}
-
-func (sig *EagerMaxOutstandingSig) SignalNext() {
-	sig.sigged += 1
-	go func() { sig.sigNewInst <- struct{}{} }()
-}
+//func (sig *EagerMaxOutstandingSig) RequestReceieved(instanceSpace *[]*PBK) {
+//	startNewInst := true
+//	for inst := range sig.instsStarted {
+//		if (*instanceSpace)[inst].Status > READY_TO_PROPOSE {
+//			continue
+//		}
+//		startNewInst = false
+//	}
+//	if !startNewInst {
+//		dlog.AgentPrintfN(sig.id, "Already started instance to propose in")
+//		return
+//	}
+//	if sig.sigged > 0 {
+//		dlog.AgentPrintfN(sig.id, "Already signalled new instance")
+//		return
+//	}
+//	//dlog.AgentPrintfN(sig.id, " signalled new instance")
+//	dlog.AgentPrintfN(sig.id, "Signalling new instance to propose in")
+//	sig.sigged += 1
+//	go func() { sig.sigNewInst <- struct{}{} }()
+//}
 
 func (sig *EagerMaxOutstandingSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if !sig.EagerSig.ballotShouldOpen(pbk, inst, ballot, phase) {
@@ -221,7 +242,7 @@ func (sig *EagerMaxOutstandingSig) CheckOngoingBallot(pbk *PBK, inst int32, ball
 	if sig.tooManyOutstandingChosenInsts() {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *EagerMaxOutstandingSig) willOpeningExceedMaxOutstandingInsts() bool {
@@ -239,7 +260,7 @@ func (sig *EagerMaxOutstandingSig) CheckAcceptedBallot(pbk *PBK, inst int32, bal
 	if sig.tooManyOutstandingChosenInsts() {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *EagerMaxOutstandingSig) tooManyOutstandingChosenInsts() bool {
@@ -263,7 +284,7 @@ func (sig *EagerMaxOutstandingSig) CheckChosen(pbk *PBK, inst int32, ballot lwcp
 	if sig.tooManyOutstandingChosenInsts() {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *EagerMaxOutstandingSig) CheckExec(informer ExecInformer) {
@@ -295,11 +316,11 @@ func (sig *EagerMaxOutstandingSig) CheckExec(informer ExecInformer) {
 	}(toOpen)
 }
 
+// todo fix eager exec up to to handle multiple signals being started concurrently
 type EagerExecUpToSig struct {
-	EagerSig
+	*EagerSig
 	n                    float32
 	fac                  float32
-	sigged               int32
 	myMaxInst            int32
 	execUpTo             int32
 	limPipelineOnPreempt bool
@@ -307,12 +328,11 @@ type EagerExecUpToSig struct {
 
 func EagerExecUpToSigNew(eagerSig *EagerSig, n float32, fac float32, limPipelineOnPreempt bool) *EagerExecUpToSig {
 	return &EagerExecUpToSig{
-		EagerSig:             *eagerSig,
+		EagerSig:             eagerSig,
 		n:                    n,
 		fac:                  fac,
 		myMaxInst:            -1,
 		execUpTo:             -1,
-		sigged:               eagerSig.MaxOpenInsts,
 		limPipelineOnPreempt: limPipelineOnPreempt,
 	}
 }
@@ -322,33 +342,6 @@ func (sig *EagerExecUpToSig) updateMyMaxInst(inst int32) {
 		return
 	}
 	sig.myMaxInst = inst
-}
-
-func (sig *EagerExecUpToSig) Opened(o []int32) {
-	if sig.sigged <= 0 {
-		panic("No recorded signals to open")
-	}
-	for _, i := range o {
-		sig.updateMyMaxInst(i)
-	}
-	sig.SimpleSig.Opened(o)
-	sig.sigged -= int32(len(o))
-}
-
-func (sig *EagerExecUpToSig) sigNextInst(inst int32) {
-	if _, e := sig.instsStarted[inst]; !e {
-		panic("signalling for instance not started")
-	}
-	//toDel := make([]int32, 0, len(sig.instsStarted))
-	//for i := range sig.instsStarted {
-	//	sig.chosen
-	//}
-	sig.SimpleSig.sigNextInst(inst)
-	sig.sigged += 1
-}
-
-type ManualSignaller interface {
-	SignalNext()
 }
 
 func (sig *EagerExecUpToSig) SignalNext() {
@@ -381,7 +374,7 @@ func (sig *EagerExecUpToSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwc
 		return
 	}
 
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
@@ -395,7 +388,7 @@ func (sig *EagerExecUpToSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lw
 	if sig.PipelineTooLong() && sig.limPipelineOnPreempt {
 		return
 	}
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
@@ -411,14 +404,14 @@ func (sig *EagerExecUpToSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.C
 		if sig.PipelineTooLong() {
 			return
 		}
-		sig.sigNextInst(inst)
+		sig.signalForNewInst(inst)
 		return
 	}
 	if sig.PipelineTooLong() && sig.limPipelineOnPreempt {
 		return
 	}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d attempted was chosen by someone else", inst)
-	sig.sigNextInst(inst)
+	sig.signalForNewInst(inst)
 }
 
 func (sig *EagerExecUpToSig) CheckExec(informer ExecInformer) {
@@ -475,6 +468,7 @@ func EagerSigNew(simpleSig *SimpleSig, maxOI int32) *EagerSig {
 		SimpleSig:    simpleSig,
 		MaxOpenInsts: maxOI,
 	}
+	e.SimpleSig.sigged = maxOI
 	go func() {
 		for i := int32(0); i < maxOI; i++ {
 			e.sigNewInst <- struct{}{}

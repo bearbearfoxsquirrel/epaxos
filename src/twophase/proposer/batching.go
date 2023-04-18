@@ -8,6 +8,17 @@ import (
 	"math"
 )
 
+type Batching interface {
+	AddProposal(clientRequest *genericsmr.Propose, othersAwaiting <-chan *genericsmr.Propose) bool
+	GetFullBatchToPropose() batching.ProposalBatch
+	GetAnyBatchToPropose() batching.ProposalBatch
+	PutBatch(batch batching.ProposalBatch) bool
+	CurrentBatchLen() int
+	GetNumBatchesMade() int
+	BatchChosen(batch batching.ProposalBatch)
+	IsBatchChosen(batch batching.ProposalBatch) bool
+}
+
 type StartProposalBatcher struct {
 	Sig chan<- struct{}
 	SimpleBatcher

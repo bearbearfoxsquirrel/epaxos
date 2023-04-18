@@ -10,7 +10,6 @@ import (
 	"epaxos/quorumsystem"
 	"epaxos/stdpaxosproto"
 	"epaxos/twophase/balloter"
-	_const "epaxos/twophase/const"
 	"epaxos/twophase/learner"
 	"epaxos/twophase/proposer"
 	"sync"
@@ -42,49 +41,49 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		disklessNOOP:                 disklessNOOP,
 		syncAcceptor:                 syncaceptor,
 		nopreempt:                    nopreempt,
-		bcastCommit:                  bcastCommit,
-		Replica:                      replica,
-		bcastAcceptance:              bcastAcceptance,
-		stateChan:                    make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		configChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		prepareChan:                  make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		acceptChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		commitChan:                   make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		commitShortChan:              make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		prepareReplyChan:             make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
-		acceptReplyChan:              make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
-		tryInitPropose:               make(chan proposer.RetryInfo, 100),
-		prepareRPC:                   0,
-		acceptRPC:                    0,
-		commitRPC:                    0,
-		commitShortRPC:               0,
-		prepareReplyRPC:              0,
-		acceptReplyRPC:               0,
-		instanceSpace:                make([]*proposer.PBK, _const.ISpaceLen),
-		Shutdown:                     false,
-		counter:                      0,
-		flush:                        true,
-		maxBatchWait:                 batchWait,
-		proposableInstances:          make(chan struct{}, 1000*replica.N),
-		noopWaitUs:                   noopwait,
-		fastLearn:                    false,
-		whoCrash:                     whoCrash,
-		whenCrash:                    whenCrash,
-		howLongCrash:                 howlongCrash,
-		timeoutMsgs:                  make(chan TimeoutInfo, 5000),
-		timeout:                      timeout,
-		catchupBatchSize:             catchupBatchSize,
-		lastSettleBatchInst:          -1,
-		catchingUp:                   false,
-		flushCommit:                  flushCommit,
-		commitCatchUp:                commitCatchup,
-		maxBatchSize:                 batchSize,
-		noopWait:                     time.Duration(noopwait) * time.Microsecond,
-		proactivelyPrepareOnPreempt:  proactivePreemptOnNewB,
+		//bcastCommit:                  bcastCommit,
+		Replica:          replica,
+		bcastAcceptance:  bcastAcceptance,
+		stateChan:        make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		configChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareChan:      make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitChan:       make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		commitShortChan:  make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		prepareReplyChan: make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
+		acceptReplyChan:  make(chan fastrpc.Serializable, 3*genericsmr.CHAN_BUFFER_SIZE),
+		tryInitPropose:   make(chan proposer.RetryInfo, 100),
+		prepareRPC:       0,
+		acceptRPC:        0,
+		commitRPC:        0,
+		commitShortRPC:   0,
+		prepareReplyRPC:  0,
+		acceptReplyRPC:   0,
+		//instanceSpace:                make([]*proposer.PBK, _const.ISpaceLen),
+		Shutdown:                    false,
+		counter:                     0,
+		flush:                       true,
+		maxBatchWait:                batchWait,
+		proposableInstances:         make(chan struct{}, 1000*replica.N),
+		noopWaitUs:                  noopwait,
+		fastLearn:                   false,
+		whoCrash:                    whoCrash,
+		whenCrash:                   whenCrash,
+		howLongCrash:                howlongCrash,
+		timeoutMsgs:                 make(chan TimeoutInfo, 5000),
+		timeout:                     timeout,
+		catchupBatchSize:            catchupBatchSize,
+		lastSettleBatchInst:         -1,
+		catchingUp:                  false,
+		flushCommit:                 flushCommit,
+		commitCatchUp:               commitCatchup,
+		maxBatchSize:                batchSize,
+		noopWait:                    time.Duration(noopwait) * time.Microsecond,
+		proactivelyPrepareOnPreempt: proactivePreemptOnNewB,
 		instanceProposeValueTimeout: &InstanceProposeValueTimeout{
-			ProposedClientValuesManager: proposer.ProposedClientValuesManagerNew(int32(id)), //todo move to proposer
-			sleepingInsts:               make(map[int32]time.Time),
-			constructedAwaitingBatches:  make([]batching.ProposalBatch, 100),
+			//ProposedClientValuesManager: proposer.ProposedClientValuesManagerNew(int32(id)), //todo move to proposer
+			sleepingInsts:              make(map[int32]time.Time),
+			constructedAwaitingBatches: make([]batching.ProposalBatch, 100),
 		},
 	}
 
@@ -324,11 +323,11 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 	}
 
 	openInstanceSig := make(chan struct{}, maxOpenInstances)
-	sig := proposer.SimpleSigNew(openInstanceSig, id)
+	sig := proposer.SimpleSigNew(openInstanceSig, id, signalIfNoInstStarted)
 
-	simpleBatcher := proposer.GetBatcher(id, maxBatchSize)
+	//simpleBatcher := proposer.GetBatcher(id, maxBatchSize)
 
-	baselineProposer := proposer.BaselineProposerNew(id, sig, sig, instanceManager, backoffManager, balloter)
+	baselineProposer := proposer.BaselineProposerNew(id, sig, sig, sig, instanceManager, backoffManager, balloter, maxBatchSize)
 
 	simpleExecutor := proposer.GetNewExecutor(id, replica.Replica, replica.StableStore, replica.Dreply)
 	if !doEager && !doEagerFI && pam {
@@ -337,10 +336,6 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 
 	// setup baseline
 	if !doEager && !eagerByExec && !doEagerFI {
-		replica.ClientBatcher = &proposer.StartProposalBatcher{
-			Sig:           openInstanceSig,
-			SimpleBatcher: simpleBatcher,
-		}
 		replica.Executor = &simpleExecutor
 		if inductiveConfs {
 			inductiveGlobalManager := proposer.InductiveConflictsManager{baselineProposer}
@@ -353,48 +348,42 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 
 	// setup eager sig
 	eSig := proposer.EagerSigNew(sig, maxOpenInstances)
-
 	var os proposer.OpenInstSignal
 	var s proposer.BallotOpenInstanceSignal
-	var sm proposer.ManualSignaller
 	var es proposer.ExecOpenInstanceSignal
+	var rs proposer.RequestRecivedSignaller
 	if eagerByExec {
 		eESig := proposer.EagerExecUpToSigNew(eSig, float32(n), eagerByExecFac, limPipelineOnPreempt)
 		os = eESig
 		s = eESig
-		sm = eESig
 		es = eESig
+		rs = eESig
 	} else if eagerMaxOutstanding {
 		eESig := proposer.EagerMaxOutstandingSigNew(eSig, int(eagerByExecFac))
 		os = eESig
 		s = eESig
-		sm = eESig
 		es = eESig
+		rs = eESig
 	}
-	baselineProposer = proposer.BaselineProposerNew(id, os, s, instanceManager, backoffManager, balloter)
+	baselineProposer = proposer.BaselineProposerNew(id, os, s, rs, instanceManager, backoffManager, balloter, maxBatchSize)
 
 	// decide between eager and eager fi
 	var eagerProposer proposer.EagerByExecProposer = nil
 	if doEagerFI {
 		eagerProposer = &proposer.EagerFI{
-			CrtInstance:              -1,
-			InducedUpTo:              -1,
-			Induced:                  make(map[int32]map[int32]stdpaxosproto.Ballot),
-			DoChosenFWI:              doChosenFWI,
-			DoValueFWI:               doValueFWI,
-			DoLateProposalFWI:        doLatePropFWI,
-			Id:                       id,
-			N:                        n,
-			SingleInstanceManager:    instanceManager,
-			BackoffManager:           backoffManager,
-			Windy:                    make(map[int32][]int32),
-			OpenInstSignal:           os,
-			BallotOpenInstanceSignal: s,
-			ExecOpenInstanceSignal:   es,
-			Balloter:                 balloter,
-			Forwarding:               forwardingInstances,
-			MaxStarted:               -1,
-			MaxAt:                    make(map[int32]int32),
+			BaselineManager:        baselineProposer,
+			InducedUpTo:            -1,
+			Induced:                make(map[int32]map[int32]stdpaxosproto.Ballot),
+			DoChosenFWI:            doChosenFWI,
+			DoValueFWI:             doValueFWI,
+			DoLateProposalFWI:      doLatePropFWI,
+			Id:                     id,
+			N:                      n,
+			Windy:                  make(map[int32][]int32),
+			ExecOpenInstanceSignal: es,
+			Forwarding:             forwardingInstances,
+			MaxStarted:             -1,
+			MaxAt:                  make(map[int32]int32),
 		}
 
 		for _, pid := range pids {
@@ -402,14 +391,13 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		}
 
 	} else {
-		inductiveGlobalManager := proposer.InductiveConflictsManager{baselineProposer}
+		inductiveGlobalManager := proposer.InductiveConflictsManager{BaselineManager: baselineProposer}
 		eagerProposer = &proposer.Eager{
 			InductiveConflictsManager: inductiveGlobalManager,
 			ExecOpenInstanceSignal:    es,
 		}
 
 	}
-	replica.ClientBatcher = &simpleBatcher
 	replica.Executor = &proposer.EagerByExecExecutor{
 		SimpleExecutor:         simpleExecutor,
 		ExecOpenInstanceSignal: eagerProposer.GetExecSignaller(),
@@ -420,16 +408,15 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 		return
 	}
 
-	//baselineProposer.OpenInstSignal = openInstSig
-	//baselineProposer.BallotOpenInstanceSignal = ballotInstSig
-	//NewLoLProposer(BaselineProposerNew(r.Id, openInstSig, ballotInstSig, instanceManager, backoffManager,
-	//r.startInstanceSig), int32(r.N), r.startInstanceSig)
-
 	if doEagerFI {
 		panic("eager fi and pam not yet implemented")
 	}
 
 	//PROPOSER QUORUMS
+	if !pam && !mappedProposers {
+		panic("Invalid options")
+	}
+
 	var agentMapper instanceagentmapper.InstanceAgentMapper
 	if mappedProposers {
 		agentMapper = &instanceagentmapper.LoadBalancingSetMapper{
@@ -447,11 +434,9 @@ func ReplicaProposerSetup(id int32, f int32, n int32, proposerInstanceQuorumalis
 				Groups: proposerMappings,
 			}
 		}
-	} else {
-		panic("invalid options")
 	}
 
-	pamProposer := proposer.MappedProposersProposalManagerNew(sm, eagerProposer.(*proposer.Eager), instanceManager, agentMapper, OpenInstToCatchUp)
+	pamProposer := proposer.MappedProposersProposalManagerNew(eagerProposer.(*proposer.Eager), agentMapper, OpenInstToCatchUp)
 	replica.Proposer = pamProposer
 
 	// todo add eager fi pam proposer

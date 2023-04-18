@@ -3,6 +3,7 @@ package proposer
 import (
 	"epaxos/batching"
 	"epaxos/stdpaxosproto"
+	"epaxos/twophase/balloter"
 	"fmt"
 )
 
@@ -52,8 +53,7 @@ func RequeuingBatchDifferentValueChosen(inst int32, whose int32, batch batching.
 		inst, whose, RequeuingBatchFmt(batch))
 }
 
-func LearntFmt(inst int32, ballot stdpaxosproto.Ballot, proposer Proposer, whose int32) string {
-	balloter := proposer.GetBalloter()
+func LearntFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32) string {
 	attempts := balloter.GetAttemptNumber(ballot.Number)
 	return fmt.Sprintf("Learnt instance %d at ballot %d.%d (%d attempts) with whose commands %d", inst, ballot.Number, ballot.PropID, attempts, whose)
 }
@@ -64,12 +64,12 @@ func LearntInlineFmt(inst int32, ballot stdpaxosproto.Ballot, proposer Proposer,
 	return fmt.Sprintf("learnt instance %d at ballot %d.%d (%d attempts) with whose commands %d", inst, ballot.Number, ballot.PropID, attempts, whose)
 }
 
-func LearntBatchFmt(inst int32, ballot stdpaxosproto.Ballot, proposer Proposer, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("%s (%s)", LearntFmt(inst, ballot, proposer, whose), BatchFmt(batch))
+func LearntBatchFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32, batch batching.ProposalBatch) string {
+	return fmt.Sprintf("%s (%s)", LearntFmt(inst, ballot, balloter, whose), BatchFmt(batch))
 }
 
-func LearntBatchAgainFmt(inst int32, ballot stdpaxosproto.Ballot, proposer Proposer, whose int32, batch batching.ProposalBatch) string {
-	return fmt.Sprintf("%s (again learnt %s)", LearntFmt(inst, ballot, proposer, whose), BatchFmt(batch))
+func LearntBatchAgainFmt(inst int32, ballot stdpaxosproto.Ballot, balloter *balloter.Balloter, whose int32, batch batching.ProposalBatch) string {
+	return fmt.Sprintf("%s (again learnt %s)", LearntFmt(inst, ballot, balloter, whose), BatchFmt(batch))
 }
 
 func ExecutingFmt(inst int32, whose int32) string {

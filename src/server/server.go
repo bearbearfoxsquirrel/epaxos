@@ -34,7 +34,6 @@ var doEpaxos = flag.Bool("e", false, "Use EPaxos as the replication protocol. De
 var doLWCSpec = flag.Bool("ls", false, "Use Less Writey Consensus as the replication protocol with Speculative proposlas. Defaults to false.")
 
 var doLWCGlobalSpec = flag.Bool("lgs", false, "Use Less Writey Consensus as the replication protocol with global Speculative proposlas. Defaults to false.")
-
 var doLWCPatient = flag.Bool("lp", false, "Use Less Writey Consensus as the replication protocol with patient proposlas. Defaults to false.")
 var doSTDSpec = flag.Bool("ss", false, "Use Standard Paxos Consensus as the replication protocol with Speculative proposals. Defaults to false.")
 var doSTDGlobalSpec = flag.Bool("sgs", false, "Use Standard Paxos Consensus as the replication protocol with Speculative proposals. Defaults to false.")

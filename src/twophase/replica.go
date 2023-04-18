@@ -88,33 +88,31 @@ type Replica struct {
 	proposer.LearnerQuorumaliser
 	proposer.AcceptorQrmInfo
 
-	*genericsmr.Replica // extends a generic Paxos replica
-	configChan          chan fastrpc.Serializable
-	prepareChan         chan fastrpc.Serializable
-	acceptChan          chan fastrpc.Serializable
-	commitChan          chan fastrpc.Serializable
-	commitShortChan     chan fastrpc.Serializable
-	prepareReplyChan    chan fastrpc.Serializable
-	acceptReplyChan     chan fastrpc.Serializable
-	stateChan           chan fastrpc.Serializable
-	promiseLeases       chan acceptor.PromiseLease
-	stateChanRPC        uint8
-	prepareRPC          uint8
-	acceptRPC           uint8
-	commitRPC           uint8
-	commitShortRPC      uint8
-	prepareReplyRPC     uint8
-	acceptReplyRPC      uint8
-	instanceSpace       []*proposer.PBK // the space of all instances (used and not yet used)
-	Shutdown            bool
-	counter             int
-	flush               bool
-	maxBatchWait        int
-	proposableInstances chan struct{}
-	noopWaitUs          int32
-	RetryInstance       chan proposer.RetryInfo
-	tryInitPropose      chan proposer.RetryInfo
-	//alwaysNoop                    bool
+	*genericsmr.Replica           // extends a generic Paxos replica
+	configChan                    chan fastrpc.Serializable
+	prepareChan                   chan fastrpc.Serializable
+	acceptChan                    chan fastrpc.Serializable
+	commitChan                    chan fastrpc.Serializable
+	commitShortChan               chan fastrpc.Serializable
+	prepareReplyChan              chan fastrpc.Serializable
+	acceptReplyChan               chan fastrpc.Serializable
+	stateChan                     chan fastrpc.Serializable
+	promiseLeases                 chan acceptor.PromiseLease
+	stateChanRPC                  uint8
+	prepareRPC                    uint8
+	acceptRPC                     uint8
+	commitRPC                     uint8
+	commitShortRPC                uint8
+	prepareReplyRPC               uint8
+	acceptReplyRPC                uint8
+	Shutdown                      bool
+	counter                       int
+	flush                         bool
+	maxBatchWait                  int
+	proposableInstances           chan struct{}
+	noopWaitUs                    int32
+	RetryInstance                 chan proposer.RetryInfo
+	tryInitPropose                chan proposer.RetryInfo
 	lastTimeClientChosen          time.Time
 	lastOpenProposalTime          time.Time
 	timeSinceLastProposedInstance time.Time
@@ -133,52 +131,29 @@ type Replica struct {
 	recoveringFrom                int32
 	commitCatchUp                 bool
 	maxBatchSize                  int
-	//TimeseriesStats               *stats.TimeseriesStats
-	//InstanceStats                 *stats.InstanceStats
-	//ProposalStats                 *stats.ProposalStats
-	//sendProposerState             bool
-	//proposerState                 proposerstate.State
 	acceptor.Acceptor
 	stablestore.StableStore
 	proactivelyPrepareOnPreempt bool
 	noopWait                    time.Duration
-	//messageFilterIn             chan *messageFilterComm
-	//isAccMsgFilter              bool
-	//expectedBatchedRequests    int32
-	//sendPreparesToAllAcceptors bool
 	PrepareResponsesRPC
 	AcceptResponsesRPC
-	//batchProposedObservers []ProposedObserver
-	//proposedBatcheNumber   map[int32]int32
 	classesLeased      map[int32]stdpaxosproto.Ballot
 	iWriteAhead        int32
 	writeAheadAcceptor bool
-	//sendFastestQrm         bool
-	//nudge                  chan chan batching.ProposalBatch
-	bcastCommit     bool
-	nopreempt       bool
-	bcastAcceptance bool
-	syncAcceptor    bool
-	disklessNOOP    bool
+	nopreempt          bool
+	bcastAcceptance    bool
+	syncAcceptor       bool
+	disklessNOOP       bool
 
 	disklessNOOPPromisesAwaiting map[int32]chan struct{}
 	disklessNOOPPromises         map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}
 	forceDisklessNOOP            bool
 
-	ClientBatcher               proposer.BatchManager
+	//ClientBatcher               proposer.Batching
 	instanceProposeValueTimeout *InstanceProposeValueTimeout
-	//nextNoopEnd                 time.Time
-	//nextNoop                    *time.Timer
-	//noops                       int
-	//resetTo                     chan time.Duration
-	//noopCancel                  chan struct{}
-	bcastAcceptDisklessNOOP bool
-	maxValueInstance        int32
-	//maxValueInst            int32
-	proposeToCatchUp bool
-	//proposer.ManualSignaller
-	//s                     int
-	//signalIfNoInstStarted bool
+	bcastAcceptDisklessNOOP     bool
+	maxValueInstance            int32
+	proposeToCatchUp            bool
 }
 
 func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot) bool {
@@ -186,7 +161,7 @@ func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot)
 	//	panic("Being asked for an instance we haven't started yet")
 	//}
 	return r.Learner.HasAccepted(instance, ballot, q)
-	//return r.instanceSpace[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(q)
+	//return r.Proposer.GetInstanceSpace()[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(q)
 }
 
 func (r *Replica) GetAckersGroup(instance int32, ballot stdpaxosproto.Ballot) []int32 {
@@ -196,7 +171,7 @@ func (r *Replica) GetAckersGroup(instance int32, ballot stdpaxosproto.Ballot) []
 	//consensusG := r.GetConsensusGroup(instance, ballot)
 	//acked := make([]int32, 0, len(consensusG))
 	//for _, aid := range consensusG {
-	//	if !r.instanceSpace[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(aid) {
+	//	if !r.Proposer.GetInstanceSpace()[instance].Qrms[lwcproto.ConfigBal{-1, ballot}].HasAcknowledged(aid) {
 	//		acked = append(acked, aid)
 	//	}
 	//}
@@ -235,7 +210,6 @@ func (r *Replica) BatchingEnabled() bool {
 }
 
 type InstanceProposeValueTimeout struct {
-	proposer.ProposedClientValuesManager
 	sleepingInsts              map[int32]time.Time
 	constructedAwaitingBatches []batching.ProposalBatch
 }
@@ -281,7 +255,7 @@ func (r *Replica) run() {
 	doWhat := ""
 	startEvent := time.Now()
 	endEvent := time.Now()
-	startInstSig := r.Proposer.GetStartInstanceSignaller()
+	startInstSig := r.Proposer.GetStartInstanceSignals()
 	for !r.Shutdown {
 		select {
 		case <-r.proposableInstances:
@@ -300,7 +274,7 @@ func (r *Replica) run() {
 				if i > maxInstanceToProposeTo {
 					continue
 				}
-				pbk := r.instanceSpace[i]
+				pbk := r.Proposer.GetInstanceSpace()[i]
 				if pbk == nil {
 					panic("????")
 				}
@@ -395,18 +369,16 @@ func (r *Replica) run() {
 }
 
 func (r *Replica) handleClientRequest(clientRequest *genericsmr.Propose) {
-	r.ClientBatcher.AddProposal(clientRequest, r.ProposeChan)
-	//r.RequestNotifer.GotRequest(clientRequest)
+	r.Proposer.ReceivedClientValue(clientRequest, r.ProposeChan)
 	if len(r.instanceProposeValueTimeout.sleepingInsts) == 0 {
 		dlog.AgentPrintfN(r.Id, "No instances to propose to propose batch to")
-		//dlog.AgentPrintfN(r.Id, "Signalling new instance as there are none opened to propose batch to")
 		return
 	}
-	for i := 0; i < r.ClientBatcher.GetNumBatchesMade(); i++ {
+	for i := 0; i < r.Proposer.GetClientBatcher().GetNumBatchesMade(); i++ {
 		for len(r.instanceProposeValueTimeout.sleepingInsts) > 0 {
 			min := r.instanceProposeValueTimeout.getMinimumSleepingInstance()
 			r.noLongerSleepingInstance(min)
-			if r.instanceSpace[min].Status != proposer.READY_TO_PROPOSE {
+			if r.Proposer.GetInstanceSpace()[min].Status != proposer.READY_TO_PROPOSE {
 				continue
 			}
 			r.tryPropose(min, 1)
@@ -446,11 +418,11 @@ func (man *InstanceProposeValueTimeout) getMinimumSleepingInstance() int32 {
 }
 
 func (r *Replica) bcastPrepare(instance int32) {
-	r.PrepareBroadcaster.Bcast(instance, r.instanceSpace[instance].PropCurBal.Ballot)
+	r.PrepareBroadcaster.Bcast(instance, r.Proposer.GetInstanceSpace()[instance].PropCurBal.Ballot)
 }
 
 func (r *Replica) bcastAccept(instance int32) {
-	pbk := r.instanceSpace[instance]
+	pbk := r.Proposer.GetInstanceSpace()[instance]
 	r.ValueBroadcaster.BcastAccept(instance, pbk.PropCurBal.Ballot, pbk.WhoseCmds, pbk.Cmds)
 }
 
@@ -460,9 +432,9 @@ func (r *Replica) bcastCommitToAll(instance int32, ballot stdpaxosproto.Ballot, 
 
 func (r *Replica) beginNextInstance() {
 	// if in accept phase try propose, else try prepare?
-	opened := r.Proposer.StartNextInstance(&r.instanceSpace)
+	opened := r.Proposer.StartNextInstance()
 	for _, i := range opened {
-		pbk := r.instanceSpace[i]
+		pbk := r.Proposer.GetInstanceSpace()[i]
 		switch pbk.Status {
 		case proposer.PREPARING:
 			//dlog.AgentPrintfN(r.Id, "Starting slow track instance %d", i)
@@ -491,12 +463,12 @@ func getPrepareMessage(id int32, inst int32, curInst *proposer.PBK) *stdpaxospro
 }
 
 func (r *Replica) tryNextAttempt(next proposer.RetryInfo) {
-	inst := r.instanceSpace[next.Inst]
+	inst := r.Proposer.GetInstanceSpace()[next.Inst]
 	if !r.Proposer.DecideRetry(inst, next) {
 		return
 	}
 	dlog.AgentPrintfN(r.Id, "Retry needed as backoff expired for instance %d", next.Inst)
-	r.Proposer.StartNextProposal(inst, next.Inst)
+	r.Proposer.StartNextProposal(next.Inst)
 	r.bcastPrepare(next.Inst)
 }
 
@@ -524,15 +496,15 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 		}
 	}
 
-	if r.Proposer.LearnOfBallot(&r.instanceSpace, prepare.Instance, lwcproto.ConfigBal{Config: -1, Ballot: prepare.Ballot}, stdpaxosproto.PROMISE) {
+	if r.Proposer.LearnOfBallot(prepare.Instance, lwcproto.ConfigBal{Config: -1, Ballot: prepare.Ballot}, stdpaxosproto.PROMISE) {
 		r.noLongerSleepingInstance(prepare.Instance)
-		pCurBal := r.instanceSpace[prepare.Instance].PropCurBal
+		pCurBal := r.Proposer.GetInstanceSpace()[prepare.Instance].PropCurBal
 		if !pCurBal.IsZero() {
 			dlog.AgentPrintfN(r.Id, "Prepare Received from Replica %d in instance %d at ballot %d.%d preempted our ballot %d.%d",
 				prepare.PropID, prepare.Instance, prepare.Number, prepare.PropID, pCurBal.Number, pCurBal.PropID)
 		}
 	}
-	r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallot(r.instanceSpace[prepare.Instance], prepare.Instance, lwcproto.ConfigBal{Config: -1, Ballot: prepare.Ballot}, r.ClientBatcher)
+	//r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallot(r.Proposer.GetInstanceSpace()[prepare.Instance], prepare.Instance, lwcproto.ConfigBal{Config: -1, Ballot: prepare.Ballot}, r.ClientBatcher)
 }
 
 func setProposingValue(pbk *proposer.PBK, whoseCmds int32, bal stdpaxosproto.Ballot, val []*state.Command) {
@@ -547,7 +519,7 @@ func (r *Replica) HandlePromise(preply *stdpaxosproto.PrepareReply) {
 	//if r.doPatientProposals {
 	//	r.patientProposals.gotPromise(preply.Instance, preply.Req, preply.AcceptorId)
 	//}
-	pbk := r.instanceSpace[preply.Instance]
+	pbk := r.Proposer.GetInstanceSpace()[preply.Instance]
 	if r.disklessNOOP && (pbk.Status == proposer.READY_TO_PROPOSE || pbk.Status == proposer.PREPARING) {
 		if _, e := r.disklessNOOPPromises[preply.Instance]; !e {
 			r.disklessNOOPPromises[preply.Instance] = make(map[stdpaxosproto.Ballot]map[int32]struct{})
@@ -587,7 +559,7 @@ func (r *Replica) UpdateMaxValueInstance(inst int32) {
 	go func() { r.proposableInstances <- struct{}{} }()
 }
 func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
-	pbk := r.instanceSpace[preply.Instance]
+	pbk := r.Proposer.GetInstanceSpace()[preply.Instance]
 	dlog.AgentPrintfN(r.Id, logfmt.ReceivePrepareReplyFmt(preply))
 	if pbk.Status == proposer.CLOSED {
 		return
@@ -607,8 +579,7 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 			r.bcastCommitToAll(preply.Instance, preply.VBal, preply.Command, preply.WhoseCmd)
 			return
 		}
-		r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, preply.Instance, lwcproto.ConfigBal{-1, preply.VBal}, preply.WhoseCmd)
-		r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallotValue(r.instanceSpace[preply.Instance], preply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: preply.Cur}, preply.Command, preply.WhoseCmd, r.ClientBatcher)
+		r.Proposer.LearnOfBallotAccepted(preply.Instance, lwcproto.ConfigBal{-1, preply.VBal}, preply.WhoseCmd)
 	}
 	if preply.VBal.GreaterThan(pbk.ProposeValueBal.Ballot) {
 		setProposingValue(pbk, preply.WhoseCmd, preply.VBal, preply.Command)
@@ -623,11 +594,10 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 
 	// IS PREEMPT?
 	if preply.Cur.GreaterThan(preply.Req) {
-		r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallot(r.instanceSpace[preply.Instance], preply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: preply.Cur}, r.ClientBatcher)
-		isNewPreempted := r.Proposer.LearnOfBallot(&r.instanceSpace, preply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: preply.Cur}, stdpaxosproto.PROMISE)
+		isNewPreempted := r.Proposer.LearnOfBallot(preply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: preply.Cur}, stdpaxosproto.PROMISE)
 		r.noLongerSleepingInstance(preply.Instance)
 		if isNewPreempted {
-			pCurBal := r.instanceSpace[preply.Instance].PropCurBal
+			pCurBal := r.Proposer.GetInstanceSpace()[preply.Instance].PropCurBal
 			dlog.AgentPrintfN(r.Id, "Prepare Reply Received from Replica %d in instance %d at with current ballot %d.%d preempted our ballot %d.%d", preply.AcceptorId, preply.Instance, preply.Cur.Number, preply.Cur.PropID, pCurBal.Number, pCurBal.PropID)
 		}
 		// Proactively try promise
@@ -646,7 +616,7 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 }
 
 func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot) {
-	pbk := r.instanceSpace[inst]
+	pbk := r.Proposer.GetInstanceSpace()[inst]
 	if !pbk.PropCurBal.Ballot.Equal(ballot) || pbk.Status != proposer.PREPARING {
 		return
 	}
@@ -674,7 +644,7 @@ func (r *Replica) tryInitaliseForPropose(inst int32, ballot stdpaxosproto.Ballot
 }
 
 func (r *Replica) tryPropose(inst int32, priorAttempts int) {
-	pbk := r.instanceSpace[inst]
+	pbk := r.Proposer.GetInstanceSpace()[inst]
 	if pbk.Status != proposer.READY_TO_PROPOSE {
 		panic("asjfalskdjf")
 	}
@@ -682,10 +652,10 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 	qrm := pbk.Qrms[pbk.PropCurBal]
 	qrm.StartAcceptanceQuorum()
 	b := r.Proposer.GetBalloter()
-	dlog.AgentPrintfN(r.Id, proposer.ProposingValue(r.Id, pbk, inst, int32(b.GetAttemptNumber(pbk.ProposeValueBal.Number)), r.isProposingDisklessNOOP(inst)))
 	// FIXME BBNG
 	if pbk.ProposeValueBal.IsZero() {
-		b := r.ClientBatcher.GetFullBatchToPropose()
+
+		b := r.Proposer.GetClientBatcher().GetFullBatchToPropose()
 		if b != nil {
 			pbk.ClientProposals = b
 			setProposingValue(pbk, r.Id, pbk.PropCurBal.Ballot, pbk.ClientProposals.GetCmds())
@@ -694,7 +664,7 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 				r.BeginWaitingForClientProposals(inst, pbk)
 				return
 			}
-			b = r.ClientBatcher.GetAnyBatchToPropose()
+			b = r.Proposer.GetClientBatcher().GetAnyBatchToPropose() //r.ClientBatcher.GetAnyBatchToPropose()
 			if b != nil {
 				dlog.AgentPrintfN(r.Id, "Assembled partial batch with UID %d (length %d values)", b.GetUID(), len(b.GetCmds()))
 				pbk.ClientProposals = b
@@ -707,7 +677,8 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 			}
 		}
 	}
-
+	dlog.AgentPrintfN(r.Id, proposer.ProposingValue(r.Id, pbk, inst, int32(b.GetAttemptNumber(pbk.ProposeValueBal.Number)), r.isProposingDisklessNOOP(inst)))
+	//todo fix so that prints out proposer previous value or current value proposing
 	if pbk.Cmds == nil {
 		panic("there must be something to propose")
 	}
@@ -717,11 +688,11 @@ func (r *Replica) tryPropose(inst int32, priorAttempts int) {
 		r.Executor.ProposedBatch(inst, pbk.ClientProposals)
 	}
 	r.bcastAccept(inst)
-	r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, inst, pbk.PropCurBal, pbk.WhoseCmds)
+	r.Proposer.LearnOfBallotAccepted(inst, pbk.PropCurBal, pbk.WhoseCmds)
 }
 
 func (r *Replica) isProposingDisklessNOOP(inst int32) bool {
-	pbk := r.instanceSpace[inst]
+	pbk := r.Proposer.GetInstanceSpace()[inst]
 	if pbk.PropCurBal.Ballot.Number == 0 {
 		return true
 	}
@@ -745,12 +716,12 @@ func (r *Replica) checkAndHandleNewlyReceivedInstance(instance int32, ballot std
 	if instance < 0 {
 		return
 	}
-	r.Proposer.LearnOfBallot(&r.instanceSpace, instance, lwcproto.ConfigBal{Config: -1, Ballot: ballot}, stdpaxosproto.PROMISE)
+	r.Proposer.LearnOfBallot(instance, lwcproto.ConfigBal{Config: -1, Ballot: ballot}, stdpaxosproto.PROMISE)
 }
 
 func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveAcceptFmt(accept))
-	r.Proposer.LearnOfBallot(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{-1, accept.Ballot}, stdpaxosproto.ACCEPTANCE)
+	r.Proposer.LearnOfBallot(accept.Instance, lwcproto.ConfigBal{-1, accept.Ballot}, stdpaxosproto.ACCEPTANCE)
 	r.UpdateMaxValueInstance(accept.Instance)
 
 	r.Learner.ProposalValue(accept.Instance, accept.Ballot, accept.Command, accept.WhoseCmd)
@@ -761,21 +732,20 @@ func (r *Replica) handleAccept(accept *stdpaxosproto.Accept) {
 		return
 	}
 
-	pbk := r.instanceSpace[accept.Instance]
+	pbk := r.Proposer.GetInstanceSpace()[accept.Instance]
 	if accept.Ballot.GreaterThan(pbk.ProposeValueBal.Ballot) {
 		setProposingValue(pbk, accept.WhoseCmd, accept.Ballot, accept.Command)
 	}
 
-	if r.Proposer.LearnOfBallot(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, stdpaxosproto.ACCEPTANCE) {
-		pCurBal := r.instanceSpace[accept.Instance].PropCurBal
+	if r.Proposer.LearnOfBallot(accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, stdpaxosproto.ACCEPTANCE) {
+		pCurBal := r.Proposer.GetInstanceSpace()[accept.Instance].PropCurBal
 		r.noLongerSleepingInstance(accept.Instance)
 		if !pCurBal.IsZero() {
 			dlog.AgentPrintfN(r.Id, "Accept Received from Replica %d in instance %d at ballot %d.%d preempted our ballot %d.%d",
 				accept.PropID, accept.Instance, accept.Number, accept.PropID, pCurBal.Number, pCurBal.PropID)
 		}
 	}
-	r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallotValue(r.instanceSpace[accept.Instance], accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, accept.Command, accept.WhoseCmd, r.ClientBatcher)
-	r.Proposer.LearnOfBallotAccepted(&r.instanceSpace, accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, accept.WhoseCmd)
+	r.Proposer.LearnOfBallotAccepted(accept.Instance, lwcproto.ConfigBal{Config: -1, Ballot: accept.Ballot}, accept.WhoseCmd)
 	// todo change with ballot value <- still safe rn cause accepted proposers do not affect safety but would be better interface design
 
 	if accept.LeaderId == -2 {
@@ -810,19 +780,16 @@ func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
 func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	r.checkAndHandleNewlyReceivedInstance(areply.Instance, areply.Cur)
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveAcceptReplyFmt(areply))
-	pbk := r.instanceSpace[areply.Instance]
-
+	pbk := r.Proposer.GetInstanceSpace()[areply.Instance]
 	if learnerCheckChosen(r.Learner, areply.Instance, areply.Cur, "Accept Reply", areply.AcceptorId, r.commitRPC, r.Replica, r.Id) {
 		return
 	}
-
 	// PREEMPTED
 	if areply.Cur.GreaterThan(areply.Req) {
-		pCurBal := r.instanceSpace[areply.Instance].PropCurBal
+		pCurBal := r.Proposer.GetInstanceSpace()[areply.Instance].PropCurBal
 		dlog.AgentPrintfN(r.Id, "Accept Reply received from Replica %d in instance %d with current ballot %d.%d preempted our ballot %d.%d",
 			areply.AcceptorId, areply.Instance, areply.Cur.Number, areply.Cur.PropID, pCurBal.Number, pCurBal.PropID)
-		r.Proposer.LearnOfBallot(&r.instanceSpace, areply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: areply.Cur}, areply.CurPhase)
-		r.instanceProposeValueTimeout.ProposedClientValuesManager.LearnOfBallot(pbk, areply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: areply.Cur}, r.ClientBatcher)
+		r.Proposer.LearnOfBallot(areply.Instance, lwcproto.ConfigBal{Config: -1, Ballot: areply.Cur}, areply.CurPhase)
 		r.noLongerSleepingInstance(areply.Instance)
 		return
 	}
@@ -832,13 +799,12 @@ func (r *Replica) handleAcceptReply(areply *stdpaxosproto.AcceptReply) {
 	if areply.Req.GreaterThan(areply.Cur) {
 		panic("Acceptor didn't accept request")
 	}
-
 	// ACCEPTED
 	r.handleAcceptance(areply)
 }
 
 func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot, chosenVal []*state.Command, whoseCmd int32) {
-	pbk := r.instanceSpace[inst]
+	pbk := r.Proposer.GetInstanceSpace()[inst]
 	r.UpdateMaxValueInstance(inst)
 	if pbk.Status == proposer.CLOSED {
 		return
@@ -846,18 +812,7 @@ func (r *Replica) proposerCloseCommit(inst int32, chosenAt stdpaxosproto.Ballot,
 	if r.Id == int32(chosenAt.PropID) {
 		r.bcastCommitToAll(inst, chosenAt, chosenVal, whoseCmd)
 	}
-	r.Proposer.LearnBallotChosen(&r.instanceSpace, inst, lwcproto.ConfigBal{Config: -1, Ballot: chosenAt}, whoseCmd) // todo add client value chosen log
-	if whoseCmd == r.Id {
-		if r.ClientBatcher.IsBatchChosen(pbk.ClientProposals) {
-			dlog.AgentPrintfN(r.Id, proposer.LearntBatchAgainFmt(inst, chosenAt, r.Proposer, whoseCmd, pbk.ClientProposals))
-		} else {
-			dlog.AgentPrintfN(r.Id, proposer.LearntBatchFmt(inst, chosenAt, r.Proposer, whoseCmd, pbk.ClientProposals))
-		}
-		r.ClientBatcher.BatchChosen(pbk.ClientProposals)
-	} else {
-		dlog.AgentPrintfN(r.Id, proposer.LearntFmt(inst, chosenAt, r.Proposer, whoseCmd))
-	}
-	r.instanceProposeValueTimeout.ProposedClientValuesManager.ValueChosen(pbk, inst, whoseCmd, chosenVal, r.ClientBatcher)
+	r.Proposer.LearnBallotChosen(inst, lwcproto.ConfigBal{Config: -1, Ballot: chosenAt}, whoseCmd) // todo add client value chosen log
 	r.noLongerSleepingInstance(inst)
 	setProposingValue(pbk, whoseCmd, chosenAt, chosenVal)
 	r.Executor.Learnt(inst, chosenVal, whoseCmd)
@@ -880,7 +835,7 @@ func (r *Replica) handleCommit(commit *stdpaxosproto.Commit) {
 func (r *Replica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 	r.checkAndHandleNewlyReceivedInstance(commit.Instance, commit.Ballot)
 	dlog.AgentPrintfN(r.Id, logfmt.ReceiveCommitShortFmt(commit))
-	pbk := r.instanceSpace[commit.Instance]
+	pbk := r.Proposer.GetInstanceSpace()[commit.Instance]
 	r.Learner.ProposalChosen(commit.Instance, commit.Ballot)
 	if !r.Learner.HasLearntValue(commit.Instance) {
 		dlog.AgentPrintfN(r.Id, "Cannot learn instance %d at ballot %d.%d as we do not have a value for it", commit.Instance, commit.Ballot.Number, commit.Ballot.PropID)
@@ -893,7 +848,7 @@ func (r *Replica) handleCommitShort(commit *stdpaxosproto.CommitShort) {
 }
 
 func (r *Replica) handleState(state *proposerstate.State) {
-	r.Proposer.LearnOfBallot(&r.instanceSpace, state.CurrentInstance, lwcproto.ConfigBal{-2, stdpaxosproto.Ballot{-2, int16(state.ProposerID)}}, stdpaxosproto.PROMISE)
+	r.Proposer.LearnOfBallot(state.CurrentInstance, lwcproto.ConfigBal{-2, stdpaxosproto.Ballot{-2, int16(state.ProposerID)}}, stdpaxosproto.PROMISE)
 }
 
 func (r *Replica) updateLeases(lease acceptor.PromiseLease) {
@@ -926,7 +881,7 @@ func (r *Replica) GotPromisesFromAllInGroup(instance int32, ballot stdpaxosproto
 
 func (r *Replica) noInstancesWaiting(inst int32) bool {
 	for i := inst + 1; i <= r.Proposer.GetCrtInstance(); i++ {
-		pbk := r.instanceSpace[i]
+		pbk := r.Proposer.GetInstanceSpace()[i]
 		if !pbk.ProposeValueBal.IsZero() {
 			return false
 		}
