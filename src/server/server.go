@@ -1,6 +1,7 @@
 package main
 
 import (
+	"epaxos/atlas"
 	"epaxos/epaxos"
 	"epaxos/genericsmr"
 	"epaxos/gpaxos"
@@ -31,6 +32,7 @@ var myAddr = flag.String("addr", "", "Server address (this machine). Defaults to
 var doMencius = flag.Bool("m", false, "Use Mencius as the replication protocol. Defaults to false.")
 var doGpaxos = flag.Bool("g", false, "Use Generalized Paxos as the replication protocol. Defaults to false.")
 var doEpaxos = flag.Bool("e", false, "Use EPaxos as the replication protocol. Defaults to false.")
+var doAtlas = flag.Bool("a", false, "Use Atlas as the replication protocol. Defaults to false.")
 var doLWCSpec = flag.Bool("ls", false, "Use Less Writey Consensus as the replication protocol with Speculative proposlas. Defaults to false.")
 
 var doLWCGlobalSpec = flag.Bool("lgs", false, "Use Less Writey Consensus as the replication protocol with global Speculative proposlas. Defaults to false.")
@@ -209,6 +211,11 @@ func main() {
 	if *doEpaxos {
 		log.Println("Starting Egalitarian Paxos replica...")
 		rep := epaxos.NewReplica(smrReplica, replicaId, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *maxfailures, *storageParentDir, *fastLearn, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm)
+		rpc.Register(rep)
+		runnable = rep
+	} else if *doAtlas {
+		log.Println("Starting Egalitarian Paxos replica...")
+		rep := atlas.NewReplica(smrReplica, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doMencius {

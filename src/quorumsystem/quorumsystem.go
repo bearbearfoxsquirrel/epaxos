@@ -21,10 +21,7 @@ type SynodCountingQuorumSystemConstructor struct {
 	F       int
 	Thrifty bool
 	*genericsmr.Replica
-	//BroadcastFastest bool
-	//broadcastStrat BroadcastStrat
 	AllAids []int32
-	//SendAllAcceptors bool
 }
 
 func (constructor *SynodCountingQuorumSystemConstructor) Construct(acceptors []int32) SynodQuorumSystem {
@@ -52,10 +49,8 @@ func (constructor *SynodCountingQuorumSystemConstructor) getQrmSystem(acc []int3
 		thrifty:      constructor.Thrifty,
 		Replica:      constructor.Replica,
 		possibleAids: acc,
-		//broadcastFastest:   constructor.BroadcastFastest,
-		amIInQrm: amIInQrm,
-		//sendToAllAcceptors: constructor.SendAllAcceptors,
-		allAids: constructor.AllAids,
+		amIInQrm:     amIInQrm,
+		allAids:      constructor.AllAids,
 	}
 }
 
@@ -67,7 +62,6 @@ func (constructor *SynodCountingQuorumSystemConstructor) ConstructAQ(acc []int32
 type SynodGridQuorumSystemConstructor struct {
 	F       int
 	Thrifty bool
-	//BroadcastFastest bool
 	*genericsmr.Replica
 }
 
@@ -158,8 +152,13 @@ type SynodQuorumSystem interface {
 	QuorumReached() bool
 	AddToQuorum(int32)
 	HasAcknowledged(int32) bool
-	//Broadcast(code uint8, msg fastrpc.Serializable) []int32
 }
+
+//type GeneralisedQuorumSystem struct {
+//	CountingQuorumSynodQuorumSystem
+//	p0Asize int
+//	p0Bsize int
+//}
 
 type CountingQuorumSynodQuorumSystem struct {
 	p1size          int
@@ -170,8 +169,6 @@ type CountingQuorumSynodQuorumSystem struct {
 	possibleAidsMap map[int]struct{}
 	*genericsmr.Replica
 	Phase
-	bcastAttempts      int
-	broadcastFastest   bool
 	amIInQrm           bool
 	sendToAllAcceptors bool
 	allAids            []int32

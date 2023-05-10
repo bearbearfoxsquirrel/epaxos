@@ -9,30 +9,6 @@ import (
 	"epaxos/twophase/balloter"
 )
 
-//type RequestNotifier interface {
-//	RegisterInterest(func(request *genericsmr.Propose))
-//	ReadAllAboutIt(request *genericsmr.Propose)
-//}
-//
-//type requestNotifier struct {
-//	registered []func(request *genericsmr.Propose)
-//}
-//
-//func (r requestNotifier) RegisterInterest(f func(request *genericsmr.Propose)) {
-//	r.registered = append(r.registered, f)
-//}
-//
-//func (r requestNotifier) ReadAllAboutIt(request *genericsmr.Propose) {
-//	for _, f := range r.registered {
-//		f(request)
-//	}
-//}
-
-//type ProposerValueManager interface {
-//Batching
-//ProposedClientValuesManager
-//}
-
 type ValuePreemptedHandler interface {
 	LearnOfBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, bm Batching)
 }
@@ -93,7 +69,6 @@ func (manager *SimpleBatchManager) LearnOfBallot(pbk *PBK, inst int32, ballot lw
 		dlog.AgentPrintfN(manager.id, RequeuingBatchPreempted(inst, ballot.Ballot, pbk.ClientProposals))
 	}
 	manager.setRequeuedAt(inst, pbk.PropCurBal)
-	//pbk.ClientProposals = nil
 }
 
 // is this after or before

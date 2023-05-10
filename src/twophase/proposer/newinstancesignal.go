@@ -83,6 +83,7 @@ func (sig *SimpleSig) Opened(opened []int32) {
 }
 
 func (sig *SimpleSig) signalForNewInst(inst int32) {
+
 	delete(sig.instsStarted, inst)
 	//dlog.AgentPrintfN(sig.id, "sigging %d", inst)
 	sig.sigged += 1
@@ -141,9 +142,6 @@ func (sig *SimpleSig) acceptedShouldSignal(pbk *PBK, inst int32, ballot lwcproto
 	if pbk.Status == PROPOSING && pbk.PropCurBal.GreaterThan(ballot) { // late acceptance that we've ignored (got promise quorum and learnt no value was chosen)
 		return false
 	}
-	//if ballot.Number > 20000 {
-	//	return false
-	//}
 	dlog.AgentPrintfN(sig.id, "Signalling to open new instance as instance %d %s", inst, "as there is an accepted ballot")
 	return true
 }
@@ -208,28 +206,6 @@ func EagerMaxOutstandingSigNew(eagerSig *EagerSig, fac int) *EagerMaxOutstanding
 	}
 }
 
-//func (sig *EagerMaxOutstandingSig) RequestReceieved(instanceSpace *[]*PBK) {
-//	startNewInst := true
-//	for inst := range sig.instsStarted {
-//		if (*instanceSpace)[inst].Status > READY_TO_PROPOSE {
-//			continue
-//		}
-//		startNewInst = false
-//	}
-//	if !startNewInst {
-//		dlog.AgentPrintfN(sig.id, "Already started instance to propose in")
-//		return
-//	}
-//	if sig.sigged > 0 {
-//		dlog.AgentPrintfN(sig.id, "Already signalled new instance")
-//		return
-//	}
-//	//dlog.AgentPrintfN(sig.id, " signalled new instance")
-//	dlog.AgentPrintfN(sig.id, "Signalling new instance to propose in")
-//	sig.sigged += 1
-//	go func() { sig.sigNewInst <- struct{}{} }()
-//}
-
 func (sig *EagerMaxOutstandingSig) CheckOngoingBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, phase stdpaxosproto.Phase) {
 	if !sig.EagerSig.ballotShouldOpen(pbk, inst, ballot, phase) {
 		return
@@ -245,8 +221,16 @@ func (sig *EagerMaxOutstandingSig) CheckOngoingBallot(pbk *PBK, inst int32, ball
 	sig.signalForNewInst(inst)
 }
 
+// todo move to baseline signaller?
 func (sig *EagerMaxOutstandingSig) willOpeningExceedMaxOutstandingInsts() bool {
 	return len(sig.instsStarted)+int(sig.sigged) >= int(sig.MaxOpenInsts)
+}
+
+func (sig *EagerMaxOutstandingSig) tooManyOutstandingChosenInsts() bool {
+	if len(sig.myOutstandingChosenInsts) >= int(sig.MaxOpenInsts)*sig.fac {
+		return true
+	}
+	return false
 }
 
 func (sig *EagerMaxOutstandingSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
@@ -261,13 +245,6 @@ func (sig *EagerMaxOutstandingSig) CheckAcceptedBallot(pbk *PBK, inst int32, bal
 		return
 	}
 	sig.signalForNewInst(inst)
-}
-
-func (sig *EagerMaxOutstandingSig) tooManyOutstandingChosenInsts() bool {
-	if len(sig.myOutstandingChosenInsts) >= int(sig.MaxOpenInsts)*sig.fac {
-		return true
-	}
-	return false
 }
 
 func (sig *EagerMaxOutstandingSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
@@ -347,14 +324,10 @@ func (sig *EagerExecUpToSig) updateMyMaxInst(inst int32) {
 func (sig *EagerExecUpToSig) SignalNext() {
 	if sig.PipelineTooLong() {
 		return
-	}
+	} //todo change?
 	sig.sigged += 1
 	go func() { sig.sigNewInst <- struct{}{} }()
 }
-
-//func (sig *EagerExecUpToSig) isFailure(ballot lwcproto.ConfigBal) bool {
-//
-//}
 
 func (sig *EagerExecUpToSig) maxOutstandingInstancesExceeded() bool {
 	return len(sig.instsStarted)+int(sig.sigged) > int(sig.MaxOpenInsts)

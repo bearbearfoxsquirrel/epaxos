@@ -298,13 +298,10 @@ type BcastSlowLearning struct {
 	id             int32
 	n              int32
 	aids           []int32
-	//proposer.AcceptorQrmInfo
 	SendQrmSize
-	ListSender // ReliableListSender
+	ListSender
 	AcceptSelfSender
-	//
 	QuorumCounter
-	//*Replica
 }
 
 func NewBcastSlowLearning(acceptRPC uint8, commitShortRPC uint8, commitPRC uint8, id int32, n int32, aids []int32, sendQrmSize SendQrmSize, listSender ListSender, acceptSelfSender AcceptSelfSender, quorumCounter QuorumCounter) *BcastSlowLearning {

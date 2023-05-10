@@ -59,52 +59,6 @@ func (qrmliser *Standard) GetGroup(inst int32) []int32 {
 	return qrmliser.Aids
 }
 
-//////////////////////////////////
-// MINIMAL
-/////////////////////////////////
-
-//type MinimalSpecific struct {
-//	acceptorGroups [][]int32
-//	quorumsystem.SynodQuorumSystemConstructor
-//	GroupGetter
-//}
-//
-//func (q *MinimalSpecific) Add(Id int32) {
-//	//TODO implement me
-//	panic("implement me")
-//}
-//
-//func (q *MinimalSpecific) Reached() bool {
-//	//TODO implement me
-//	panic("implement me")
-//}
-//
-//func (q *MinimalSpecific) Acknowledged(i int32) bool {
-//	//TODO implement me
-//	panic("implement me")
-//}
-//
-//func (q *MinimalSpecific) IsInGroup(inst int32, aid int32) bool {
-//	gi := q.gForInst(inst)
-//	g := q.acceptorGroups[gi]
-//	for i := 0; i < len(g); i++ {
-//		if g[i] == aid {
-//			return true
-//		}
-//	}
-//	return false
-//}
-//
-//func (q *MinimalSpecific) gForInst(inst int32) int32 {
-//	return inst % int32(len(q.acceptorGroups))
-//}
-//
-//func (q *MinimalSpecific) StartPromiseQuorumOnCurBal(pbk *PBK, inst int32) {
-//	quorumaliser := q.SynodQuorumSystemConstructor.Construct(q.acceptorGroups[q.gForInst(inst)])
-//	pbk.Qrms[pbk.PropCurBal] = quorumaliser
-//	pbk.Qrms[pbk.PropCurBal].StartPromiseQuorum()
-//}
-
 type Minimal struct {
 	AcceptorMapper instanceagentmapper.InstanceAgentMapper
 	MapperCache    map[int32][]int32
