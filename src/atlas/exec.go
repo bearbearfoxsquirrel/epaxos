@@ -98,48 +98,7 @@ func (e *Exec) executeCommand(replica int32, instance int32) bool {
 		return false
 	}
 
-	// for each command in
-	//for {
-	//each time a new command is committed
-	// check every log for
-	// the list of commands and deps that they can execute
-	// compare them to each other for the min
-	// if there is one then execute it
-
-	//S[l] = make([]instanceId, 0, int32(e.r.N)*(commitedUpTo-executedUpTo))
-	// every command that is committed and every dependency is committed
-	//for l := int32(0); l < int32(e.r.N); l++ {
-	//	commitedUpTo := e.r.CommittedUpTo[l]
-	//	executedUpTo := e.r.ExecedUpTo[l]
-	//	if commitedUpTo == executedUpTo {
-	//		continue
-	//	}
-	//	//cur := int32(1)
-	//	//for cont := true; !cont {
-	//	//	considering := instanceId{l, executedUpTo + 1}
-	//	//	//instance := e.r.InstanceSpace[considering.replica][considering.instance]
-	//	//	deps := e.getDepList(considering)
-	//	//	if !isOkayToAddToS(S[l], e.r.ExecedUpTo, considering, deps) {
-	//	//		break
-	//	//	}
-	//	//	S[l] = append(S[l], considering)
-	//	//	//cur += 1
-	//	//}
-	//}
-	//sMin := smallestSlice(S)
-	//if len(S[sMin]) == 0 {
-	//	return false
-	//}
 	return e.findSCC(inst)
-	//var S []instanceId = make([]instanceId, e.r.N)
-	//sort.Slice(S, func(i, j int) bool {
-	//	return S[i].replica < S[j].replica || (S[i].replica == S[j].replica && S[i].instance < S[j].instance)
-	//})
-	//
-	//e.executeInstances(S)
-	//}
-
-	//return true
 }
 
 func (e *Exec) findSCC(root *Instance) bool {

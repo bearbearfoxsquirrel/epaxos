@@ -15,43 +15,10 @@ import (
 )
 
 const MAX_INSTANCE = 10 * 1024 * 1024
-
-const MAX_DEPTH_DEP = 10
 const TRUE = uint8(1)
-const FALSE = uint8(0)
 const ADAPT_TIME_SEC = 10
-
-const COMMIT_GRACE_PERIOD = 10 * 1e9 // 10 second(s)
-
-const BF_K = 4
-const BF_M_N = 32.0
-
 const HT_INIT_SIZE = 200000
 
-// FIXME main differences with the original code base
-// - fix N=3 case
-// - add vbal variable (TLA spec. is wrong)
-// - remove checkpoints (need to fix them first)
-// - remove short commits (with N>7 propagating committed dependencies is necessary)
-// - must run with thriftiness on (recovery is incorrect otherwise)
-// - when conflicts are transitive skip waiting prior commuting commands
-
-// todo for atlas
-// change message names
-// change quorums
-// change dependency calculation code -- find f+1 messages that have same deps - if f+1 responses have the same deps, then we can take fast path
-// change the deps sent to
-
-// Let X1,...,X2 f+1 be 2 f + 1 sets. Let popular(X1,...,X2 f+1) = {x | x appears in at least f +1 of the sets}
-// That is, the proposer takes the fast path only if every dependency vy computed by any of the dependency service nodes was computed by a majority of the dependency service nodes.
-
-// not todo
-// change recovery protocol
-// change execution protocol - its only simpler
-
-// init deps := commands that are currently in the start phase conflicts(c) = {id \notin start : conflict(c, cmd[id])}.
-
-// we want a list of the last instance for each replica that conflicts with our all commands in the current one
 var cpMarker []state.Command
 var cpcounter = 0
 
@@ -146,7 +113,7 @@ type LeaderBookkeeping struct {
 	cmds            []state.Command
 	status          int8
 	mergeddeps      []int32
-	depsMap         []map[int32]int32
+	depsMap         []map[int32]int32 // list each log, with a map of instances and how many replicas think that is the depending instance
 }
 
 func (b *LeaderBookkeeping) addReportedDeps(deps []int32, rid int32) {
@@ -285,19 +252,11 @@ func (r *Replica) sync() {
 
 /* Clock goroutine */
 var fastClockChan chan bool
-var slowClockChan chan bool
 
 func (r *Replica) fastClock() {
 	for !r.Shutdown {
 		time.Sleep(time.Duration(r.batchWait) * time.Millisecond) // ms
 		fastClockChan <- true
-	}
-}
-
-func (r *Replica) slowClock() {
-	for !r.Shutdown {
-		time.Sleep(150 * 1e6) // 150 ms
-		slowClockChan <- true
 	}
 }
 
@@ -317,7 +276,6 @@ func (r *Replica) stopAdapting() {
 		r.PreferredPeerOrder[i] = r.PreferredPeerOrder[min]
 		r.PreferredPeerOrder[min] = aux
 	}
-	//log.Println(r.PreferredPeerOrder)
 	r.Mutex.Unlock()
 }
 
@@ -351,13 +309,6 @@ func (r Replica) replicaLoop() {
 			//activate new proposals channel
 			onOffProposeChan = r.ProposeChan
 			break
-		case prepareS := <-r.prepareChan:
-			prepare := prepareS.(*epaxosproto.Prepare)
-			//got a Prepare message
-			dlog.Println("Received Prepare %d.%d w. ballot %d\n", prepare.Replica, prepare.Instance, prepare.Ballot)
-			panic("not implemented")
-			//r.handlePrepare(prepare)
-			break
 		case preAcceptS := <-r.preAcceptChan:
 			preAccept := preAcceptS.(*epaxosproto.PreAccept)
 			//got a PreAccept message
@@ -376,13 +327,6 @@ func (r Replica) replicaLoop() {
 			dlog.Println("Received Commit %d.%d\n", commit.Replica, commit.Instance)
 			r.handleCommit(commit)
 			break
-		case prepareReplyS := <-r.prepareReplyChan:
-			prepareReply := prepareReplyS.(*epaxosproto.PrepareReply)
-			//got a Prepare reply
-			dlog.Println("Received PrepareReply %d.%d w. ballot %d from %d\n", prepareReply.Replica, prepareReply.Instance, prepareReply.Ballot, prepareReply.AcceptorId)
-			panic("not implemented")
-			//r.handlePrepareReply(prepareReply)
-			break
 		case preAcceptReplyS := <-r.preAcceptReplyChan:
 			preAcceptReply := preAcceptReplyS.(*epaxosproto.PreAcceptReply)
 			//got a PreAccept reply
@@ -395,21 +339,21 @@ func (r Replica) replicaLoop() {
 			dlog.Println("Received AcceptReply %d.%d w. ballot %d\n", acceptReply.Replica, acceptReply.Instance, acceptReply.Ballot)
 			r.handleAcceptReply(acceptReply)
 			break
-		case beacon := <-r.BeaconChan:
-			dlog.Printf("Received Beacon from replica %d with timestamp %d\n", beacon.Rid, beacon.Timestamp)
-			r.ReplyBeacon(beacon)
-			break
-		case <-slowClockChan:
-			if r.Beacon {
-				dlog.Printf("weird %d; conflicted %d; slow %d; fast %d\n", r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"])
-				for q := int32(0); q < int32(r.N); q++ {
-					if q == r.Id {
-						continue
-					}
-					r.SendBeacon(q)
-				}
-			}
-			break
+			//case beacon := <-r.BeaconChan:
+			//	dlog.Printf("Received Beacon from replica %d with timestamp %d\n", beacon.Rid, beacon.Timestamp)
+			//	r.ReplyBeacon(beacon)
+			//	break
+			//case <-slowClockChan:
+			//	if r.Beacon {
+			//		dlog.Printf("weird %d; conflicted %d; slow %d; fast %d\n", r.Stats.M["weird"], r.Stats.M["conflicted"], r.Stats.M["slow"], r.Stats.M["fast"])
+			//		for q := int32(0); q < int32(r.N); q++ {
+			//			if q == r.Id {
+			//				continue
+			//			}
+			//			r.SendBeacon(q)
+			//		}
+			//	}
+			//	break
 			//case <-r.instancesToRecover:
 			//	panic("not implemented")
 			//r.startRecoveryForInstance(iid.replica, iid.instance)
@@ -426,9 +370,8 @@ func (r *Replica) run() {
 		go r.executeCommands()
 	}
 
-	slowClockChan = make(chan bool, 1)
+	//slowClockChan = make(chan bool, 1)
 	fastClockChan = make(chan bool, 1)
-	go r.slowClock()
 
 	//Enabled fast clock when batching
 	if r.BatchingEnabled() {
@@ -449,12 +392,12 @@ func (r *Replica) run() {
 
 func (r *Replica) executeCommands() {
 	const SLEEP_TIME_NS = 1e6
-	problemInstance := make([]int32, r.N)
-	timeout := make([]uint64, r.N)
-	for q := 0; q < r.N; q++ {
-		problemInstance[q] = -1
-		timeout[q] = 0
-	}
+	//problemInstance := make([]int32, r.N)
+	//timeout := make([]uint64, r.N)
+	//for q := 0; q < r.N; q++ {
+	//	problemInstance[q] = -1
+	//	timeout[q] = 0
+	//}
 
 	for !r.Shutdown {
 		executed := false
@@ -467,19 +410,19 @@ func (r *Replica) executeCommands() {
 					continue
 				}
 				if r.InstanceSpace[q][inst] == nil || r.InstanceSpace[q][inst].Status < epaxosproto.COMMITTED || r.InstanceSpace[q][inst].Cmds == nil {
-					if inst == problemInstance[q] {
-						timeout[q] += SLEEP_TIME_NS
-						if timeout[q] >= COMMIT_GRACE_PERIOD {
-							for k := problemInstance[q]; k <= r.crtInstance[q]; k++ {
-								dlog.Printf("Recovering instance %d.%d", q, k)
-								r.instancesToRecover <- &instanceId{q, k}
-							}
-							timeout[q] = 0
-						}
-					} else {
-						problemInstance[q] = inst
-						timeout[q] = 0
-					}
+					//if inst == problemInstance[q] {
+					//timeout[q] += SLEEP_TIME_NS
+					//if timeout[q] >= COMMIT_GRACE_PERIOD {
+					//for k := problemInstance[q]; k <= r.crtInstance[q]; k++ {
+					//	dlog.Printf("Recovering instance %d.%d", q, k)
+					//	//r.instancesToRecover <- &instanceId{q, k}
+					//}
+					//timeout[q] = 0
+					//}
+					//} else {
+					//problemInstance[q] = inst
+					//timeout[q] = 0
+					//}
 					break
 				}
 				if ok := r.exec.executeCommand(int32(q), inst); ok {
@@ -550,7 +493,6 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	}()
 	lb := r.InstanceSpace[replica][instance].lb
 	args := &epaxosproto.Prepare{r.Id, replica, instance, lb.lastTriedBallot}
-	//r.CalculateAlive()
 	var order []int32
 	if r.sendToFastestQrm {
 		order = r.GetPeerOrderLatency()
@@ -559,25 +501,9 @@ func (r *Replica) bcastPrepare(replica int32, instance int32) {
 	}
 	if len(order) < r.SlowQuorumSize() {
 		r.SendToGroup(order, r.prepareRPC, args)
-		//n := r.N - 1
-		//q := r.id
-		//for sent := 0; sent < n; {
-		//	q = (q + 1) % int32(r.N)
-		//	if q == r.id {
-		//		dlog.Printf("Not enough replicas alive! %v", r.Alive)
-		//		break
-		//	}
-		//	if !r.Alive[q] {
-		//		continue
-		//	}
-		//	dlog.Printf("Sending Prepare %d.%d w. ballot %d to %d\n", replica, instance, lb.lastTriedBallot, q)
-		//	r.SendMsg(q, r.prepareRPC, args)
-		//	sent++
-		//}
 	} else {
 		r.SendToGroup(order[:r.SlowQuorumSize()], r.prepareRPC, args)
 	}
-
 }
 
 func (r *Replica) FastQrmSize() int {
@@ -665,18 +591,8 @@ func (r *Replica) bcastCommit(replica int32, instance int32) {
 	ec.Deps = lb.mergeddeps
 	ec.Ballot = lb.ballot
 
-	//	r.CalculateAlive()
-	//	r.RandomisePeerOrder()
 	peers := r.GetRandomPeerOrder()
 	r.SendToGroup(peers, r.commitRPC, ec)
-	//for q := 0; q < r.N-1; q++ {
-	//
-	////	if !r.Alive[r.PreferredPeerOrder[q]] {
-	////		continue
-	////	}
-	//	dlog.Printf("Sending Commit %d.%d to %d\n", replica, instance, r.PreferredPeerOrder[q])
-	//	r.SendMsg(r.PreferredPeerOrder[q], r.commitRPC, ec)
-	//}
 }
 
 /******************************************************************
@@ -784,6 +700,8 @@ func (r *Replica) startPhase1(cmds []state.Command, replica int32, instance int3
 
 	inst.lb = r.newLeaderBookkeeping(proposals, deps, committedDeps, deps, ballot, cmds, epaxosproto.PREACCEPTED)
 
+	inst.lb.addReportedDeps(deps, r.Id)
+
 	r.recordInstanceMetadata(r.InstanceSpace[r.Id][instance])
 	r.recordCommands(cmds)
 	r.sync()
@@ -831,8 +749,6 @@ func (r *Replica) handlePreAccept(preAccept *epaxosproto.PreAccept) {
 		if changed {
 			status = epaxosproto.PREACCEPTED
 		}
-		//	initialDeps := make([]int32, len(inst.Deps))
-		//	copy(initialDeps, inst.Deps)
 		inst.Cmds = preAccept.Command
 		inst.Deps = deps
 		inst.bal = preAccept.Ballot
@@ -971,6 +887,9 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 			r.executeCommands()
 		}
 	} else {
+		if r.F == 1 {
+			panic("No slow path when f = 1")
+		}
 		// } else if inst.lb.preAcceptOKs >= r.N/2 && !precondition {
 		dlog.Printf("Slow path %d.%d (inst.lb.fastPathOK=%t,  isInitialBallot=%t)\n", pareply.Replica, pareply.Instance, fastPathOK, isInitialBallot)
 		lb.status = epaxosproto.ACCEPTED
