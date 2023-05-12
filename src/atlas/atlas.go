@@ -817,12 +817,6 @@ func (r *Replica) handlePreAcceptReply(pareply *epaxosproto.PreAcceptReply) {
 
 	isInitialBallot := isInitialBallot(lb.lastTriedBallot, pareply.Replica, pareply.Instance)
 
-	// differ from original code: (r.N <= 3 && !r.Thrifty) not inline with SOSP Section 4.4
-	//seq, deps, allEqual := r.mergeAttributes(lb.seq, lb.deps, pareply.Seq, pareply.Deps)
-	//if r.N <= 3 && r.Thrifty {
-	//	no need to check for equality
-	//} else {
-
 	lb.addReportedDeps(pareply.Deps, pareply.Replica)
 	// differ from original code: TLA fix
 	if lb.status <= epaxosproto.PREACCEPTED_EQ {
@@ -1162,11 +1156,10 @@ func (r *Replica) GetFinalDeps(bookkeeping *LeaderBookkeeping) ([]int32, bool) {
 	for l := 0; l < len(bookkeeping.depsMap); l++ {
 		max := int32(-1)
 		for i, count := range bookkeeping.depsMap[l] {
-			if count <= int32(r.F) {
+			if count < int32(r.F) {
 				fastPath = false
-				continue
 			}
-			if i < max {
+			if i <= max {
 				continue
 			}
 			max = i
