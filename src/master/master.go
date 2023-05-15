@@ -16,19 +16,21 @@ import (
 
 var portnum *int = flag.Int("port", 7087, "Port # to listen on. Defaults to 7087")
 var numNodes *int = flag.Int("N", 3, "Number of replicas. Defaults to 3.")
+var initialLeader *int = flag.Int("initleader", 0, "Initial leader. Defaults to 0")
 var quiet *bool = flag.Bool("quiet", false, "Log nothing?")
 var addr *string = flag.String("addr", "", "Master address")
 
 type Master struct {
-	N         int
-	connected map[int32]struct{}
-	nodeList  []string
-	addrList  []string
-	portList  []int
-	lock      *sync.Mutex
-	nodes     []*rpc.Client
-	leader    []bool
-	alive     []bool
+	N             int
+	connected     map[int32]struct{}
+	nodeList      []string
+	addrList      []string
+	portList      []int
+	lock          *sync.Mutex
+	nodes         []*rpc.Client
+	leader        []bool
+	alive         []bool
+	initialLeader int32
 }
 
 func main() {
@@ -49,8 +51,9 @@ func main() {
 		new(sync.Mutex),
 		make([]*rpc.Client, *numNodes),
 		make([]bool, *numNodes),
-		make([]bool, *numNodes)}
-
+		make([]bool, *numNodes),
+		int32(*initialLeader),
+	}
 	rpc.Register(master)
 	rpc.HandleHTTP()
 	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", *addr, *portnum))
@@ -178,7 +181,7 @@ func (master *Master) Register(args *masterproto.RegisterArgs, reply *masterprot
 		reply.IsLeader = false
 
 		//	minLatency := math.MaxFloat64
-		leader := int32(0)
+		leader := master.initialLeader //int32(0)
 		//	for i := 0; i < len(master.leader); i++ {
 		//	if master.latencies[i] < minLatency {
 		//	minLatency = master.latencies[i]

@@ -1168,12 +1168,3 @@ func (r *Replica) GetFinalDeps(bookkeeping *LeaderBookkeeping) ([]int32, bool) {
 	}
 	return fDeps, fastPath
 }
-
-//func (r *Replica) CanCommitFastPathDeps(deps map[instanceId]int32) bool {
-//	for _, count := range deps {
-//		if count < int32(r.F) {
-//			return false
-//		}
-//	}
-//	return true
-//}
