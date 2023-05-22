@@ -304,6 +304,7 @@ func main() {
 		case <-interrupt:
 			benchmarker.stop()
 			shutdown = true
+			break
 		case <-statsTimer.C:
 			benchmarker.timeseriesStep()
 			statsTimer = time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)

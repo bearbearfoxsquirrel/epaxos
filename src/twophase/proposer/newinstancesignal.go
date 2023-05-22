@@ -167,7 +167,7 @@ func (sig *SimpleSig) chosenShouldSignal(inst int32, ballot lwcproto.ConfigBal, 
 }
 
 func (sig *SimpleSig) ReceivedClientRequest(instanceSpace []*PBK) {
-	if sig.signalIfNoneStarted {
+	if !sig.signalIfNoneStarted {
 		return
 	}
 	startNewInst := true
@@ -227,10 +227,7 @@ func (sig *EagerMaxOutstandingSig) willOpeningExceedMaxOutstandingInsts() bool {
 }
 
 func (sig *EagerMaxOutstandingSig) tooManyOutstandingChosenInsts() bool {
-	if len(sig.myOutstandingChosenInsts) >= int(sig.MaxOpenInsts)*sig.fac {
-		return true
-	}
-	return false
+	return len(sig.myOutstandingChosenInsts) >= int(sig.MaxOpenInsts)*sig.fac
 }
 
 func (sig *EagerMaxOutstandingSig) CheckAcceptedBallot(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whosecmds int32) {
@@ -248,13 +245,13 @@ func (sig *EagerMaxOutstandingSig) CheckAcceptedBallot(pbk *PBK, inst int32, bal
 }
 
 func (sig *EagerMaxOutstandingSig) CheckChosen(pbk *PBK, inst int32, ballot lwcproto.ConfigBal, whoseCmds int32) {
-	if sig.id == int32(ballot.PropID) {
-		sig.myOutstandingChosenInsts[inst] = struct{}{}
-	}
 	if _, e := sig.instsStarted[inst]; !e {
 		return
 	}
 	delete(sig.instsStarted, inst)
+	if sig.maxExecuted < inst && sig.id == int32(ballot.PropID) {
+		sig.myOutstandingChosenInsts[inst] = struct{}{}
+	}
 	if sig.willOpeningExceedMaxOutstandingInsts() {
 		return
 	}
