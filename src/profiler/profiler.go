@@ -16,7 +16,8 @@ import (
 var outputFile = flag.String("o", "", "Must state where resultant latencies will be written")
 var sampleRateMs = flag.Int("samplerate", 1000, "how often to sample timeseries data (ms)")
 var nicNum = flag.Int("nic", 0, "which nic ??????????")
-var diskName = flag.String("disk", "sda0", "which nic ??????????")
+var nicnName = flag.String("nicname", "", "which nic name ??????????")
+var diskName = flag.String("disk", "sda0", "which nic disk")
 
 func getTimestamp() string {
 	return fmt.Sprintf("%s, %d,", time.Now().Format("2006/01/02 15:04:05 .000"), time.Now().UnixNano())
@@ -110,8 +111,11 @@ func writeToFile(f *os.File, data string) {
 	}
 }
 
-func diffNew(nic int, diskName string) profilerDiff {
+func diffNew(nic int, nicName string, diskName string) profilerDiff {
 	nics, _ := net.IOCounters(true)
+	if nics[nic].Name != nicName {
+		panic(fmt.Sprintf("Expected nic name %s does not match actual nic name %s", nicName, nics[nic].Name))
+	}
 	disks, _ := disk.IOCounters()
 	curNet := nics[nic]
 	curDisk := disks[diskName]
@@ -143,7 +147,7 @@ func main() {
 	writeToFile(f, "Human Time, Robot Time, CPU Usage, Packets Sent, Packets Received, Bytes Sent, Bytes Received, Dropped Packets In, Dropped Packets Out, Disk Read Count, Disk Write Count, Disk Read Bytes, Disk Write Bytes\n")
 
 	// initialise diff
-	diff := diffNew(*nicNum, *diskName)
+	diff := diffNew(*nicNum, *nicnName, *diskName)
 	statsTimer := time.NewTimer(time.Duration(*sampleRateMs) * time.Millisecond)
 	for !shutdown {
 		select {
