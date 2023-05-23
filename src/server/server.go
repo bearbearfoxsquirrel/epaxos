@@ -158,6 +158,9 @@ var signalIfNoInstanceStarted = flag.Bool("sinis", false, "Open new instance if 
 var limPipelineOnPreempt = flag.Bool("lpop", false, "Limit the pipeline so that proposers cannot open up more instances than max length if there is too much of a gap between current instance and executed instance")
 var eagerByMaxOutstandingChosen = flag.Bool("ebmoc", false, "Do eager with pipeline limited by max outstanding chosen but not yet executed")
 
+var asyncBcast = flag.Bool("abcast", false, "")
+var asyncResp = flag.Bool("aresp", false, "")
+
 func main() {
 	flag.Parse()
 	rand.Seed(time.Now().UnixNano() ^ int64(os.Getpid()))
@@ -271,7 +274,8 @@ func main() {
 			int32(*mappedProposersNum), int32(*instsToOpenPerBatch), *doEager, *sendFastestQrm, *gridQrms, *reducedQrmSize,
 			*minimalAcceptorNegatives, *prepwrittenpromises, *patientProposals, *sendFastestQrm, *eagerFwInduction, *doChosenFWI, *doValueFWI, *doLatePropsFWI,
 			int32(*forwardingInstances), *q1, *bcastCommit, *nopreempt, *pam, *pamloc, *syncacceptor, *disklessnoops, *foceDisklessnoops,
-			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs, *proposeToCatchUp, *openInstToCatchUp, *signalIfNoInstanceStarted, *limPipelineOnPreempt, *eagerByMaxOutstandingChosen)
+			*eagerByExec, *bcastAcceptDisklessNOOP, float32(*eagerByExecFac), *inductiveConfs, *proposeToCatchUp,
+			*openInstToCatchUp, *signalIfNoInstanceStarted, *limPipelineOnPreempt, *eagerByMaxOutstandingChosen, *asyncResp, *asyncBcast)
 		runnable = rep
 		rpc.Register(rep)
 		//}

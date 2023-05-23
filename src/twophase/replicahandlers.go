@@ -115,18 +115,21 @@ func handlePrepareResponsesFromAcceptor(resp <-chan acceptor.Message, rpc Prepar
 	}
 }
 
-func acceptorHandlePrepareFromRemote(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, replica *genericsmr.Replica, noPreempt bool) {
-	//s := time.Now()
+func acceptorHandlePrepareFromRemote(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, replica *genericsmr.Replica, noPreempt bool, asyncResp bool) {
 	if learnerCheckChosen(l, prepare.Instance, prepare.Ballot, "Prepare", int32(prepare.PropID), rpc.Commit, replica, id) {
 		return
 	}
 
 	resp := acc.RecvPrepareRemote(prepare)
 	//dlog.AgentPrintfN(id, "It took %d µs for acceptor to handle prepare", time.Now().Sub(s).Microseconds())
-	go func() {
+	if asyncResp {
+		go func() {
+			handlePrepareResponsesFromAcceptor(resp, rpc, prepare, id, replica, noPreempt)
+			//dlog.AgentPrintfN(id, "It took %d µs for acceptor to handle prepare and return message", time.Now().Sub(s).Microseconds())
+		}()
+	} else {
 		handlePrepareResponsesFromAcceptor(resp, rpc, prepare, id, replica, noPreempt)
-		//dlog.AgentPrintfN(id, "It took %d µs for acceptor to handle prepare and return message", time.Now().Sub(s).Microseconds())
-	}()
+	}
 }
 
 func acceptorSyncHandlePrepare(id int32, l learner.Learner, acc acceptor.Acceptor, prepare *stdpaxosproto.Prepare, rpc PrepareResponsesRPC, replica *genericsmr.Replica, bcastPrepare bool) {
@@ -241,13 +244,17 @@ func bcastAcceptanceTCP(replica *genericsmr.Replica, areply *stdpaxosproto.Accep
 	replica.Mutex.Unlock()
 }
 
-func acceptorHandleAccept(id int32, l learner.Learner, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool, bcastAcceptDisklessNOOP bool) {
+func acceptorHandleAccept(id int32, l learner.Learner, acc acceptor.Acceptor, accept *stdpaxosproto.Accept, rpc AcceptResponsesRPC, replica *genericsmr.Replica, bcastAcceptance bool, acceptanceChan chan<- fastrpc.Serializable, bcastPrepare bool, bcastAcceptDisklessNOOP bool, asyncResp bool) {
 	if learnerCheckChosen(l, accept.Instance, accept.Ballot, "Accept", int32(accept.PropID), rpc.Commit, replica, id) {
 		return
 	}
 	dlog.AgentPrintfN(id, "Acceptor handing Accept from Replica %d in instance %d at ballot %d.%d as it can form a quorum", accept.PropID, accept.Instance, accept.Number, accept.PropID)
 	responseC := acc.RecvAcceptRemote(accept)
-	go func() {
+	if asyncResp {
+		go func() {
+			acceptorHandleAcceptResponse(responseC, rpc, id, bcastPrepare, replica, acceptanceChan, accept, bcastAcceptDisklessNOOP, bcastAcceptance)
+		}()
+	} else {
 		acceptorHandleAcceptResponse(responseC, rpc, id, bcastPrepare, replica, acceptanceChan, accept, bcastAcceptDisklessNOOP, bcastAcceptance)
-	}()
+	}
 }

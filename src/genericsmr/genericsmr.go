@@ -93,7 +93,6 @@ type Replica struct {
 
 	rpcTable   map[uint8]*RPCPair
 	maxRpcCode uint8
-	//	rpcCodes   map[reflect.Type]uint8
 
 	Ewma                    []float64
 	ReplicasLatenciesOrders []int32
@@ -119,19 +118,16 @@ type Replica struct {
 	UDPPeerAddrList   []*net.UDPAddr
 	UDPPeerAddrToID   map[string]int32
 
-	//udpWriters        []net.Conn
-	//UDPListener       *net.UDPConn
 	UDPPeers  []*net.UDPConn
 	UDPPeersW []*net.UDPConn
 
 	UDPC         *net.UDPConn
 	sendBuffers  chan *[fastrpc.MAXDATAGRAMLEN]byte
-	resendMsgs   chan resend //astrpc.MSGReceipt
+	resendMsgs   chan resend
 	ackedTIBSLs  chan ack
 	UDPEWMAMutex sync.RWMutex
 
 	AtomicEWMA []atomic.Value
-	//EwmaSent          []float
 }
 
 type ack struct {

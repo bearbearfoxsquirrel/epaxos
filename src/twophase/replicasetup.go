@@ -31,9 +31,11 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 	forwardingInstances int32, q1 bool, bcastCommit bool, nopreempt bool, pam bool, pamloc string, syncaceptor bool,
 	disklessNOOP bool, forceDisklessNOOP bool, eagerByExec bool, bcastAcceptDisklessNoop bool, eagerByExecFac float32,
 	inductiveConfs bool, proposeToCatchUp bool, openInstToCatchUp bool, signalIfNoInstStarted bool,
-	limPipelineOnPreempt bool, eagerMaxOutstanding bool) *Replica {
+	limPipelineOnPreempt bool, eagerMaxOutstanding bool, asyncResp bool, asyncBcast bool) *Replica {
 
 	r := &Replica{
+		asyncResp:                    asyncResp,
+		asyncBcast:                   asyncBcast,
 		bcastAcceptDisklessNOOP:      bcastAcceptDisklessNoop,
 		disklessNOOPPromises:         make(map[int32]map[stdpaxosproto.Ballot]map[int32]struct{}),
 		disklessNOOPPromisesAwaiting: make(map[int32]chan struct{}),

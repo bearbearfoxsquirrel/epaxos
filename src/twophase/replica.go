@@ -154,6 +154,8 @@ type Replica struct {
 	bcastAcceptDisklessNOOP     bool
 	maxValueInstance            int32
 	proposeToCatchUp            bool
+	asyncBcast                  bool
+	asyncResp                   bool
 }
 
 func (r *Replica) HasAcked(q int32, instance int32, ballot stdpaxosproto.Ballot) bool {
@@ -418,16 +420,28 @@ func (man *InstanceProposeValueTimeout) getMinimumSleepingInstance() int32 {
 }
 
 func (r *Replica) bcastPrepare(instance int32) {
-	r.PrepareBroadcaster.Bcast(instance, r.Proposer.GetInstanceSpace()[instance].PropCurBal.Ballot)
+	if r.asyncBcast {
+		go r.PrepareBroadcaster.Bcast(instance, r.Proposer.GetInstanceSpace()[instance].PropCurBal.Ballot)
+	} else {
+		r.PrepareBroadcaster.Bcast(instance, r.Proposer.GetInstanceSpace()[instance].PropCurBal.Ballot)
+	}
 }
 
 func (r *Replica) bcastAccept(instance int32) {
 	pbk := r.Proposer.GetInstanceSpace()[instance]
-	r.ValueBroadcaster.BcastAccept(instance, pbk.PropCurBal.Ballot, pbk.WhoseCmds, pbk.Cmds)
+	if r.asyncBcast {
+		go r.ValueBroadcaster.BcastAccept(instance, pbk.PropCurBal.Ballot, pbk.WhoseCmds, pbk.Cmds)
+	} else {
+		r.ValueBroadcaster.BcastAccept(instance, pbk.PropCurBal.Ballot, pbk.WhoseCmds, pbk.Cmds)
+	}
 }
 
 func (r *Replica) bcastCommitToAll(instance int32, ballot stdpaxosproto.Ballot, command []*state.Command, whose int32) {
-	r.ValueBroadcaster.BcastCommit(instance, ballot, command, whose)
+	if r.asyncBcast {
+		go r.ValueBroadcaster.BcastCommit(instance, ballot, command, whose)
+	} else {
+		r.ValueBroadcaster.BcastCommit(instance, ballot, command, whose)
+	}
 }
 
 func (r *Replica) beginNextInstance() {
@@ -492,7 +506,7 @@ func (r *Replica) handlePrepare(prepare *stdpaxosproto.Prepare) {
 		if r.syncAcceptor {
 			acceptorSyncHandlePrepare(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.Replica, r.nopreempt)
 		} else {
-			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.Replica, r.nopreempt)
+			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, prepare, r.PrepareResponsesRPC, r.Replica, r.nopreempt, r.asyncResp)
 		}
 	}
 
@@ -607,7 +621,7 @@ func (r *Replica) HandlePrepareReply(preply *stdpaxosproto.PrepareReply) {
 				Instance: preply.Instance,
 				Ballot:   preply.Cur,
 			}
-			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, newPrep, r.PrepareResponsesRPC, r.Replica, r.nopreempt)
+			acceptorHandlePrepareFromRemote(r.Id, r.Learner, r.Acceptor, newPrep, r.PrepareResponsesRPC, r.Replica, r.nopreempt, r.asyncResp)
 		}
 		return
 	}
@@ -764,7 +778,7 @@ func (r *Replica) acceptorHandleAcceptRequest(accept *stdpaxosproto.Accept) {
 		acceptorHandleAcceptLocal(r.Id, r.Acceptor, accept, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance, r.acceptReplyChan)
 		return
 	}
-	acceptorHandleAccept(r.Id, r.Learner, r.Acceptor, accept, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance, r.acceptReplyChan, r.nopreempt, r.bcastAcceptDisklessNOOP)
+	acceptorHandleAccept(r.Id, r.Learner, r.Acceptor, accept, r.AcceptResponsesRPC, r.Replica, r.bcastAcceptance, r.acceptReplyChan, r.nopreempt, r.bcastAcceptDisklessNOOP, r.asyncResp)
 }
 
 func (r *Replica) handleAcceptance(areply *stdpaxosproto.AcceptReply) {
