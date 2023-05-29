@@ -464,7 +464,6 @@ func (r *Replica) beginNextInstance() {
 			break
 		}
 	}
-
 }
 
 func getPrepareMessage(id int32, inst int32, curInst *proposer.PBK) *stdpaxosproto.Prepare {

@@ -283,7 +283,7 @@ func main() {
 		log.Println("Starting classic Paxos replica...")
 		rep := paxos.NewReplica(smrReplica, replicaId, nodeList, isLeader, *thrifty, *exec, *lread, *dreply, *durable,
 			*batchWait, *maxfailures, *storageParentDir, *emulatedSS, emulatedWriteTime, int32(*deadTime), *sendFastestQrm,
-			*reducedQrmSize, *mappedProposers, int32(*mappedProposersNum), *pam, *pamloc)
+			*reducedQrmSize, *mappedProposers, int32(*mappedProposersNum), *pam, *pamloc, *maxBatchSizeByNumVals)
 		rpc.Register(rep)
 		runnable = rep
 	}

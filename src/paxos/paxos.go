@@ -60,6 +60,8 @@ type Replica struct {
 	sendToFastestQrm      bool
 	pam                   bool
 	proposeraccept        instanceagentmapper.PAM
+	strongLeader          bool
+	maxBatchSize          int
 }
 
 func (r *Replica) CloseUp() {
@@ -97,9 +99,10 @@ type LeaderBookkeeping struct {
 
 func NewReplica(replica *genericsmr.Replica, id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool,
 	dreply bool, durable bool, batchWait int, f int, storageLoc string, emulatedSS bool, emulatedWriteTime time.Duration,
-	deadTime int32, sendToFastestQrm bool, minimalAcceptors bool, mappedProposers bool, mappedPropsPerInst int32, pam bool, pamloc string) *Replica {
+	deadTime int32, sendToFastestQrm bool, minimalAcceptors bool, mappedProposers bool, mappedPropsPerInst int32, pam bool, pamloc string, maxBatchSize int) *Replica {
 	r := &Replica{
 		Replica:               replica,
+		maxBatchSize:          maxBatchSize,
 		prepareChan:           make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		acceptChan:            make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
 		prepareReplyChan:      make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -260,7 +263,6 @@ func (r *Replica) sync() {
 }
 
 /* RPC to be called by master */
-
 func (r *Replica) BeTheLeader(args *genericsmrproto.BeTheLeaderArgs, reply *genericsmrproto.BeTheLeaderReply) error {
 	r.IsLeader = true
 	log.Println("I am the leader")
@@ -316,10 +318,10 @@ func (r *Replica) run() {
 
 	go r.WaitForClientConnections()
 
-	noopT := &time.Timer{}
-	if r.pam {
-		noopT = time.NewTimer(10 * time.Millisecond)
-	}
+	//noopT := &time.Timer{}
+	//if r.pam {
+	//	noopT = time.NewTimer(10 * time.Millisecond)
+	//}
 
 	for !r.Shutdown {
 		// detect down
@@ -332,45 +334,45 @@ func (r *Replica) run() {
 		// need to have leadership spread -- each group has a leader
 
 		select {
-		case <-noopT.C:
-			//r.startNextInstance()
-			//inst := r.instanceSpace[r.crtInstance]
-			//lb := inst.lb
-			//dlog.Printf("Pushing no-op")
-			//lb.cmds = state.NOOPP()
-			//inst.cmds = lb.cmds
-			//inst.bal = lb.lastTriedBallot
-			//inst.status = ACCEPTED
-			//
-			//m := int32(math.MaxInt32)
-			//count := 0
-			//for _, e := range r.defaultBallot {
-			//	if e != -1 {
-			//		count++
-			//		if e < m {
-			//			m = e
-			//		}
-			//	}
-			//}
-			//if count >= r.Replica2.ReadQuorumSize()-1 && m > r.smallestDefaultBallot {
-			//	r.smallestDefaultBallot = m
-			//}
-			//
-			//r.Learner.ProposalValue(r.crtInstance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, lb.cmds, r.Id)
-			//
-			//r.recordInstanceMetadata(r.instanceSpace[r.crtInstance])
-			//r.sync()
-			//r.bcastAccept(r.crtInstance)
-			//noopT.Reset(10 * time.Millisecond)
-			break
+		//case <-noopT.C:
+		//r.startNextInstance()
+		//inst := r.instanceSpace[r.crtInstance]
+		//lb := inst.lb
+		//dlog.Printf("Pushing no-op")
+		//lb.cmds = state.NOOPP()
+		//inst.cmds = lb.cmds
+		//inst.bal = lb.lastTriedBallot
+		//inst.status = ACCEPTED
+		//
+		//m := int32(math.MaxInt32)
+		//count := 0
+		//for _, e := range r.defaultBallot {
+		//	if e != -1 {
+		//		count++
+		//		if e < m {
+		//			m = e
+		//		}
+		//	}
+		//}
+		//if count >= r.Replica2.ReadQuorumSize()-1 && m > r.smallestDefaultBallot {
+		//	r.smallestDefaultBallot = m
+		//}
+		//
+		//r.Learner.ProposalValue(r.crtInstance, stdpaxosproto.Ballot{lb.lastTriedBallot, -1}, lb.cmds, r.Id)
+		//
+		//r.recordInstanceMetadata(r.instanceSpace[r.crtInstance])
+		//r.sync()
+		//r.bcastAccept(r.crtInstance)
+		//noopT.Reset(10 * time.Millisecond)
+		//break
 		case propose := <-onOffProposeChan:
 			//got a Propose from a client
 			r.handlePropose(propose)
 			//deactivate new proposals channel to prioritize the handling of other protocol messages,
 			//and to allow commands to accumulate for batching
-			if r.pam {
-				noopT.Reset(10 * time.Millisecond)
-			}
+			//if r.pam {
+			//	noopT.Reset(10 * time.Millisecond)
+			//}
 			if r.BatchingEnabled() {
 				onOffProposeChan = nil
 			}
@@ -484,6 +486,16 @@ func (r *Replica) bcastAccept(instance int32) {
 	} else {
 		order = r.GetRandomPeerOrder()
 	}
+	if r.strongLeader {
+		acc := &paxosproto.Accept{
+			LeaderId: pa.LeaderId,
+			Instance: pa.Instance,
+			Ballot:   pa.Ballot,
+			Command:  pa.Command,
+		}
+		go func() { r.acceptChan <- acc }()
+		sentTo = append(sentTo, r.Id)
+	}
 	for _, peer := range order {
 		if len(sentTo) > sendC {
 			break
@@ -491,7 +503,7 @@ func (r *Replica) bcastAccept(instance int32) {
 		if !r.AcceptorQrmInfo.IsInGroup(instance, peer) {
 			continue
 		}
-		if peer == r.Id {
+		if peer == r.Id && !r.strongLeader {
 			acc := &paxosproto.Accept{
 				LeaderId: pa.LeaderId,
 				Instance: pa.Instance,
@@ -504,7 +516,7 @@ func (r *Replica) bcastAccept(instance int32) {
 		r.Replica.SendMsg(peer, r.acceptRPC, args)
 		sentTo = append(sentTo, peer)
 	}
-	dlog.AgentPrintfN(r.Id, "Sending accept for instance %d at ballot %dto Replicas %v", pa.Instance, pa.Ballot, sentTo)
+	dlog.AgentPrintfN(r.Id, "Sending accept for instance %d at ballot %d to Replicas %v", pa.Instance, pa.Ballot, sentTo)
 
 	//	if len(order) < n || !r.Thrifty {
 	//	r.SendToGroup(order, r.acceptRPC, args)
@@ -577,6 +589,9 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	}
 
 	batchSize := len(r.ProposeChan) + 1
+	if batchSize > r.maxBatchSize {
+		batchSize = r.maxBatchSize
+	}
 	dlog.Printf("Batched %d\n", batchSize)
 
 	proposals := make([]*genericsmr.Propose, batchSize)
@@ -646,7 +661,7 @@ func (r *Replica) startNextInstance() {
 }
 
 func (r *Replica) isLeader(inst int32) bool {
-	if !r.pam && r.Id == 0 {
+	if !r.pam && r.IsLeader {
 		return true
 	}
 	mapped := r.proposerInstanceMapper.GetGroup(inst)
