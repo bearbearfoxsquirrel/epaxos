@@ -71,6 +71,7 @@ type Replica struct {
 	commitExecMutex   *sync.Mutex
 	sepExecThread     bool
 	sendToFastestQrm  bool
+	maxBatchSize      int
 }
 
 func (r *Replica) CloseUp() {
@@ -127,7 +128,7 @@ func (b *LeaderBookkeeping) addReportedDeps(deps []int32, rid int32) {
 	}
 }
 
-func NewReplica(replica *genericsmr.Replica, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool, deadTime int32, sendToFastQrm bool) *Replica {
+func NewReplica(replica *genericsmr.Replica, peerAddrList []string, thrifty bool, exec bool, lread bool, dreply bool, beacon bool, durable bool, batchWait int, transconf bool, emulatedSS bool, emulatedWriteTime time.Duration, cmpCommitExec bool, cmpCommitExecLoc string, sepExecThread bool, deadTime int32, sendToFastQrm bool, maxBatchSize int) *Replica {
 	r := &Replica{
 		replica,
 		make(chan fastrpc.Serializable, genericsmr.CHAN_BUFFER_SIZE),
@@ -163,7 +164,9 @@ func NewReplica(replica *genericsmr.Replica, peerAddrList []string, thrifty bool
 		nil,
 		new(sync.Mutex),
 		sepExecThread,
-		sendToFastQrm}
+		sendToFastQrm,
+		maxBatchSize,
+	}
 
 	r.Beacon = beacon
 	r.Durable = durable
@@ -657,6 +660,9 @@ func (r *Replica) updateAttributes(cmds []state.Command, deps []int32, replica i
 func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 	//TODO!! Handle client retries
 	batchSize := len(r.ProposeChan) + 1
+	if batchSize > r.maxBatchSize {
+		batchSize = r.maxBatchSize
+	}
 	r.Mutex.Lock()
 	r.Stats.M["totalBatching"]++
 	r.Stats.M["totalBatchingSize"] += batchSize

@@ -218,7 +218,7 @@ func main() {
 		runnable = rep
 	} else if *doAtlas {
 		log.Println("Starting Egalitarian Paxos replica...")
-		rep := atlas.NewReplica(smrReplica, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm)
+		rep := atlas.NewReplica(smrReplica, nodeList, *thrifty, *exec, *lread, *dreply, *beacon, *durable, *batchWait, *transitiveConflicts, *emulatedSS, emulatedWriteTime, *doStats, *statsLoc, !*nothreadexec, int32(*deadTime), *sendFastestQrm, *maxBatchSizeByNumVals)
 		rpc.Register(rep)
 		runnable = rep
 	} else if *doMencius {
