@@ -188,6 +188,7 @@ func (a *prewritePromiseAcceptor) RecvPrepareRemote(prepare *stdpaxosproto.Prepa
 		fsync(a.stableStore, a.durable, a.emulatedSS, a.emuatedWriteTime)
 		a.returnNewPromiseLeases()
 		a.clearPendingPrewrites()
+		panic("shouldn't happen")
 	}
 
 	//if bal.Equal(abk.curBal) && abk.status == ACCEPTED {
