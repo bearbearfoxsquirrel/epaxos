@@ -194,7 +194,6 @@ func (manager *InductiveConflictsManager) UpdateCurrentInstance(inst int32) {
 	if inst <= manager.CrtInstance {
 		return
 	}
-
 	// take advantage of inductive backoff property
 	for i := manager.CrtInstance + 1; i <= inst; i++ {
 		manager.instanceSpace[i] = GetEmptyInstance()

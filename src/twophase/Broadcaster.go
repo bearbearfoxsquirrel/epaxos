@@ -160,10 +160,12 @@ type PrepareAllFromWriteAheadReplica struct {
 	proposer.AcceptorQrmInfo
 	PrepareSelfSender
 	ListSender
+	thrifty bool
+	f       int32
 }
 
-func NewPrepareAllFromWriteAheadReplica(n int32, id int32, rpc uint8, acceptorQrmInfo proposer.AcceptorQrmInfo, prepareSelfSender PrepareSelfSender, listSender ListSender) *PrepareAllFromWriteAheadReplica {
-	return &PrepareAllFromWriteAheadReplica{n: n, id: id, rpc: rpc, AcceptorQrmInfo: acceptorQrmInfo, PrepareSelfSender: prepareSelfSender, ListSender: listSender}
+func NewPrepareAllFromWriteAheadReplica(n int32, id int32, rpc uint8, f int32, thrifty bool, acceptorQrmInfo proposer.AcceptorQrmInfo, prepareSelfSender PrepareSelfSender, listSender ListSender) *PrepareAllFromWriteAheadReplica {
+	return &PrepareAllFromWriteAheadReplica{n: n, id: id, rpc: rpc, AcceptorQrmInfo: acceptorQrmInfo, PrepareSelfSender: prepareSelfSender, ListSender: listSender, thrifty: thrifty, f: f}
 }
 
 func (b *PrepareAllFromWriteAheadReplica) Bcast(instance int32, ballot stdpaxosproto.Ballot) {
@@ -171,13 +173,29 @@ func (b *PrepareAllFromWriteAheadReplica) Bcast(instance int32, ballot stdpaxosp
 	sentTo := make([]int32, 0, b.n)
 	sendMsgs := make([]int32, 0, b.n)
 	inGroup := false
-	for _, i := range b.AcceptorQrmInfo.GetGroup(instance) {
+	g := b.AcceptorQrmInfo.GetGroup(instance)
+	for _, i := range g {
 		if i == b.id {
 			inGroup = true
+			break
+		}
+	}
+	if b.thrifty {
+		rand.Shuffle(len(g), func(i, j int) {
+			tmp := g[i]
+			g[i] = g[j]
+			g[j] = tmp
+		})
+	}
+	for _, i := range g {
+		if i == b.id {
 			continue
 		}
 		sentTo = append(sentTo, i)
 		sendMsgs = append(sendMsgs, i)
+		if b.thrifty && int32(len(sentTo)) >= b.f {
+			break
+		}
 	}
 	if inGroup {
 		b.PrepareSelfSender.Send(&args)
