@@ -280,7 +280,7 @@ func NewBaselineTwoPhaseReplica(id int, replica *genericsmr.Replica, durable boo
 		prepareSender = &UnreliableUDPListSender{Replica: r.Replica}
 		valueSender = &ReliableUDPListSender{Replica: r.Replica}
 	}
-	r.PrepareBroadcaster = NewPrepareAllFromWriteAheadReplica(int32(r.N), r.Id, r.prepareRPC, int32(r.F), r.Thrifty, r.AcceptorQrmInfo, prepareSelfSender, prepareSender)
+	r.PrepareBroadcaster = NewPrepareAllFromWriteAheadReplica(int32(r.N), r.Id, r.prepareRPC, int32(r.F), !sendPreparesToAllAcceptors, r.AcceptorQrmInfo, prepareSelfSender, prepareSender)
 	r.ValueBroadcaster = NewBcastSlowLearning(r.acceptRPC, r.commitShortRPC, r.commitRPC, r.Id, int32(r.N), pids, sendQrmSize, valueSender, acceptSelfSender, r)
 	if bcastAcceptance {
 		r.ValueBroadcaster = NewBcastFastLearning(r.acceptRPC, r.commitShortRPC, r.Id, int32(r.N), pids, r.AcceptorQrmInfo, sendQrmSize, valueSender, acceptSelfSender)
